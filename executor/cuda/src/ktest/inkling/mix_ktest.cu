@@ -138,9 +138,11 @@ CERE_KTEST int cere_ktest_inkling_msg_gate(int64_t mutant, const float *h, int64
 }
 
 // The fused gate + weighted norm (S8) over `count` gates: table host int64 [count, 7] = (h, msg, down, forget, gain,
-// norm_w, y) device pointers. The workspace is stream-ordered scratch of this call.
-CERE_KTEST int cere_ktest_inkling_msg_gate_norm(const int64_t *table, int64_t count, int64_t ldh, int64_t ldm,
-                                                int64_t ldy, int64_t rows, float eps, cudaStream_t stream) {
+// norm_w, y) device pointers. mutant 1: the prefill-sized kernels' chains reversed (rows > 64). The workspace is
+// stream-ordered scratch of this call.
+CERE_KTEST int cere_ktest_inkling_msg_gate_norm(int64_t mutant, const int64_t *table, int64_t count, int64_t ldh,
+                                                int64_t ldm, int64_t ldy, int64_t rows, float eps,
+                                                cudaStream_t stream) {
     if (rows < 1 || count < 1 || count > ink::kMsgMaxGates) return status(cudaErrorInvalidValue);
     ink::MsgGateNorm gates[ink::kMsgMaxGates];
     for (int64_t i = 0; i < count; ++i) {
@@ -153,7 +155,8 @@ CERE_KTEST int cere_ktest_inkling_msg_gate_norm(const int64_t *table, int64_t co
     const uint64_t bytes = ink::msg_gate_norm_workspace_floats(rows) * sizeof(float);
     cudaError_t e = cudaMallocAsync(reinterpret_cast<void **>(&ws), bytes, stream);
     if (e != cudaSuccess) return status(e);
-    e = ink::msg_gate_norm(gates, int(count), ldh, ldm, ldy, rows, eps, ws, stream);
+    e = mutant ? ink::mutant::msg_gate_norm_reversed(gates, int(count), ldh, ldm, ldy, rows, eps, ws, stream)
+               : ink::msg_gate_norm(gates, int(count), ldh, ldm, ldy, rows, eps, ws, stream);
     const cudaError_t f = cudaFreeAsync(ws, stream);
     return status(e != cudaSuccess ? e : f);
 }

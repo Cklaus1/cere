@@ -15,7 +15,8 @@ Every case reports row INKLING_MOE. G1 cases (bit-exact, `check_bit_exact`):
   UE8M0 exponents; the exponent clamp) on edge rows;
 - experts (NVFP4 layer 0, MXFP8 layer 21): out, and the taps gate_up (BF16 GEMM1), h (capped SwiGLU x gamma) and
   expert_out (BF16 per routed row) at M = 1, 7, 64 (gamma 0 and near 8, rows hitting the SwiGLU caps, a zero row,
-  strided in/out), M = 4,096 on sampled tokens;
+  strided in/out), NVFP4 M = 97 and 160 (the tensor-core GEMM of calls over 64 tokens; M = 160 with per-block
+  magnitudes), M = 4,096 on sampled tokens;
 - recorded rows (S1's tests/fixtures/inkling2_reference/ops, arm Q): router and experts GPU vs ref on the recorded
   MLP inputs.
 Determinism (G4 / D9, bit-exact, GPU vs GPU): run twice, each token alone vs in the batch, reversed batch, chunk
@@ -24,7 +25,8 @@ Ref vs REF (reported with the tolerance asserted): router logits vs FP64 torch (
 quantizers' dequantized values vs run_golden.py's arm-Q torch emulation (bit agreement reported); recorded rows: the
 CPU ref's router vs REF's recorded router outputs, the CPU ref's experts vs REF's recorded expert outputs (golden arm Q).
 Fail-first: each MoeMutant (softmax routing, one global activation scale, gamma after the down projection, no
-fouroversix) differs from the ref (phase fail_first: a G1 check of the mutant would fail).
+fouroversix, the tensor-core GEMM's block terms added in swapped pairs, the multi-row router's K chains descending)
+differs from the ref (phase fail_first: a G1 check of the mutant would fail).
 Timing (reported, never a verdict): one MoE visit (router + experts) at M = 1, 8, 64, NVFP4 and MXFP8.
 """
 from __future__ import annotations
@@ -42,7 +44,7 @@ import oracle
 ROW = "INKLING_MOE"
 H, I, E, TOPK = 2304, 1152, 128, 8
 NVFP4_LAYER, MXFP8_LAYER = 0, 21
-MUT_SOFTMAX, MUT_GLOBAL_SCALE, MUT_GAMMA_AFTER, MUT_ALWAYS_SIX = 1, 2, 3, 4
+MUT_SOFTMAX, MUT_GLOBAL_SCALE, MUT_GAMMA_AFTER, MUT_ALWAYS_SIX, MUT_BLOCK_ORDER, MUT_ROUTER_ORDER = 1, 2, 3, 4, 5, 6
 OPS_INDEX = Path("/src/tests/fixtures/inkling2_reference/ops/index.json")
 FLT_MAX = 3.4028234663852886e38
 E2M1_VALUES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0)
@@ -458,6 +460,21 @@ class TestInklingMoe(unittest.TestCase):
             # mutant: softmax routing
             _, mw, _ = native_router(x.to(oracle.DEVICE), lay, mutant=MUT_SOFTMAX)
             self.fail_first(f"router L{n} mutant softmax routing", mw, rw)
+            # calls of more than 64 rows take the multi-row router (8 rows per cluster, D-I-CPF): 133 rows (a partial
+            # last cluster of 5), contiguous and strided, the edge rows first; mutant: lane chains over K descending
+            big = torch.cat([x, expert_inputs(133 - x.shape[0], gen)]).contiguous()
+            bids, bw, blogits = native_router(big.to(oracle.DEVICE), lay)
+            rbids, rbw, rblogits = ref_router(big, lay)
+            self.bit(f"router L{n} M133 ids", bids, rbids)
+            self.bit(f"router L{n} M133 weights", bw, rbw)
+            self.bit_float(f"router L{n} M133 logits", blogits, rblogits)
+            wide = torch.zeros((big.shape[0], 2560), dtype=torch.bfloat16)
+            wide[:, :H] = big
+            sids, sw, _ = native_router(wide.to(oracle.DEVICE), lay, x_stride=2560)
+            self.bit(f"router L{n} M133 strided ids", sids, rbids)
+            self.bit(f"router L{n} M133 strided weights", sw, rbw)
+            _, _, ml = native_router(big.to(oracle.DEVICE), lay, mutant=MUT_ROUTER_ORDER)
+            self.fail_first(f"router L{n} M133 mutant K descending", ml, rblogits)
 
     # -- quantizers ---------------------------------------------------------------------------------------------
 
@@ -515,8 +532,12 @@ class TestInklingMoe(unittest.TestCase):
 
     # -- experts ------------------------------------------------------------------------------------------------
 
-    def _experts_case(self, lay: Layer, m: int, gen: torch.Generator, pool: int, strided: bool = False):
+    def _experts_case(self, lay: Layer, m: int, gen: torch.Generator, pool: int, strided: bool = False,
+                      mixed: int = 0):
         x = expert_inputs(m, gen)
+        if mixed:  # every `mixed` elements their own power-of-two magnitude: the K chains round (order shows)
+            x = (x.float() * torch.exp2(torch.randint(-12, 13, (m, H // mixed), generator=gen).float())
+                 .repeat_interleave(mixed, dim=1)).to(torch.bfloat16)
         ids, w = random_routing(m, gen, pool)
         name = f"experts L{lay.layer} M{m}" + (" strided" if strided else "")
         if strided:
@@ -532,7 +553,7 @@ class TestInklingMoe(unittest.TestCase):
         self.bit(f"{name} h", taps[1], rtaps[1])
         self.bit(f"{name} expert_out", taps[2], rtaps[2])
         self.bit(f"{name} out", out, rout)
-        return x, ids, w, rout
+        return x, ids, w, rout, rtaps
 
     def test_experts(self):
         gen = torch.Generator().manual_seed(5)
@@ -543,7 +564,7 @@ class TestInklingMoe(unittest.TestCase):
             self._experts_case(lay, 3, gen, 10)
             self._experts_case(lay, 4, gen, 9, strided=True)
             self._experts_case(lay, 7, gen, 12, strided=True)
-            x, ids, w, rout = self._experts_case(lay, 64, gen, 12)
+            x, ids, w, rout, _ = self._experts_case(lay, 64, gen, 12)
             dx, di, dw = x.to(oracle.DEVICE), ids.to(oracle.DEVICE), w.to(oracle.DEVICE)
             # mutants
             if lay.nvfp4:
@@ -552,6 +573,20 @@ class TestInklingMoe(unittest.TestCase):
                     self.fail_first(f"experts L{n} mutant {label}", mo, rout)
             mo, _ = native_experts(dx, di, dw, lay, mutant=MUT_GAMMA_AFTER)
             self.fail_first(f"experts L{n} mutant gamma after down", mo, rout)
+        # NVFP4 calls of more than 64 tokens take the tensor-core GEMM (mma_gemm_kernel, D-I-CPF): experts with more
+        # than one 64-row tile and partial tiles (M = 160 over 12 experts, strided, each 16-element block of its own
+        # magnitude so the K chains round and an order change shows), most experts with a few rows (M = 97 over
+        # all 128). The mutants are judged on the output and GEMM1's gate_up tap together: the order change rounds
+        # GEMM1's FP32 sums, while the NVFP4 requantization of h and GEMM2's same-magnitude blocks hide it in the
+        # output.
+        lay = layer(NVFP4_LAYER)
+        self._experts_case(lay, 97, gen, E)
+        x, ids, w, rout, rtaps = self._experts_case(lay, 160, gen, 12, strided=True, mixed=16)
+        dx, di, dw = x.to(oracle.DEVICE), ids.to(oracle.DEVICE), w.to(oracle.DEVICE)
+        for mut, label in ((MUT_GAMMA_AFTER, "gamma after down"), (MUT_BLOCK_ORDER, "block terms in swapped pairs")):
+            mo, mt = native_experts(dx, di, dw, lay, mutant=mut, taps=True)
+            self.fail_first(f"experts L{NVFP4_LAYER} M160 mutant {label}", torch.cat([mo.flatten(), mt[0].flatten()]),
+                            torch.cat([rout.flatten(), rtaps[0].flatten()]))
 
     def test_experts_determinism(self):
         """G4 / D9: run twice, alone vs batched, reversed, chunk splits (GPU vs GPU, bit-exact)."""

@@ -6,7 +6,7 @@
   "model_content_sha256": "4bcd2a3721352d465aba40466092b203fec7f0a6d8278cc2a93df4136c99ce5b",
   "tokenizer_sha256": "8e7689dd177a7cff55a88522c91264b746fd59c69d744f886f56b1cdd0b307a0",
   "template_sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
-  "backend_build_sha256": "17d1bb20f5b91c7bea131e6932399ab6a84c9a97a76156ca8f8b2df455d455da",
+  "backend_build_sha256": "73395b9ab8c8ec1e0117ec9c1d59ed8ebe257b31f24b16d0041170adc2383c2d",
   "backend_profile_id": "native-g0-inkling-2-mini-mtp-v68",
   "effective_context_tokens": 1048576,
   "effective_operations": [

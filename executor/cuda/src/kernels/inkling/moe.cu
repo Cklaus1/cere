@@ -21,6 +21,7 @@ constexpr int H = kMoeHidden;
 constexpr int I = kMoeInter;
 
 __device__ __forceinline__ float bf(const bf16 v) { return ref::decode_bf16(__bfloat16_as_ushort(v)); }
+__device__ __forceinline__ float bf(float v) { return v; }  // router_dot's xs as FP32 (already widened)
 __device__ __forceinline__ bf16 to_bf(float v) { return __ushort_as_bfloat16(ref::encode_bf16(v)); }
 
 // Exact E4M3 pair -> two floats (cvt to f16x2 is exact for every non-NaN E4M3 value; f16 -> f32 exact).
@@ -55,62 +56,47 @@ bool aligned16(const void *p) { return (reinterpret_cast<uintptr_t>(p) & 15u) ==
 
 // -- router --------------------------------------------------------------------------------------------------------
 // One thread block cluster of kRouterCluster blocks per row, one warp per expert; rank 0's warp 0 gathers the 128
-// logits over distributed shared memory and selects.
+// logits over distributed shared memory and selects. Calls of more than kRouterRowsMin rows (prefill) take
+// router_rows_kernel: one cluster per kRouterRows rows, each warp's expert row held in registers across them (the
+// weights are read once per kRouterRows rows instead of once per row, D-I-CPF), the same arithmetic per row.
 
 constexpr int kRouterCluster = 8;
 constexpr int kRouterWarps = kMoeExperts / kRouterCluster;  // 16 experts per block
 constexpr int kRouterThreads = 32 * kRouterWarps;
+constexpr int kRouterRows = 8;
+constexpr int kRouterRowsMin = 64;
+static_assert(kRouterRows <= kRouterWarps, "rank 0 selects one row per warp");
 
-__global__ void __cluster_dims__(kRouterCluster, 1, 1) __launch_bounds__(kRouterThreads)
-    router_kernel(const bf16 *__restrict__ x, int64_t x_stride, const bf16 *__restrict__ w,
-                  const float *__restrict__ bias, int32_t *ids, float *weights, float *logits_out, int mutant) {
-    pdl::trigger();
-    __shared__ float xs[H];
-    __shared__ float part[kRouterWarps];  // this block's experts' logits
-    __shared__ float logit[kMoeExperts];  // rank 0: all of them
-    cg::cluster_group cluster = cg::this_cluster();
-    const int rank = int(cluster.block_rank());
-    const int t = blockIdx.y;
-    pdl::wait();
-    for (int i = threadIdx.x; i < H; i += kRouterThreads) xs[i] = bf(x[int64_t(t) * x_stride + i]);
-    __syncthreads();
-    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
-    // ref::reduce_dot<256>: lane l of the 256 accumulates elements l, l + 256, ..; warp lane `lane` holds lanes
-    // lane + 32 s (s = 0..7); halving levels 128, 64, 32 in registers, 16..1 by xor shuffles.
-    {
-        const int e = rank * kRouterWarps + warp;
-        const bf16 *we = w + int64_t(e) * H;
-        float acc[8];
+// ref::reduce_dot<256> of one expert row held as wv[s][q] = w[lane + 32 s + 256 q] (widened) with the row xs (BF16
+// in shared memory): lane l of the 256 accumulates elements l, l + 256, ..; warp lane `lane` holds lanes lane + 32 s
+// (s = 0..7); halving levels 128, 64, 32 in registers, 16..1 by xor shuffles. Rev: the fail-first mutant (each lane's
+// chain over q descending; MoeMutant::kRouterOrder).
+template <bool Rev, typename X>
+__device__ __forceinline__ float router_dot(const X *xs, const float (&wv)[8][H / 256], int lane) {
+    float acc[8];
 #pragma unroll
-        for (int s = 0; s < 8; ++s) {
-            float a = 0.0f;
+    for (int s = 0; s < 8; ++s) {
+        float a = 0.0f;
 #pragma unroll
-            for (int q = 0; q < H / 256; ++q) {
-                const int i = lane + 32 * s + 256 * q;
-                a = ref::fma(xs[i], bf(we[i]), a);
-            }
-            acc[s] = a;
+        for (int qq = 0; qq < H / 256; ++qq) {
+            const int q = Rev ? H / 256 - 1 - qq : qq;
+            a = ref::fma(bf(xs[lane + 32 * s + 256 * q]), wv[s][q], a);
         }
-#pragma unroll
-        for (int s = 0; s < 4; ++s) acc[s] = ref::add(acc[s], acc[s + 4]);
-#pragma unroll
-        for (int s = 0; s < 2; ++s) acc[s] = ref::add(acc[s], acc[s + 2]);
-        float v = ref::add(acc[0], acc[1]);
-#pragma unroll
-        for (int off = 16; off >= 1; off /= 2) v = ref::add(v, __shfl_xor_sync(0xFFFFFFFFu, v, off));
-        if (lane == 0) part[warp] = v;
+        acc[s] = a;
     }
-    cluster.sync();
-    if (rank == 0 && warp == 0) {
 #pragma unroll
-        for (int j = 0; j < 4; ++j) {
-            const int e = lane + 32 * j;
-            logit[e] = cluster.map_shared_rank(part, e / kRouterWarps)[e % kRouterWarps];
-        }
-    }
-    cluster.sync();  // every block's part stays mapped until rank 0 has read it
-    if (rank != 0 || warp != 0) return;
-    __syncwarp();
+    for (int s = 0; s < 4; ++s) acc[s] = ref::add(acc[s], acc[s + 4]);
+#pragma unroll
+    for (int s = 0; s < 2; ++s) acc[s] = ref::add(acc[s], acc[s + 2]);
+    float v = ref::add(acc[0], acc[1]);
+#pragma unroll
+    for (int off = 16; off >= 1; off /= 2) v = ref::add(v, __shfl_xor_sync(0xFFFFFFFFu, v, off));
+    return v;
+}
+
+// Row t's selection from its 128 logits (one warp; logit and sscore in shared memory, sscore written here).
+__device__ void router_select_row(int t, const float *logit, float *sscore, const float *__restrict__ bias,
+                                  int32_t *ids, float *weights, float *logits_out, int mutant, int lane) {
     float score[4], biased[4];
     bool taken[4];
 #pragma unroll
@@ -121,7 +107,6 @@ __global__ void __cluster_dims__(kRouterCluster, 1, 1) __launch_bounds__(kRouter
         taken[j] = false;
         if (logits_out != nullptr) logits_out[int64_t(t) * kMoeExperts + e] = logit[e];
     }
-    __shared__ float sscore[kMoeExperts];
 #pragma unroll
     for (int j = 0; j < 4; ++j) sscore[lane + 32 * j] = score[j];
     int32_t pick[kMoeTopK];
@@ -169,6 +154,91 @@ __global__ void __cluster_dims__(kRouterCluster, 1, 1) __launch_bounds__(kRouter
         ids[int64_t(t) * kMoeTopK + k] = pick[k];
         weights[int64_t(t) * kMoeTopK + k] = wk[k];
     }
+}
+
+// This warp's expert row widened into registers (wv[s][q] = w[e, lane + 32 s + 256 q]).
+__device__ __forceinline__ void router_weights_row(const bf16 *__restrict__ we, int lane, float (&wv)[8][H / 256]) {
+#pragma unroll
+    for (int s = 0; s < 8; ++s)
+#pragma unroll
+        for (int q = 0; q < H / 256; ++q) wv[s][q] = bf(we[lane + 32 * s + 256 * q]);
+}
+
+__global__ void __cluster_dims__(kRouterCluster, 1, 1) __launch_bounds__(kRouterThreads)
+    router_kernel(const bf16 *__restrict__ x, int64_t x_stride, const bf16 *__restrict__ w,
+                  const float *__restrict__ bias, int32_t *ids, float *weights, float *logits_out, int mutant) {
+    pdl::trigger();
+    __shared__ float xs[H];
+    __shared__ float part[kRouterWarps];  // this block's experts' logits
+    __shared__ float logit[kMoeExperts];  // rank 0: all of them
+    __shared__ float sscore[kMoeExperts];
+    cg::cluster_group cluster = cg::this_cluster();
+    const int rank = int(cluster.block_rank());
+    const int t = blockIdx.y;
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    float wv[8][H / 256];
+    router_weights_row(w + int64_t(rank * kRouterWarps + warp) * H, lane, wv);
+    pdl::wait();
+    for (int i = threadIdx.x; i < H; i += kRouterThreads) xs[i] = bf(x[int64_t(t) * x_stride + i]);
+    __syncthreads();
+    const float v = router_dot<false>(xs, wv, lane);
+    if (lane == 0) part[warp] = v;
+    cluster.sync();
+    if (rank == 0 && warp == 0) {
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            const int e = lane + 32 * j;
+            logit[e] = cluster.map_shared_rank(part, e / kRouterWarps)[e % kRouterWarps];
+        }
+    }
+    cluster.sync();  // every block's part stays mapped until rank 0 has read it
+    if (rank != 0 || warp != 0) return;
+    __syncwarp();
+    router_select_row(t, logit, sscore, bias, ids, weights, logits_out, mutant, lane);
+}
+
+// kRouterRows rows per cluster: row r's logits in part[r] of each block; rank 0's warp r selects row r.
+__global__ void __cluster_dims__(kRouterCluster, 1, 1) __launch_bounds__(kRouterThreads)
+    router_rows_kernel(const bf16 *__restrict__ x, int64_t x_stride, int m, const bf16 *__restrict__ w,
+                       const float *__restrict__ bias, int32_t *ids, float *weights, float *logits_out, int mutant) {
+    pdl::trigger();
+    __shared__ bf16 xs[kRouterRows][H];
+    __shared__ float part[kRouterRows][kRouterWarps];
+    __shared__ float logit[kRouterRows][kMoeExperts];  // rank 0
+    __shared__ float sscore[kRouterRows][kMoeExperts];
+    cg::cluster_group cluster = cg::this_cluster();
+    const int rank = int(cluster.block_rank());
+    const int t0 = int(blockIdx.y) * kRouterRows, rows = min(kRouterRows, m - t0);
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    float wv[8][H / 256];
+    router_weights_row(w + int64_t(rank * kRouterWarps + warp) * H, lane, wv);
+    pdl::wait();
+    for (int i = threadIdx.x; i < rows * (H / 8); i += kRouterThreads) {
+        const int r = i / (H / 8), c = i % (H / 8);
+        const bf16 *src = x + int64_t(t0 + r) * x_stride + 8 * c;
+        bf16 *dst = &xs[r][8 * c];
+#pragma unroll
+        for (int j = 0; j < 8; ++j) dst[j] = src[j];  // x_stride need not keep 16-byte rows
+    }
+    __syncthreads();
+    const bool rev = mutant == static_cast<int>(MoeMutant::kRouterOrder);
+    for (int r = 0; r < rows; ++r) {
+        const float v = rev ? router_dot<true>(xs[r], wv, lane) : router_dot<false>(xs[r], wv, lane);
+        if (lane == 0) part[r][warp] = v;
+    }
+    cluster.sync();
+    if (rank == 0 && warp < rows) {
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            const int e = lane + 32 * j;
+            logit[warp][e] = cluster.map_shared_rank(&part[0][0], e / kRouterWarps)[warp * kRouterWarps +
+                                                                                      e % kRouterWarps];
+        }
+    }
+    cluster.sync();  // every block's part stays mapped until rank 0 has read it
+    if (rank != 0 || warp >= rows) return;
+    __syncwarp();
+    router_select_row(t0 + warp, logit[warp], sscore[warp], bias, ids, weights, logits_out, mutant, lane);
 }
 
 // -- row quantizers (optionally fused with the capped SwiGLU x gamma) ---------------------------------------------
@@ -591,6 +661,225 @@ __global__ void __launch_bounds__(kGemmThreads) gemm_kernel(GemmArgs g) {
     }
 }
 
+// -- grouped GEMM on int8 tensor cores (NVFP4, calls of more than kMmaMinM tokens: prefill, large verifies) ---------
+// gemm_kernel's arithmetic element for element (D-I-CPF). A block's sum S_j of its 16 code products is a multiple of
+// 1/4 with |4 S_j| <= 16 * 144 < 2^12, so mma.sync m16n8k16 .s8 sums the codes widened to int8 (2 * e2m1) exactly in
+// int32; its accumulator input is the bits of 1.5 * 2^23, so the result read as FP32 is 1.5 * 2^23 + 4 S_j exactly.
+// Then, per element and block, with sx / sw the activation / weight block scales (E4M3: at most 4 significant bits):
+//   u   = fma(x, sx, -(1.5 * 2^23) * sx) = 4 S_j * sx        exact (< 2^16 significant bits, no underflow),
+//   T_j = mul(u, sw / 4)                 = S_j * sx * sw     exact (|4 S_j| * 15 * 15 < 2^24, >= 2^-20 when nonzero),
+// the exact value ref::nvfp4_block_term computes (its products and partial sums are exact as well), and
+// acc = add(acc, T_j) over the blocks in order from 0 (ref::nvfp4_dot). The k slots of a block inside the mma
+// fragments do not change an exact integer sum. A zero term's sign never shows: acc starts at +0.
+// CTA = kMmaRows routed rows of one expert (its sorted rows cut in 64s; tile ids by the prefix of ceil(count / 64)
+// over the experts) x kMmaCols weight rows, 8 warps of 32 x 32 (2 x 4 m16n8 fragments); the next K chunk's codes and
+// scales are loaded into registers while the current chunk's mma steps run.
+
+constexpr int kMmaMinM = 64;  // decode calls (<= 64 rows) keep gemm_kernel / the GEMVs
+constexpr int kMmaRows = 64;
+constexpr int kMmaCols = 128;
+constexpr int kMmaThreads = 256;
+constexpr int kMmaChunk = 128;                  // K elements staged per step
+constexpr int kMmaBlocks = kMmaChunk / 16;      // NVFP4 blocks per step
+constexpr int kMmaWords = (kMmaChunk + 16) / 4;  // int8 row stride in words: fragment loads hit 32 distinct banks
+constexpr uint32_t kMagicBits = 0x4B400000u;     // 1.5 * 2^23
+constexpr float kMagic = 12582912.0f;
+
+struct MmaSmem {
+    uint32_t a[kMmaRows][kMmaWords];  // activation codes, int8 2 * e2m1, k order
+    uint32_t w[kMmaCols][kMmaWords];  // weight codes
+    float sx[kMmaBlocks][kMmaRows];   // activation block scales
+    float msx[kMmaBlocks][kMmaRows];  // -(1.5 * 2^23) * sx
+    float sw[kMmaBlocks][kMmaCols];   // weight block scales / 4
+};
+
+__device__ __forceinline__ void mma_s8(int (&d)[4], uint32_t a0, uint32_t a1, uint32_t b0) {
+    asm("mma.sync.aligned.m16n8k16.row.col.s32.s8.s8.s32 {%0, %1, %2, %3}, {%4, %5}, {%6}, {%7, %7, %7, %7};\n"
+        : "=r"(d[0]), "=r"(d[1]), "=r"(d[2]), "=r"(d[3])
+        : "r"(a0), "r"(a1), "r"(b0), "r"(kMagicBits));
+}
+
+template <bool kDown, bool kSwap>
+__global__ void __launch_bounds__(kMmaThreads, 2) mma_gemm_kernel(GemmArgs g) {
+    pdl::enter();
+    __shared__ __align__(16) MmaSmem s;
+    __shared__ int64_t a_row[kMmaRows];
+    __shared__ int32_t p_row[kMmaRows];
+    __shared__ float outer[kMmaRows];
+    __shared__ int t_expert, t_first, t_total;
+
+    const int tid = threadIdx.x, warp = tid / 32, lane = tid % 32;
+    const int tile = blockIdx.y;
+    if (warp == 0) {  // 64-row tile prefix over the experts, 4 experts per lane
+        int c[4], sum = 0;
+#pragma unroll
+        for (int q = 0; q < 4; ++q) {
+            const int e = 4 * lane + q;
+            c[q] = e < g.num_experts ? (g.offsets[e + 1] - g.offsets[e] + kMmaRows - 1) / kMmaRows : 0;
+            sum += c[q];
+        }
+        int incl = sum;
+#pragma unroll
+        for (int d = 1; d < 32; d *= 2) {
+            const int v = __shfl_up_sync(0xFFFFFFFFu, incl, d);
+            if (lane >= d) incl += v;
+        }
+        int start = incl - sum;
+#pragma unroll
+        for (int q = 0; q < 4; ++q) {
+            if (tile >= start && tile < start + c[q]) t_expert = 4 * lane + q, t_first = start;
+            start += c[q];
+        }
+        if (lane == 31) t_total = incl;
+    }
+    __syncthreads();
+    if (tile >= t_total) return;
+    const int e = t_expert;
+    const int p0 = g.offsets[e] + (tile - t_first) * kMmaRows;
+    const int nrows = min(kMmaRows, g.offsets[e + 1] - p0);
+    if (tid < kMmaRows) {
+        int64_t src = -1;
+        int32_t id = -1;
+        if (tid < nrows) {
+            id = g.rows[p0 + tid];
+            src = g.a_by_token ? id / kMoeTopK : p0 + tid;
+        }
+        a_row[tid] = src;
+        p_row[tid] = id;
+        outer[tid] = src >= 0 ? ref::nvfp4_outer_scale(g.a_amax[src], g.w_amax[e], ref::nvfp4_outer_rcp(g.w_den[0]))
+                              : 0.0f;
+    }
+    __syncthreads();
+
+    // Staging: thread (ar, aq) loads activation row ar's codes k0 + 32 aq .. + 31 and their 2 block scales; thread
+    // (wc, wh) loads weight row col0 + wc's codes k0 + 64 wh .. + 63 and their 4 block scales.
+    const int col0 = blockIdx.x * kMmaCols;
+    const int ar = tid / 4, aq = tid % 4, wc = tid / 2, wh = tid % 2;
+    const int64_t asrc = a_row[ar];
+    const int kb = g.k / 16;
+    const uint8_t *ap = asrc >= 0 ? g.a + asrc * (g.k / 2) + 16 * aq : nullptr;
+    const uint8_t *asp = asrc >= 0 ? g.a_scale + asrc * kb + 2 * aq : nullptr;
+    const int64_t wrow = int64_t(e) * g.n + col0 + wc;
+    const uint4 *wp = reinterpret_cast<const uint4 *>(g.w + wrow * (g.k / 2) + 32 * wh);
+    const uint8_t *wsp = g.w_scale + wrow * kb + 4 * wh;
+    uint4 av = make_uint4(0, 0, 0, 0), wv0, wv1;
+    uint8_t as0 = 0, as1 = 0, ws[4];
+    auto load = [&](int k0) {
+        if (ap != nullptr) {
+            av = *reinterpret_cast<const uint4 *>(ap + k0 / 2);
+            as0 = asp[k0 / 16];
+            as1 = asp[k0 / 16 + 1];
+        }
+        wv0 = __ldg(wp + k0 / 32);
+        wv1 = __ldg(wp + k0 / 32 + 1);
+#pragma unroll
+        for (int b = 0; b < 4; ++b) ws[b] = __ldg(wsp + k0 / 16 + b);
+    };
+
+    const int wm = warp / 4, wn = warp % 4, gq = lane / 4, tq = lane % 4;
+    float acc[2][4][4];
+#pragma unroll
+    for (int i = 0; i < 2; ++i)
+#pragma unroll
+        for (int n = 0; n < 4; ++n)
+#pragma unroll
+            for (int c = 0; c < 4; ++c) acc[i][n][c] = 0.0f;
+
+    load(0);
+    for (int k0 = 0; k0 < g.k; k0 += kMmaChunk) {
+        __syncthreads();
+        {
+            const uint32_t aw[4] = {av.x, av.y, av.z, av.w};
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                s.a[ar][8 * aq + 2 * i] = e2m1x4_to_s8x4(aw[i] & 0xFFFFu);
+                s.a[ar][8 * aq + 2 * i + 1] = e2m1x4_to_s8x4(aw[i] >> 16);
+            }
+            const float x0 = ref::decode_e4m3(as0), x1 = ref::decode_e4m3(as1);
+            s.sx[2 * aq][ar] = x0;
+            s.sx[2 * aq + 1][ar] = x1;
+            s.msx[2 * aq][ar] = ref::mul(-kMagic, x0);
+            s.msx[2 * aq + 1][ar] = ref::mul(-kMagic, x1);
+            const uint32_t w8[8] = {wv0.x, wv0.y, wv0.z, wv0.w, wv1.x, wv1.y, wv1.z, wv1.w};
+#pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                s.w[wc][16 * wh + 2 * i] = e2m1x4_to_s8x4(w8[i] & 0xFFFFu);
+                s.w[wc][16 * wh + 2 * i + 1] = e2m1x4_to_s8x4(w8[i] >> 16);
+            }
+#pragma unroll
+            for (int b = 0; b < 4; ++b) s.sw[4 * wh + b][wc] = ref::mul(ref::decode_e4m3(ws[b]), 0.25f);
+        }
+        __syncthreads();
+        if (k0 + kMmaChunk < g.k) load(k0 + kMmaChunk);
+#pragma unroll
+        for (int jj = 0; jj < kMmaBlocks; ++jj) {
+            const int j = kSwap ? (jj ^ 1) : jj;
+            uint32_t af[2][2], bw[4];
+            float sx[2][2], msx[2][2];
+            float2 sw[4];
+#pragma unroll
+            for (int i = 0; i < 2; ++i) {
+#pragma unroll
+                for (int h = 0; h < 2; ++h) {
+                    const int r = 32 * wm + 16 * i + 8 * h + gq;
+                    af[i][h] = s.a[r][4 * j + tq];
+                    sx[i][h] = s.sx[j][r];
+                    msx[i][h] = s.msx[j][r];
+                }
+            }
+#pragma unroll
+            for (int n = 0; n < 4; ++n) {
+                bw[n] = s.w[32 * wn + 8 * n + gq][4 * j + tq];
+                sw[n] = *reinterpret_cast<const float2 *>(&s.sw[j][32 * wn + 8 * n + 2 * tq]);
+            }
+#pragma unroll
+            for (int i = 0; i < 2; ++i) {
+#pragma unroll
+                for (int n = 0; n < 4; ++n) {
+                    int d[4];
+                    mma_s8(d, af[i][0], af[i][1], bw[n]);
+#pragma unroll
+                    for (int c = 0; c < 4; ++c) {
+                        const float u = ref::fma(__int_as_float(d[c]), sx[i][c / 2], msx[i][c / 2]);
+                        acc[i][n][c] = ref::add(acc[i][n][c], ref::mul(u, c % 2 ? sw[n].y : sw[n].x));
+                    }
+                }
+            }
+        }
+    }
+
+#pragma unroll
+    for (int i = 0; i < 2; ++i) {
+#pragma unroll
+        for (int h = 0; h < 2; ++h) {
+            const int r = 32 * wm + 16 * i + 8 * h + gq;
+            if (r >= nrows) continue;
+            const float os = outer[r];
+            const int32_t id = p_row[r];
+#pragma unroll
+            for (int n = 0; n < 4; ++n) {
+                const int col = col0 + 32 * wn + 8 * n + 2 * tq;
+                float y0 = ref::mul(acc[i][n][2 * h], os), y1 = ref::mul(acc[i][n][2 * h + 1], os);
+                if constexpr (kDown) {
+                    if (g.mutant == static_cast<int>(MoeMutant::kGammaAfterDown)) {
+                        y0 = ref::mul(y0, g.gamma[id]);
+                        y1 = ref::mul(y1, g.gamma[id]);
+                    }
+                }
+                __nv_bfloat162 v;
+                v.x = to_bf(y0);
+                v.y = to_bf(y1);
+                if constexpr (kDown) {
+                    *reinterpret_cast<__nv_bfloat162 *>(g.out + int64_t(id) * g.n + col) = v;
+                } else {
+                    *reinterpret_cast<__nv_bfloat162 *>(g.out + int64_t(p0 + r) * g.n + col) = v;
+                    if (g.tap != nullptr) *reinterpret_cast<__nv_bfloat162 *>(g.tap + int64_t(id) * g.n + col) = v;
+                }
+            }
+        }
+    }
+}
+
 // -- grouped GEMV, decode calls of at most kWarpMaxM tokens (NVFP4 and MXFP8) ----------------------------------------
 // gemm_kernel's arithmetic element for element: the same block terms (each a pure function of its block), chained
 // over the K blocks in order from 0, and the same outer factor. The tile's activation rows are staged in shared
@@ -886,7 +1175,8 @@ cudaError_t launch_warp_gemv(const GemmArgs &g, int max_tiles, cudaStream_t stre
 }
 
 // A call of m tokens: quad_gemv_kernel (NVFP4) / warp_gemv_kernel (MXFP8) when m <= kWarpMaxM and k is the model's
-// (NVFP4: weight scales 2-byte aligned), else gemm_kernel. All of them compute the same bits.
+// (NVFP4: weight scales 2-byte aligned), mma_gemm_kernel (NVFP4) when m > kMmaMinM and n, k are whole CTA tiles and
+// K chunks, else gemm_kernel. All of them compute the same bits.
 template <bool kNvfp4, bool kDown>
 cudaError_t launch_gemm(const GemmArgs &g, int m, int max_tiles, cudaStream_t stream) {
     const uintptr_t sa = reinterpret_cast<uintptr_t>(g.w_scale);
@@ -899,6 +1189,15 @@ cudaError_t launch_gemm(const GemmArgs &g, int m, int max_tiles, cudaStream_t st
             if (m == 1) return launch_warp_gemv<kDown, 1>(g, max_tiles, stream);
             if (m == 2) return launch_warp_gemv<kDown, 2>(g, max_tiles, stream);
             return launch_warp_gemv<kDown, 4>(g, max_tiles, stream);
+        }
+    }
+    if constexpr (kNvfp4) {
+        if (m > kMmaMinM && g.n % kMmaCols == 0 && g.k % kMmaChunk == 0) {
+            const int r = m * kMoeTopK;
+            const dim3 grid(g.n / kMmaCols, (r < g.num_experts ? r : g.num_experts) + r / kMmaRows);
+            if (g.mutant == static_cast<int>(MoeMutant::kBlockOrder))
+                return pdl::launch(mma_gemm_kernel<kDown, true>, grid, dim3(kMmaThreads), 0, stream, g);
+            return pdl::launch(mma_gemm_kernel<kDown, false>, grid, dim3(kMmaThreads), 0, stream, g);
         }
     }
     return pdl::launch(gemm_kernel<kNvfp4, kDown>, dim3((g.n + kGemmThreads - 1) / kGemmThreads, max_tiles),
@@ -962,7 +1261,7 @@ Workspace carve(void *base, int m, bool nvfp4) {
 
 bool valid_mutant(MoeMutant mutant) {
     const int v = static_cast<int>(mutant);
-    return v >= 0 && v <= static_cast<int>(MoeMutant::kAlwaysSix);
+    return v >= 0 && v <= static_cast<int>(MoeMutant::kRouterOrder);
 }
 
 }  // namespace
@@ -972,6 +1271,10 @@ cudaError_t router(const bf16 *x, int64_t x_stride, int m, const bf16 *w, const 
     if (x == nullptr || w == nullptr || bias == nullptr || ids == nullptr || weights == nullptr || m < 1 ||
         m > 65535 || x_stride < H || !valid_mutant(mutant))
         return cudaErrorInvalidValue;
+    if (m > kRouterRowsMin)
+        return pdl::launch(router_rows_kernel, dim3(kRouterCluster, unsigned((m + kRouterRows - 1) / kRouterRows)),
+                           dim3(kRouterThreads), 0, stream, x, x_stride, m, w, bias, ids, weights, logits,
+                           static_cast<int>(mutant));
     return pdl::launch(router_kernel, dim3(kRouterCluster, unsigned(m)), dim3(kRouterThreads), 0, stream, x, x_stride,
                        w, bias, ids, weights, logits, static_cast<int>(mutant));
 }

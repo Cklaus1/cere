@@ -27,7 +27,7 @@ api_compat_anthropic = true
 [deployments.native]
 family = "inkling2_loop"
 library = "/opt/cere/libcere_executor.so"
-library_sha256 = "17d1bb20f5b91c7bea131e6932399ab6a84c9a97a76156ca8f8b2df455d455da"
+library_sha256 = "73395b9ab8c8ec1e0117ec9c1d59ed8ebe257b31f24b16d0041170adc2383c2d"
 artifact_dir = "/var/lib/cere/artifacts/inkling-2-mini-nvfp4-mxfp8-cccd1afeb1fd2ad2"
 expected_manifest_sha256 = "cccd1afeb1fd2ad20f7eee1faa61589400ba3a2aa0c6280f5004c23711dbbc02"
 device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"

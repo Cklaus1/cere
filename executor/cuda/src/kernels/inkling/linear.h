@@ -11,9 +11,10 @@
 // - slice s: p_s = the chain of its 16 mma steps from 0, in window order;
 // - y = bf16_rn(((p_0 + p_1) + p_2) + ... + p_{S-1}) (FP32 adds in slice order).
 // The two kernels run that order: narrow (m <= kLinearNarrowRows; one block per 16 rows of w, slice s on warp s,
-// the partials added by one thread per output in slice order) and wide (blocks of 128 rows of w x 64 inputs, each
+// the partials added by one thread per output in slice order) and wide (blocks of 128 rows of w x 128 inputs, each
 // warp chains the slices of its tile in order). An element's arithmetic is the same in both, wherever its row sits
-// in an mma tile; `path` forces one for the ktest that checks it (test_inkling_kernels_linear.py).
+// in an mma tile; `path` forces one for the ktest that checks it (test_inkling_kernels_linear.py); kWideMutant is the
+// wide kernel with each window's two mma steps in the other order (fail-first, D-I-CPF), never used by the forward.
 //
 // Segments: one call runs up to kLinearMaxSegs projections that share k and m (e.g. q, gate, rel, sink of the q input
 // and k, v, dyn of theirs), each with its own x, w, y. Contract: k a multiple of 256 in [256, 3072]; m in [1, 2^20];
@@ -50,7 +51,7 @@ struct LinearArgs {
     LinearSeg seg[kLinearMaxSegs];
 };
 
-enum class LinearPath : int { kAuto = 0, kNarrow = 1, kWide = 2 };
+enum class LinearPath : int { kAuto = 0, kNarrow = 1, kWide = 2, kWideMutant = 3 };
 
 // kNarrow needs m <= kLinearNarrowRows.
 cudaError_t linear(const LinearArgs &a, cudaStream_t stream, LinearPath path = LinearPath::kAuto);

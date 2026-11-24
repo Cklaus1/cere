@@ -133,13 +133,18 @@ __global__ void __launch_bounds__(32 * kMaxSlices) narrow_kernel(const LinearArg
 }
 
 // ---- wide: any m ----------------------------------------------------------------------------------------------
-// Block tile 128 weight rows x 64 inputs, 8 warps of 32 x 32 (2 m16 x 4 n8), one window per stage, kStages-deep
-// cp.async pipeline. Shared rows are 64 bytes (4 chunks of 8 values), so a fragment load's 8-lane phase (rows 2p,
-// 2p + 1 x chunks 0..3) covers the 32 banks once. Each warp keeps its slice partials and the running total.
-constexpr int kWideRows = 128, kWideInputs = 64, kWideThreads = 256, kStages = 4;
-constexpr int kStageChunks = (kWideRows + kWideInputs) * (kWindow / 8);  // 16-byte chunks per stage
-constexpr int kOutPitch = kWideRows + 8;                                  // epilogue row (bf16), 16-byte multiple
-static_assert(kStages * kStageChunks * 16 >= kWideInputs * kOutPitch * 2, "the epilogue tile fits the stages");
+// Block tile 128 weight rows x 128 inputs, 8 warps of 32 x 64 (2 m16 x 8 n8), one block per SM: 3-deep cp.async
+// pipeline of two windows per stage (one barrier per 64 mma steps of a warp, D-I-CPF). A stage holds per window the
+// 256 rows (weights, then inputs) of 64 bytes (4 chunks of 8 values), so a fragment load's 8-lane phase (rows 2p,
+// 2p + 1 x chunks 0..3) covers the 32 banks once. Each warp keeps its slice partials and the running total. Swap: the
+// fail-first mutant (each window's two mma steps in the other order; LinearPath::kWideMutant).
+constexpr int kWideRows = 128, kWideInputs = 128, kWideThreads = 256, kStages = 3, kStageWindows = 2;
+constexpr int kWindowChunks = (kWideRows + kWideInputs) * (kWindow / 8);  // 16-byte chunks per window
+constexpr int kStageChunks = kStageWindows * kWindowChunks;
+constexpr size_t kWideSmem = size_t(kStages) * kStageChunks * 16;          // 96 KiB (dynamic)
+constexpr int kOutPitch = kWideRows + 8;                                    // epilogue row (bf16), 16-byte multiple
+static_assert(kWideSmem >= size_t(kWideInputs) * kOutPitch * 2, "the epilogue tile fits the stages");
+static_assert(kSliceWindows % kStageWindows == 0, "a stage never straddles a slice");
 
 __device__ __forceinline__ void cp_async16(void *dst, const void *src, bool ok) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
@@ -153,38 +158,46 @@ __device__ __forceinline__ void cp_async_wait() {
     asm volatile("cp.async.wait_group %0;\n" ::"n"(N));
 }
 
-__global__ void __launch_bounds__(kWideThreads, 2) wide_kernel(const LinearArgs a) {
+template <bool Swap>
+__global__ void __launch_bounds__(kWideThreads, 1) wide_kernel(const LinearArgs a) {
     pdl::enter();
-    __shared__ __align__(16) uint4 smem[kStages * kStageChunks];
+    extern __shared__ __align__(16) uint4 smem[];
     const Tile tl = find_tile(a, blockIdx.x, kWideRows);
     const LinearSeg &sg = a.seg[tl.seg];
     const int64_t t0 = int64_t(blockIdx.y) * kWideInputs, k = a.k;
     const int tid = int(threadIdx.x), warp = tid >> 5, lane = tid & 31, g = lane >> 2, c = lane & 3;
-    const int wf = (warp & 3) * 32, wt = (warp >> 2) * 32;
-    const int iters = int(k / kWindow);
+    const int wf = (warp & 3) * 32, wt = (warp >> 2) * 64;
+    const int iters = int(k / (kWindow * kStageWindows));
 
+    // Thread tid loads chunk tid % 4 of weight rows tid / 4 and + 64 and of input rows tid / 4 and + 64, per window.
+    static_assert(kWideThreads == 256 && kWideRows == 128 && kWideInputs == 128, "the load mapping below");
+    const int lr = tid >> 2, lc = tid & 3;
+    const bf16 *src[4];
+    bool ok[4];
+#pragma unroll
+    for (int h = 0; h < 2; ++h) {
+        const int64_t f = tl.f0 + lr + 64 * h, t = t0 + lr + 64 * h;
+        ok[h] = f < sg.n;
+        src[h] = ok[h] ? sg.w + f * k + 8 * lc : sg.w;
+        ok[2 + h] = t < a.m;
+        src[2 + h] = ok[2 + h] ? sg.x + t * sg.ldx + 8 * lc : sg.x;
+    }
     auto load = [&](int it) {
-        uint4 *st = smem + (it % kStages) * kStageChunks;
-        const int64_t kk = int64_t(it) * kWindow;
-        for (int q = tid; q < kStageChunks; q += kWideThreads) {
-            const int row = q >> 2, chunk = q & 3;
-            if (row < kWideRows) {
-                const int64_t f = tl.f0 + row;
-                const bool ok = f < sg.n;
-                cp_async16(st + q, ok ? sg.w + f * k + kk + 8 * chunk : sg.w, ok);
-            } else {
-                const int64_t t = t0 + (row - kWideRows);
-                const bool ok = t < a.m;
-                cp_async16(st + q, ok ? sg.x + t * sg.ldx + kk + 8 * chunk : sg.x, ok);
-            }
-        }
+        uint4 *st = smem + (it % kStages) * kStageChunks + tid;
+        const int kk = it * kWindow * kStageWindows;
+#pragma unroll
+        for (int win = 0; win < kStageWindows; ++win)
+#pragma unroll
+            for (int p = 0; p < 4; ++p)
+                cp_async16(st + win * kWindowChunks + p * kWideThreads, src[p] + (ok[p] ? kk + kWindow * win : 0),
+                           ok[p]);
     };
 
-    float part[2][4][4], total[2][4][4];
+    float part[2][8][4], total[2][8][4];
 #pragma unroll
     for (int i = 0; i < 2; ++i)
 #pragma unroll
-        for (int j = 0; j < 4; ++j)
+        for (int j = 0; j < 8; ++j)
 #pragma unroll
             for (int e = 0; e < 4; ++e) part[i][j][e] = total[i][j][e] = 0.0f;
 
@@ -198,26 +211,36 @@ __global__ void __launch_bounds__(kWideThreads, 2) wide_kernel(const LinearArgs 
         __syncthreads();
         if (it + kStages - 1 < iters) load(it + kStages - 1);
         cp_async_commit();
-        const uint4 *st = smem + (it % kStages) * kStageChunks;
-        const uint4 *bs = st + kWideRows * 4;
-        uint4 r0[2], r1[2], b[4];
+#pragma unroll 1  // one window's fragments live at a time (the 128 accumulators leave no room for two)
+        for (int win = 0; win < kStageWindows; ++win) {
+            const uint4 *st = smem + (it % kStages) * kStageChunks + win * kWindowChunks;
+            const uint4 *bs = st + kWideRows * 4;
+            uint4 r0[2], r1[2];
 #pragma unroll
-        for (int i = 0; i < 2; ++i) {
-            r0[i] = st[(wf + 16 * i + g) * 4 + c];
-            r1[i] = st[(wf + 16 * i + g + 8) * 4 + c];
+            for (int i = 0; i < 2; ++i) {
+                r0[i] = st[(wf + 16 * i + g) * 4 + c];
+                r1[i] = st[(wf + 16 * i + g + 8) * 4 + c];
+            }
+#pragma unroll
+            for (int j = 0; j < 8; ++j) {
+                const uint4 b = bs[(wt + 8 * j + g) * 4 + c];
+#pragma unroll
+                for (int i = 0; i < 2; ++i) {
+                    if constexpr (Swap) {
+                        mma(part[i][j], r0[i].z, r1[i].z, r0[i].w, r1[i].w, b.z, b.w);
+                        mma(part[i][j], r0[i].x, r1[i].x, r0[i].y, r1[i].y, b.x, b.y);
+                    } else {
+                        window(part[i][j], r0[i], r1[i], b);
+                    }
+                }
+            }
         }
-#pragma unroll
-        for (int j = 0; j < 4; ++j) b[j] = bs[(wt + 8 * j + g) * 4 + c];
-#pragma unroll
-        for (int i = 0; i < 2; ++i)
-#pragma unroll
-            for (int j = 0; j < 4; ++j) window(part[i][j], r0[i], r1[i], b[j]);
-        if ((it + 1) % kSliceWindows == 0) {
-            const bool first = it + 1 == kSliceWindows;
+        if (((it + 1) * kStageWindows) % kSliceWindows == 0) {
+            const bool first = (it + 1) * kStageWindows == kSliceWindows;
 #pragma unroll
             for (int i = 0; i < 2; ++i)
 #pragma unroll
-                for (int j = 0; j < 4; ++j)
+                for (int j = 0; j < 8; ++j)
 #pragma unroll
                     for (int e = 0; e < 4; ++e) {
                         total[i][j][e] = first ? part[i][j][e] : __fadd_rn(total[i][j][e], part[i][j][e]);
@@ -233,7 +256,7 @@ __global__ void __launch_bounds__(kWideThreads, 2) wide_kernel(const LinearArgs 
 #pragma unroll
     for (int i = 0; i < 2; ++i)
 #pragma unroll
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < 8; ++j) {
             const int f = wf + 16 * i + g, t = wt + 8 * j + 2 * c;
             out[t * kOutPitch + f] = __float2bfloat16_rn(total[i][j][0]);
             out[(t + 1) * kOutPitch + f] = __float2bfloat16_rn(total[i][j][1]);
@@ -253,6 +276,15 @@ __global__ void __launch_bounds__(kWideThreads, 2) wide_kernel(const LinearArgs 
             for (int j = 0; j < 8 && f + j < sg.n; ++j) y[j] = src[j];
         }
     }
+}
+
+template <bool Swap>
+cudaError_t launch_wide(const LinearArgs &a, int64_t tiles, cudaStream_t stream) {
+    const cudaError_t e =
+        cudaFuncSetAttribute(wide_kernel<Swap>, cudaFuncAttributeMaxDynamicSharedMemorySize, int(kWideSmem));
+    if (e != cudaSuccess) return e;
+    const dim3 grid(unsigned(tiles), unsigned((a.m + kWideInputs - 1) / kWideInputs));
+    return pdl::launch(wide_kernel<Swap>, grid, dim3(kWideThreads), kWideSmem, stream, a);
 }
 
 bool aligned16(const void *p) { return (reinterpret_cast<uintptr_t>(p) & 15u) == 0; }
@@ -285,8 +317,8 @@ cudaError_t linear(const LinearArgs &a, cudaStream_t stream, LinearPath path) {
         if (nt <= 4) return pdl::launch(narrow_kernel<4>, grid, block, 0, stream, a);
         return pdl::launch(narrow_kernel<8>, grid, block, 0, stream, a);
     }
-    const dim3 grid(unsigned(wide_tiles), unsigned((a.m + kWideInputs - 1) / kWideInputs));
-    return pdl::launch(wide_kernel, grid, dim3(kWideThreads), 0, stream, a);
+    return path == LinearPath::kWideMutant ? launch_wide<true>(a, wide_tiles, stream)
+                                           : launch_wide<false>(a, wide_tiles, stream);
 }
 
 }  // namespace cere::inkling

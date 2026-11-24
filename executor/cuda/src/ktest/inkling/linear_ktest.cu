@@ -1,7 +1,7 @@
 // Inkling 2 Mini S8: kernel entry point of libcere_ktest.so over the BF16 projections (kernels/inkling/linear.h), for
 // executor/tests/gpu/test_inkling_kernels_linear.py. segs: host int64 [count, 6], per segment (x, ldx, w, y, ldy, n)
-// with device pointers as integers; path: LinearPath (0 auto, 1 narrow, 2 wide). Enqueues on `stream` and returns the
-// launch status (0 = cudaSuccess).
+// with device pointers as integers; path: LinearPath (0 auto, 1 narrow, 2 wide, 3 the wide fail-first mutant).
+// Enqueues on `stream` and returns the launch status (0 = cudaSuccess).
 #include <climits>
 #include <cstdint>
 
@@ -13,7 +13,7 @@ namespace ink = cere::inkling;
 
 CERE_KTEST int cere_ktest_inkling_linear(const int64_t *segs, int64_t count, int64_t m, int64_t k, int64_t path,
                                          cudaStream_t stream) {
-    if (segs == nullptr || count < 0 || count > INT_MAX || path < 0 || path > 2) return int(cudaErrorInvalidValue);
+    if (segs == nullptr || count < 0 || count > INT_MAX || path < 0 || path > 3) return int(cudaErrorInvalidValue);
     ink::LinearArgs a;
     a.m = m;
     a.k = k;

@@ -33,8 +33,20 @@ constexpr int kMoeMaxTokens = 4096;  // M range of moe_experts / router: 1 .. kM
 //   kGlobalActScale: NVFP4 activation amax = kMutantGlobalAmax for every row (one per-layer scale, K7's) instead of
 //     the per-token amax (the GEMM outer factor uses the same constant);
 //   kGammaAfterDown: the SwiGLU without gamma; the expert output is bf16(mul(y, gamma)) after the down projection;
-//   kAlwaysSix: NVFP4 block scale always the /6 candidate (no fouroversix).
-enum class MoeMutant : int { kNone = 0, kSoftmaxRouting = 1, kGlobalActScale = 2, kGammaAfterDown = 3, kAlwaysSix = 4 };
+//   kAlwaysSix: NVFP4 block scale always the /6 candidate (no fouroversix);
+//   kBlockOrder: the tensor-core NVFP4 GEMM (calls of more than 64 tokens) adds each K chunk's block terms in swapped
+//   pairs (1, 0, 3, 2, ...) instead of in order (D-I-CPF's order change; the other GEMM paths ignore it);
+//   kRouterOrder: the multi-row router (calls of more than 64 tokens) chains each lane's products over K descending
+//   (D-I-CPF's order change; the one-row router ignores it).
+enum class MoeMutant : int {
+    kNone = 0,
+    kSoftmaxRouting = 1,
+    kGlobalActScale = 2,
+    kGammaAfterDown = 3,
+    kAlwaysSix = 4,
+    kBlockOrder = 5,
+    kRouterOrder = 6
+};
 constexpr float kMutantGlobalAmax = 64.0f;
 
 // -- router (ref::route_row) -------------------------------------------------------------------------------------
@@ -42,7 +54,8 @@ constexpr float kMutantGlobalAmax = 64.0f;
 // kMoeHidden] (mlp.gate.weight, contiguous); bias: FP32 [kMoeExperts] (mlp.gate.bias = e_score_correction_bias).
 // Out: ids int32 [m, kMoeTopK] ascending expert ids (slot order), weights FP32 [m, kMoeTopK] (route_scale 8 applied);
 // logits FP32 [m, kMoeExperts] (nullable; the router logits, for the ktests). One 8-CTA cluster per token (16
-// experts per CTA, each logit one warp's ref::reduce_dot<256>); m in 1..65535.
+// experts per CTA, each logit one warp's ref::reduce_dot<256>); calls of more than 64 tokens: one cluster per 8 tokens
+// (the same arithmetic per token, D-I-CPF); m in 1..65535.
 cudaError_t router(const bf16 *x, int64_t x_stride, int m, const bf16 *w, const float *bias, int32_t *ids,
                    float *weights, float *logits, cudaStream_t stream, MoeMutant mutant = MoeMutant::kNone);
 

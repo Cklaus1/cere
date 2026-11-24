@@ -17,12 +17,15 @@ Every case reports row "INKLING_MIX". G1 has three parts per op:
 - determinism: every kernel case runs twice, bit-identical; a row's output does not depend on the batch (a row subset
   run alone equals the same rows inside the batch) and the conv prefill split at any boundary with the state carried
   equals the whole prefill (outputs and final state); conv decode equals the n = 1 prefill of each row's own state;
-  the S8 fusion (the message gates with their weighted norm, up to 3 gates per call) equals the ops apart.
+  the S8 fusion (the message gates with their weighted norm, up to 3 gates per call) equals the ops apart; calls of
+  more than 64 rows take the prefill-sized message kernels (several rows per block, D-I-CPF): rows 129, 134 (a
+  partial last block) and 1,024, and a 3-row subset (the decode-sized kernels) equals the same rows of the larger call.
 - the reference is the REF op: c = rel-L2(torch FP32 transcription of the REF module, with its BF16 rounding points,
   vs FP64) is reported first; the CPU reference must be within max(4e-3, 2c) of the FP64 op (the residual add and
   layer output are bit-exact vs torch instead).
-Fail-first: the conv without residual and scale, the depth mix with a weighted key norm and the message gate with the
-forget and message gates swapped each fail the bit-exact comparison (counted, expected 1).
+Fail-first: the conv without residual and scale, the depth mix with a weighted key norm, the message gate with the
+forget and message gates swapped and the fused gate + norm with the prefill-sized kernels' chains reversed each fail
+the bit-exact comparison (counted, expected 1).
 
 Entry points (libcere_ktest.so; kernels: executor/cuda/src/ktest/inkling/mix_ktest.cu, device pointers;
 references: executor/cuda/src/ktest/inkling/mix_ref_ktest.cpp, host pointers, the stream ignored; int64 sizes, the
@@ -52,8 +55,8 @@ stream last; 0 on success):
     int cere_ktest_inkling_msg_gate(int64_t mutant, const float *h, int64_t ldh, const float *msg, int64_t ldm,
                                     int64_t rows, const void *down, const void *forget, const void *gain, float eps,
                                     float *out, int64_t ldo, cudaStream_t stream);
-    int cere_ktest_inkling_msg_gate_norm(const int64_t *table, int64_t count, int64_t ldh, int64_t ldm, int64_t ldy,
-                                         int64_t rows, float eps, cudaStream_t stream);
+    int cere_ktest_inkling_msg_gate_norm(int64_t mutant, const int64_t *table, int64_t count, int64_t ldh,
+                                         int64_t ldm, int64_t ldy, int64_t rows, float eps, cudaStream_t stream);
         (table: host int64 [count, 7] = h, msg, down, forget, gain, norm_w, y device pointers)
     int cere_ktest_inkling_softcap(float *logits, int64_t rows, int64_t vocab, int64_t ld, cudaStream_t stream);
     int cere_ktest_inkling_ref_rms_norm(const void *x, int64_t x_f32, int64_t ldx, const uint16_t *w, float eps,
@@ -669,16 +672,19 @@ class InklingMixKernels(unittest.TestCase):
         calls = (("mlp", ("mlp",), False), ("qkv full", ("attn", "k", "v"), False),
                  ("qkv sliding", ("attn", "k", "v"), True))
 
-        def fused(gates, hs, msgs):
+        def fused(gates, hs, msgs, mutant=0):
             rows = hs[0].shape[0]
             ys = [oracle.empty((rows, H), torch.bfloat16) for _ in gates]
             table = torch.tensor([[hs[j].data_ptr(), msgs[j].data_ptr(), *[w.data_ptr() for w in weights[g]],
                                    norms[j].data_ptr(), ys[j].data_ptr()] for j, g in enumerate(gates)],
                                  dtype=torch.int64)
-            oracle.call("cere_ktest_inkling_msg_gate_norm", table, len(gates), H, H, H, rows, EPS)
+            oracle.call("cere_ktest_inkling_msg_gate_norm", mutant, table, len(gates), H, H, H, rows, EPS)
             return ys
 
-        for rows in (1, 4, 64, 129):
+        # The reversed chains change FP32 bits that the BF16 roundings (d, then y) mostly hide: the fail-first check
+        # pools every call of more than 64 rows (1,024 rows among them).
+        mut_all, ys_all = [], []
+        for rows in (1, 4, 64, 129, 134, 1024):
             h_all = [_randn((rows, H), 300 + 10 * rows + j, 3.0) for j in range(3)]
             msgs = [_randn((rows, H), 400 + 10 * rows + j, 3.0) for j in range(3)]
             if rows >= 4:
@@ -701,6 +707,11 @@ class InklingMixKernels(unittest.TestCase):
                         for j, g in enumerate(gates):
                             oracle.check_bit_exact(self, ROW, f"{case} gate {g} rows 10..13 alone", _host(part[j]),
                                                    _host(ys[j][10:13]))
+                    if rows > 64:
+                        mut_all += fused(gates, hs, msgs, mutant=1)
+                        ys_all += ys
+        _fail_first(self, "msg_gate_norm prefill kernels' chains reversed (calls of more than 64 rows)",
+                    torch.cat(mut_all), torch.cat(ys_all))
 
     # -- logit softcap --------------------------------------------------------------------------------------------
 

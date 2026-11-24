@@ -1,0 +1,1262 @@
+{
+  "cered_sha256": "d33db7e06a682875f0df44fea546454e87498137b180320f8ffd5c2ecafe6751",
+  "commit": "development repository",
+  "configs": {
+    "a": "build/native/teleport-20261123T195946Z/install-a.toml",
+    "b": "build/native/teleport-20261123T195946Z/install-b.toml"
+  },
+  "derive_errors": {},
+  "gates": {
+    "a_e2e": {
+      "pass": true,
+      "rows_ok": 9,
+      "sizes": {
+        "loopback": [
+          "128K",
+          "18K",
+          "72K"
+        ],
+        "tailnet-relay": [
+          "128K",
+          "18K",
+          "72K"
+        ]
+      }
+    },
+    "b_rule": {
+      "agrees_with_measured_teleport": 26,
+      "pass": true,
+      "replay_when_transfer_loses": 18,
+      "rows": 27,
+      "transfer_loses": 18
+    },
+    "c_vault": {
+      "exported": 9,
+      "files": 9,
+      "pass": true,
+      "sealed": 9
+    },
+    "pass": true,
+    "phases_ok": true
+  },
+  "installs": {
+    "gpu0_under_a": {
+      "executor_limit_mib": 81920,
+      "total_mib": 97887,
+      "used_mib": 80660
+    },
+    "secrets_differ": true,
+    "sequential_reason": "two loads do not fit: the executor may take 81920 MiB of GPU0"
+  },
+  "k3": {
+    "tailnet-hop": {
+      "answers": {
+        "128000": {
+          "mode": "replay",
+          "reprefill_ms": 12809.6,
+          "teleport_ms": 21841.3
+        },
+        "17984": {
+          "mode": "replay",
+          "reprefill_ms": 1751.3,
+          "teleport_ms": 3786.2
+        },
+        "200000": {
+          "mode": "replay",
+          "reprefill_ms": 20251.8,
+          "teleport_ms": 33608.5
+        },
+        "72000": {
+          "mode": "replay",
+          "reprefill_ms": 7021.3,
+          "teleport_ms": 12689.1
+        }
+      },
+      "replay_everywhere": true
+    },
+    "tailnet-relay": {
+      "answers": {
+        "128000": {
+          "mode": "replay",
+          "reprefill_ms": 12809.6,
+          "teleport_ms": 38255.5
+        },
+        "17984": {
+          "mode": "replay",
+          "reprefill_ms": 1751.3,
+          "teleport_ms": 6581.3
+        },
+        "200000": {
+          "mode": "replay",
+          "reprefill_ms": 20251.8,
+          "teleport_ms": 58935.7
+        },
+        "72000": {
+          "mode": "replay",
+          "reprefill_ms": 7021.3,
+          "teleport_ms": 22170.9
+        }
+      },
+      "replay_everywhere": true
+    }
+  },
+  "k3_verdict": "K3 fires on the measured tailnet link (a 1 GbE LAN path, the fastest real inter-host link the owner has): WAN L2 is skipped; S4 ships same-host (loopback) and vault teleport, and the rule answers replay across hosts.",
+  "library_sha256": "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453",
+  "link": "direct LAN/UDP, rtt 1ms",
+  "phases": {
+    "destination": {
+      "ok": true,
+      "s": 200.5
+    },
+    "gpu0_under_a": {
+      "ok": true,
+      "s": 0.0
+    },
+    "probe_link": {
+      "ok": true,
+      "s": 6.4
+    },
+    "relay": {
+      "ok": true,
+      "s": 200.0
+    },
+    "secret_a": {
+      "ok": true,
+      "s": 0.0
+    },
+    "source": {
+      "ok": true,
+      "s": 147.6
+    },
+    "vault_remove": {
+      "ok": true,
+      "s": 1.3
+    }
+  },
+  "probe": {
+    "bytes": 268435456,
+    "pull_mb_per_s": 96.7,
+    "pull_ms": 2776.5,
+    "push_mb_per_s": 95.3,
+    "push_ms": 2817.9,
+    "relay_mb_per_s": 48.0
+  },
+  "profile_id": "native-g0-qwen38-flash-next-v8-snapshot",
+  "rows": [
+    {
+      "blob_sha256": "837017a8c05b3233ea0c6ae3d8c708f9b0f8b2ada356ed9eb660812edb52fb21",
+      "cold_a_ttft_ms": 1728.18,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 294886155,
+        "headers_ms": 220.6,
+        "image_bytes": 294884352,
+        "ms": 337.6,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 17984
+      },
+      "id": "18K-00",
+      "loopback": {
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 84.48,
+        "identical": true,
+        "import_ms": 477.9,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18014
+      },
+      "messages_sha256": "95b8ad94032c3382fe3ae0f81ae9ba0e9e369315bc6e44d76a0231bd65d9e157",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 815.5,
+          "reprefill_ms": 1758.63,
+          "teleport_ms": 900.0,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 3935.2,
+          "reprefill_ms": 1758.63,
+          "teleport_ms": 4026.6,
+          "transfer_ms": 3117.7
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 6959.8,
+          "reprefill_ms": 1758.63,
+          "teleport_ms": 7051.2,
+          "transfer_ms": 6142.3
+        }
+      },
+      "reprefill_ms": 1758.63,
+      "size": "18K",
+      "tailnet-relay": {
+        "bytes": 294886155,
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 91.41,
+        "identical": true,
+        "import_ms": 479.9,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18014,
+        "pull_ms": 3024.6,
+        "push_ms": 3117.7,
+        "sha256_equal": true,
+        "transfer_ms": 6142.3
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "2678fa21395308d6d376617c72dfab4e1bc22b27398d6ab44416581e44423dcd"
+    },
+    {
+      "blob_sha256": "20cacb9f219dfd14bf9391f40ac86c1f35927428ac257cd8f48c8a4c4590d8ce",
+      "cold_a_ttft_ms": 1739.1,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 294886155,
+        "headers_ms": 228.3,
+        "image_bytes": 294884352,
+        "ms": 427.6,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 17984
+      },
+      "id": "18K-01",
+      "loopback": {
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 90.85,
+        "identical": true,
+        "import_ms": 468.8,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18015
+      },
+      "messages_sha256": "ae2a41178416c6c192b8c553b12cd9d2cf0f08cd96dcd857295a7c11a7a1fc0a",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 896.4,
+          "reprefill_ms": 1746.27,
+          "teleport_ms": 987.2,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 3975.1,
+          "reprefill_ms": 1746.27,
+          "teleport_ms": 4063.2,
+          "transfer_ms": 3085.9
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 6924.7,
+          "reprefill_ms": 1746.27,
+          "teleport_ms": 7012.8,
+          "transfer_ms": 6035.5
+        }
+      },
+      "reprefill_ms": 1746.27,
+      "size": "18K",
+      "tailnet-relay": {
+        "bytes": 294886155,
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 88.09,
+        "identical": true,
+        "import_ms": 461.6,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18015,
+        "pull_ms": 2949.6,
+        "push_ms": 3085.9,
+        "sha256_equal": true,
+        "transfer_ms": 6035.5
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "cbf27f5e400274a5da13787e4291c4f29f46b9c1a94014a13a6fba7823330f74"
+    },
+    {
+      "blob_sha256": "bf1acbe6624d843d2fa235e7e1dfd289edf2d7ca433049b2a8bce364d8f8115d",
+      "cold_a_ttft_ms": 1814.94,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 294886155,
+        "headers_ms": 220.2,
+        "image_bytes": 294884352,
+        "ms": 475.8,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 17984
+      },
+      "id": "18K-02",
+      "loopback": {
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 100.89,
+        "identical": true,
+        "import_ms": 481.6,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18015
+      },
+      "messages_sha256": "7885b5e2cd537b6ea55fd81268ae668bd1bcdf5ea49df99c44fe6ea1be85a32c",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 957.4,
+          "reprefill_ms": 1751.3,
+          "teleport_ms": 1058.3,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 4056.9,
+          "reprefill_ms": 1751.3,
+          "teleport_ms": 4154.6,
+          "transfer_ms": 3113.2
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 7044.7,
+          "reprefill_ms": 1751.3,
+          "teleport_ms": 7142.4,
+          "transfer_ms": 6101.0
+        }
+      },
+      "reprefill_ms": 1751.3,
+      "size": "18K",
+      "tailnet-relay": {
+        "bytes": 294886155,
+        "cached_tokens": 17984,
+        "first_ok": true,
+        "first_ttft_ms": 97.74,
+        "identical": true,
+        "import_ms": 467.9,
+        "import_ok": true,
+        "imported_tokens": 17984,
+        "prompt_tokens": 18015,
+        "pull_ms": 2987.8,
+        "push_ms": 3113.2,
+        "sha256_equal": true,
+        "transfer_ms": 6101.0
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "7c7d7034d24a13895d1c8bd209c12d084dbf85f070e6c38f87742d5e200f7d70"
+    },
+    {
+      "blob_sha256": "6e2df52001746cd2840fa7155a69a641add6d9d7aec1d08afbe675631912892f",
+      "cold_a_ttft_ms": 6954.59,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1000337804,
+        "headers_ms": 775.1,
+        "image_bytes": 1000333312,
+        "ms": 1416.5,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 72000
+      },
+      "id": "72K-00",
+      "loopback": {
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 194.84,
+        "identical": true,
+        "import_ms": 1628.0,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72019
+      },
+      "messages_sha256": "27d9655841c71308ddac7314057f37eb7410609e5348911d7c446345f0a9f740",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 3044.5,
+          "reprefill_ms": 6986.04,
+          "teleport_ms": 3239.3,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 12538.6,
+          "reprefill_ms": 6986.04,
+          "teleport_ms": 12726.7,
+          "transfer_ms": 9428.3
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 22105.0,
+          "reprefill_ms": 6986.04,
+          "teleport_ms": 22293.1,
+          "transfer_ms": 18994.7
+        }
+      },
+      "reprefill_ms": 6986.04,
+      "size": "72K",
+      "tailnet-relay": {
+        "bytes": 1000337804,
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 188.09,
+        "identical": true,
+        "import_ms": 1693.8,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72019,
+        "pull_ms": 9566.4,
+        "push_ms": 9428.3,
+        "sha256_equal": true,
+        "transfer_ms": 18994.7
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "84e25929337fcfe04c4556bb0ec71377123a5d93b49d4eb1c34c18e508788b05"
+    },
+    {
+      "blob_sha256": "2a07729096d3cd05cb9464a73eac084c805939354bfb88ed70293382a831dcbc",
+      "cold_a_ttft_ms": 6999.6,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1000337804,
+        "headers_ms": 773.1,
+        "image_bytes": 1000333312,
+        "ms": 1250.8,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 72000
+      },
+      "id": "72K-01",
+      "loopback": {
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 182.91,
+        "identical": true,
+        "import_ms": 1575.3,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72015
+      },
+      "messages_sha256": "a80e7fcb2a3d88a5702e6f228dab308f6c04089d89f77a858c34bbbb7eb99187",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 2826.1,
+          "reprefill_ms": 7021.27,
+          "teleport_ms": 3009.0,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 12273.1,
+          "reprefill_ms": 7021.27,
+          "teleport_ms": 12487.5,
+          "transfer_ms": 9385.3
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 21778.8,
+          "reprefill_ms": 7021.27,
+          "teleport_ms": 21993.2,
+          "transfer_ms": 18891.0
+        }
+      },
+      "reprefill_ms": 7021.27,
+      "size": "72K",
+      "tailnet-relay": {
+        "bytes": 1000337804,
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 214.4,
+        "identical": true,
+        "import_ms": 1637.0,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72015,
+        "pull_ms": 9505.7,
+        "push_ms": 9385.3,
+        "sha256_equal": true,
+        "transfer_ms": 18891.0
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "9d88a0120e0d63a798142737ab617d0e90af5d3108759faf415cc788948460a1"
+    },
+    {
+      "blob_sha256": "e8c6484ec82b586eb323117245bdca4049c471543ce3fe4ac34240e8e558ce15",
+      "cold_a_ttft_ms": 7019.24,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1000337804,
+        "headers_ms": 755.9,
+        "image_bytes": 1000333312,
+        "ms": 1535.8,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 72000
+      },
+      "id": "72K-02",
+      "loopback": {
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 187.82,
+        "identical": true,
+        "import_ms": 1620.8,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72017
+      },
+      "messages_sha256": "b24cf3c8f7d5bcbb48f6d9996851d12f0a72b1f2639759a8ba1b266d29888a16",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 3156.6,
+          "reprefill_ms": 7067.17,
+          "teleport_ms": 3344.4,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 12575.2,
+          "reprefill_ms": 7067.17,
+          "teleport_ms": 12757.2,
+          "transfer_ms": 9426.5
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 22041.5,
+          "reprefill_ms": 7067.17,
+          "teleport_ms": 22223.5,
+          "transfer_ms": 18892.8
+        }
+      },
+      "reprefill_ms": 7067.17,
+      "size": "72K",
+      "tailnet-relay": {
+        "bytes": 1000337804,
+        "cached_tokens": 72000,
+        "first_ok": true,
+        "first_ttft_ms": 181.97,
+        "identical": true,
+        "import_ms": 1612.9,
+        "import_ok": true,
+        "imported_tokens": 72000,
+        "prompt_tokens": 72017,
+        "pull_ms": 9466.3,
+        "push_ms": 9426.5,
+        "sha256_equal": true,
+        "transfer_ms": 18892.8
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "2db909b65ff52224efcd3fac642be88aa5cb517f1556bae37b686d08319600f3"
+    },
+    {
+      "blob_sha256": "4d31acc6a16413c7b053c285008ec1ee68a6f6a49db2a201f5c3cf4c1b4fbcbe",
+      "cold_a_ttft_ms": 12771.89,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1731700589,
+        "headers_ms": 1273.7,
+        "image_bytes": 1731693312,
+        "ms": 2374.2,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 128000
+      },
+      "id": "128K-00",
+      "loopback": {
+        "cached_tokens": 128000,
+        "first_ok": true,
+        "first_ttft_ms": 247.04,
+        "identical": true,
+        "import_ms": 2796.4,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128003
+      },
+      "messages_sha256": "8c9de4f0318634a8564769e411ab08df0921535d4847ae00d73534774dc9bd30",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 5170.6,
+          "reprefill_ms": 12740.92,
+          "teleport_ms": 5417.6,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 21351.5,
+          "reprefill_ms": 12740.92,
+          "teleport_ms": 21602.2,
+          "transfer_ms": 16155.0
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 37563.3,
+          "reprefill_ms": 12740.92,
+          "teleport_ms": 37814.1,
+          "transfer_ms": 32366.8
+        }
+      },
+      "reprefill_ms": 12740.92,
+      "size": "128K",
+      "tailnet-relay": {
+        "bytes": 1731700589,
+        "cached_tokens": 128000,
+        "first_ok": true,
+        "first_ttft_ms": 250.75,
+        "identical": true,
+        "import_ms": 2822.3,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128003,
+        "pull_ms": 16211.8,
+        "push_ms": 16155.0,
+        "sha256_equal": true,
+        "transfer_ms": 32366.8
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "de8c0b088793ceec437f5a1759b42359c7cf37458e2eff9322af145c244bb907"
+    },
+    {
+      "blob_sha256": "b9343fc844dc675d866c4298d80ef358f56055df6e97e025e201e3cdb67ffda2",
+      "cold_a_ttft_ms": 12869.23,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1731700589,
+        "headers_ms": 1337.3,
+        "image_bytes": 1731693312,
+        "ms": 2161.8,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 128000
+      },
+      "id": "128K-01",
+      "loopback": {
+        "cached_tokens": 0,
+        "first_ok": true,
+        "first_ttft_ms": 13127.98,
+        "identical": true,
+        "import_ms": 3015.6,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128000
+      },
+      "messages_sha256": "6670b6faea7e62c2917980cf88ddaa7f941a797377325e6a67d68911cdc7926c",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 5177.4,
+          "reprefill_ms": 12896.47,
+          "teleport_ms": 18305.4,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 21341.1,
+          "reprefill_ms": 12896.47,
+          "teleport_ms": 34392.2,
+          "transfer_ms": 16208.1
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 37649.3,
+          "reprefill_ms": 12896.47,
+          "teleport_ms": 50700.4,
+          "transfer_ms": 32516.3
+        }
+      },
+      "reprefill_ms": 12896.47,
+      "size": "128K",
+      "tailnet-relay": {
+        "bytes": 1731700589,
+        "cached_tokens": 0,
+        "first_ok": true,
+        "first_ttft_ms": 13051.13,
+        "identical": true,
+        "import_ms": 2971.2,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128000,
+        "pull_ms": 16308.2,
+        "push_ms": 16208.1,
+        "sha256_equal": true,
+        "transfer_ms": 32516.3
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "610821882d709d5d64d4e65468c4c1adab4a3b3321ccc376b100a4cecce65250"
+    },
+    {
+      "blob_sha256": "65db5e5bb3847f8ef4642d17c7ecf51d1a1601850b4ee6bd1d18c66d5b96a4d9",
+      "cold_a_ttft_ms": 12807.78,
+      "cold_ok": true,
+      "export": {
+        "blob_bytes": 1731700589,
+        "headers_ms": 1405.9,
+        "image_bytes": 1731693312,
+        "ms": 2588.7,
+        "state_compat_id": "45e27738700cf9af151d94de2ec2074eb07d1f5072794f2f5ff18cf678d181fc",
+        "tokens": 128000
+      },
+      "id": "128K-02",
+      "loopback": {
+        "cached_tokens": 128000,
+        "first_ok": true,
+        "first_ttft_ms": 287.56,
+        "identical": true,
+        "import_ms": 2323.9,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128004
+      },
+      "messages_sha256": "b972b52dea30f0b18d3387e2cec695b6a57b44ff419eb40905d2158df45a85fd",
+      "ok": true,
+      "paths": {
+        "loopback": {
+          "derived": false,
+          "e2e_ms": 4912.6,
+          "reprefill_ms": 12809.63,
+          "teleport_ms": 5200.2,
+          "transfer_ms": 0.0
+        },
+        "tailnet-hop": {
+          "derived": true,
+          "e2e_ms": 20325.3,
+          "reprefill_ms": 12809.63,
+          "teleport_ms": 20583.5,
+          "transfer_ms": 15977.3
+        },
+        "tailnet-relay": {
+          "derived": false,
+          "e2e_ms": 36482.7,
+          "reprefill_ms": 12809.63,
+          "teleport_ms": 36740.9,
+          "transfer_ms": 32134.7
+        }
+      },
+      "reprefill_ms": 12809.63,
+      "size": "128K",
+      "tailnet-relay": {
+        "bytes": 1731700589,
+        "cached_tokens": 128000,
+        "first_ok": true,
+        "first_ttft_ms": 258.24,
+        "identical": true,
+        "import_ms": 1759.3,
+        "import_ok": true,
+        "imported_tokens": 128000,
+        "prompt_tokens": 128004,
+        "pull_ms": 16157.4,
+        "push_ms": 15977.3,
+        "sha256_equal": true,
+        "transfer_ms": 32134.7
+      },
+      "warm_completion_tokens": 128,
+      "warm_ok": true,
+      "warm_text_sha256": "64bbe970231cc05b588b380d2ff64254aa259421748d563f7b8a0c70784db625"
+    }
+  ],
+  "rule": [
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-00",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "18K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-00",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-00",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-01",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "18K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-01",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-01",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-02",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "18K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-02",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "18K-02",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "18K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-00",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "72K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-00",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-00",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-01",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "72K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-01",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-01",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-02",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "72K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-02",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "72K-02",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "72K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-00",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "128K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-00",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-00",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": false,
+      "bar_ok": true,
+      "id": "128K-01",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-01",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-01",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-02",
+      "mode": "state",
+      "path": "loopback",
+      "reason": "state_faster",
+      "size": "128K",
+      "teleport_loses": false,
+      "transfer_loses": false
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-02",
+      "mode": "replay",
+      "path": "tailnet-relay",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    },
+    {
+      "agrees": true,
+      "bar_ok": true,
+      "id": "128K-02",
+      "mode": "replay",
+      "path": "tailnet-hop",
+      "reason": "reprefill_faster",
+      "size": "128K",
+      "teleport_loses": true,
+      "transfer_loses": true
+    }
+  ],
+  "table": {
+    "boards": {
+      "rtx-pro-6000": {
+        "rows": [
+          {
+            "blob_bytes": 294886155,
+            "export_ms": 427.6,
+            "first_turn_ms": 90.85,
+            "image_bytes": 294884352,
+            "import_ms": 477.9,
+            "n": 3,
+            "reprefill_ms": 1751.3,
+            "size": "18K",
+            "tokens": 17984
+          },
+          {
+            "blob_bytes": 1000337804,
+            "export_ms": 1416.5,
+            "first_turn_ms": 187.82,
+            "image_bytes": 1000333312,
+            "import_ms": 1620.8,
+            "n": 3,
+            "reprefill_ms": 7021.27,
+            "size": "72K",
+            "tokens": 72000
+          },
+          {
+            "blob_bytes": 1731700589,
+            "export_ms": 2374.2,
+            "first_turn_ms": 287.56,
+            "image_bytes": 1731693312,
+            "import_ms": 2796.4,
+            "n": 3,
+            "reprefill_ms": 12809.63,
+            "size": "128K",
+            "tokens": 128000
+          }
+        ]
+      }
+    },
+    "links": {
+      "loopback": {
+        "note": "one host: the blob crosses inside export and import (the client's spool)",
+        "transfer_mb_per_s": null
+      },
+      "tailnet-hop": {
+        "note": "one direct hop between two hosts, at the measured push rate to node-b (inferred: no second CC 12.0 host exists)",
+        "transfer_mb_per_s": 105.7
+      },
+      "tailnet-relay": {
+        "note": "push to and pull from the node-b vault (two hops)",
+        "transfer_mb_per_s": 52.8
+      }
+    },
+    "measured": {
+      "board": "RTX PRO 6000 Blackwell (GPU0)",
+      "commit": "development repository",
+      "library_sha256": "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453",
+      "profile_id": "native-g0-qwen38-flash-next-v8-snapshot",
+      "report": "bench/reports/teleport_bench-20261123T195946Z.json",
+      "utc": "20261123T195946Z"
+    },
+    "probe": {
+      "bytes": 268435456,
+      "pull_mb_per_s": 96.7,
+      "pull_ms": 2776.5,
+      "push_mb_per_s": 95.3,
+      "push_ms": 2817.9,
+      "relay_mb_per_s": 48.0
+    },
+    "schema": "cere-teleport-estimates/1"
+  },
+  "utc": "20261123T195946Z",
+  "vault": "node-b-wsl:/var/lib/cere/teleport-vault/20261123T195946Z",
+  "vault_scan": {
+    "dir": "/var/lib/cere/teleport-vault/20261123T195946Z",
+    "files": {
+      "01138b7a320778ac67c97ee49ef8bcff.cstb": {
+        "bytes": 294886155,
+        "entropy_min": 7.99981,
+        "entropy_windows": 18,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 17984
+      },
+      "145485cb03344da4633609dd4b6578ed.cstb": {
+        "bytes": 1731700589,
+        "entropy_min": 7.99979,
+        "entropy_windows": 104,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 128000
+      },
+      "484cb87f827d71a4a303b3769bec65fe.cstb": {
+        "bytes": 1000337804,
+        "entropy_min": 7.99979,
+        "entropy_windows": 60,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 72000
+      },
+      "7308d2197a23be4c5fd72ebf704f044a.cstb": {
+        "bytes": 1731700589,
+        "entropy_min": 7.99978,
+        "entropy_windows": 104,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 128000
+      },
+      "7a7170baaa9d7026d42467b13eeb41d9.cstb": {
+        "bytes": 1000337804,
+        "entropy_min": 7.99979,
+        "entropy_windows": 60,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 72000
+      },
+      "8c977a3c495dba6037428f6d2a7667cb.cstb": {
+        "bytes": 1000337804,
+        "entropy_min": 7.99978,
+        "entropy_windows": 60,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 72000
+      },
+      "92fce208130125c91eaaeb3d6f4de7b4.cstb": {
+        "bytes": 294886155,
+        "entropy_min": 7.99981,
+        "entropy_windows": 18,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 17984
+      },
+      "d8c16422478922dab3e6d1b9baf421e8.cstb": {
+        "bytes": 294886155,
+        "entropy_min": 7.9998,
+        "entropy_windows": 18,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 17984
+      },
+      "ea906eabbdcf4d866d37177c57a815e5.cstb": {
+        "bytes": 1731700589,
+        "entropy_min": 7.99979,
+        "entropy_windows": 104,
+        "header": true,
+        "image_magic": 0,
+        "magic": true,
+        "sealed": true,
+        "size_matches": true,
+        "token_id_runs": 0,
+        "tokens": 128000
+      }
+    },
+    "missing": [],
+    "pass": true
+  },
+  "wall_s": 556.0,
+  "wrong_key": {
+    "code": "state_wrong_key",
+    "import_ok": false,
+    "pass": true
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "boards": {
+    "rtx-pro-6000": {
+      "rows": [
+        {
+          "blob_bytes": 294886155,
+          "export_ms": 427.6,
+          "first_turn_ms": 90.85,
+          "image_bytes": 294884352,
+          "import_ms": 477.9,
+          "n": 3,
+          "reprefill_ms": 1751.3,
+          "size": "18K",
+          "tokens": 17984
+        },
+        {
+          "blob_bytes": 1000337804,
+          "export_ms": 1416.5,
+          "first_turn_ms": 187.82,
+          "image_bytes": 1000333312,
+          "import_ms": 1620.8,
+          "n": 3,
+          "reprefill_ms": 7021.27,
+          "size": "72K",
+          "tokens": 72000
+        },
+        {
+          "blob_bytes": 1731700589,
+          "export_ms": 2374.2,
+          "first_turn_ms": 287.56,
+          "image_bytes": 1731693312,
+          "import_ms": 2796.4,
+          "n": 3,
+          "reprefill_ms": 12809.63,
+          "size": "128K",
+          "tokens": 128000
+        }
+      ]
+    }
+  },
+  "links": {
+    "loopback": {
+      "note": "one host: the blob crosses inside export and import (the client's spool)",
+      "transfer_mb_per_s": null
+    },
+    "tailnet-hop": {
+      "note": "one direct hop between two hosts, at the measured push rate to node-b (inferred: no second CC 12.0 host exists)",
+      "transfer_mb_per_s": 105.7
+    },
+    "tailnet-relay": {
+      "note": "push to and pull from the node-b vault (two hops)",
+      "transfer_mb_per_s": 52.8
+    }
+  },
+  "measured": {
+    "board": "RTX PRO 6000 Blackwell (GPU0)",
+    "commit": "development repository",
+    "library_sha256": "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453",
+    "profile_id": "native-g0-qwen38-flash-next-v8-snapshot",
+    "report": "bench/reports/teleport_bench-20261123T195946Z.json",
+    "utc": "20261123T195946Z"
+  },
+  "probe": {
+    "bytes": 268435456,
+    "pull_mb_per_s": 96.7,
+    "pull_ms": 2776.5,
+    "push_mb_per_s": 95.3,
+    "push_ms": 2817.9,
+    "relay_mb_per_s": 48.0
+  },
+  "schema": "cere-teleport-estimates/1"
+}

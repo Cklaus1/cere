@@ -12,6 +12,8 @@ at k = 3,072; the unembed (200,058) at k = 2,304. Every case reports row "INKLIN
 - accuracy: the FP64 product is the reference; c = rel-L2(torch's BF16 matmul, FP64) is reported first, the kernel
   must be within max(4e-3, 2c).
 - refusals: malformed arguments return a nonzero status and write nothing.
+- fail-first (D-I-CPF): the wide kernel with each window's two mma steps in the other order (path 3) differs from
+  the narrow kernel on a 4,096-row prefill (the bit-exact check would refuse it).
 - timing (reported only): the forward's projection calls at decode (m 1, 4, 64) and a 4,096-row prefill.
 
 Entry point (libcere_ktest.so, executor/cuda/src/ktest/inkling/linear_ktest.cu; int64 sizes, the stream last, 0 on
@@ -19,7 +21,7 @@ success):
     int cere_ktest_inkling_linear(const int64_t *segs, int64_t count, int64_t m, int64_t k, int64_t path,
                                   cudaStream_t stream);
   segs: host int64 [count, 6] = (x, ldx, w, y, ldy, n) per segment, device pointers as integers; path 0 auto,
-  1 narrow (m <= 64), 2 wide.
+  1 narrow (m <= 64), 2 wide, 3 the wide fail-first mutant.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ import oracle
 ROW = "INKLING_LINEAR"
 H = 2304
 QROW = 3072
-AUTO, NARROW, WIDE = 0, 1, 2
+AUTO, NARROW, WIDE, WIDE_MUTANT = 0, 1, 2, 3
 NARROW_ROWS = 64
 SHAPES = (("q", QROW, H), ("rel", 384, H), ("sink", 24, H), ("kv", 1024, H), ("dyn", 32, H), ("o", H, QROW),
           ("unembed", 200058, H))
@@ -77,6 +79,11 @@ def _host(t: torch.Tensor) -> torch.Tensor:
     return t.detach().to(CPU).contiguous()
 
 
+def _differ(a: torch.Tensor, b: torch.Tensor) -> int:
+    """Elements whose bytes differ (a, b same dtype and shape, on the CPU)."""
+    return int((a.contiguous().view(torch.int16) != b.contiguous().view(torch.int16)).sum().item())
+
+
 class InklingLinear(unittest.TestCase):
 
     def test_batch_invariance(self):
@@ -115,6 +122,11 @@ class InklingLinear(unittest.TestCase):
             oracle.check_bit_exact(self, ROW, f"{name} m=4096 vs 512-row chunks", _host(chunks), _host(whole))
             oracle.check_bit_exact(self, ROW, f"{name} m=4096 last 100 rows vs narrow", _host(_narrow(x[-100:], w)),
                                    _host(whole[-100:]))
+            differing = _differ(_host(_run(x, w, WIDE_MUTANT)), _host(whole))
+            oracle.report_row(ROW, f"{name} wide mma steps swapped mutant", phase="fail_first", differing=differing,
+                              passed=differing > 0)
+            oracle.check_count(self, ROW, f"{name} mutant refused by the bit-exact check", int(differing > 0),
+                               expected=1)
 
     def test_segments(self):
         m = 37
@@ -177,6 +189,7 @@ class InklingLinear(unittest.TestCase):
             "n 0": ([(x, k + 8, w, y, 32, 0)], m, k, AUTO),
             "null w": ([(x, k + 8, 0, y, 32, n)], m, k, AUTO),
             "count 0": ([], m, k, AUTO),
+            "path 4": ([ok], m, k, 4),
             "count 9": ([ok] * 9, m, k, AUTO),
         }
         for name, (segs, mm, kk, path) in cases.items():

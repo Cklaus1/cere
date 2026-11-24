@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 
 #include "kernels/inkling/depth.h"
+#include "kernels/inkling/msg.h"
 
 namespace cere::inkling::mutant {
 
@@ -28,5 +29,10 @@ cudaError_t depth_mix_weighted_norm(const DepthStates &states, int64_t rows, con
 cudaError_t msg_gate_swapped(const float *h, int64_t ldh, const float *msg, int64_t ldm, int64_t rows,
                              const bf16 *down, const bf16 *forget, const bf16 *gain, float eps, float *out,
                              int64_t ldo, float *ws, cudaStream_t stream);
+
+// msg_gate_norm with the prefill-sized kernels' chains reversed (rows > 64: the down projection's lane chains over jj
+// descending, the norm's sum of squares over j descending; D-I-CPF).
+cudaError_t msg_gate_norm_reversed(const MsgGateNorm *gates, int count, int64_t ldh, int64_t ldm, int64_t ldy,
+                                   int64_t rows, float eps, float *ws, cudaStream_t stream);
 
 }  // namespace cere::inkling::mutant
