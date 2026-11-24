@@ -1,0 +1,169 @@
+{
+  "schema_version": "2",
+  "plugin": "llamacpp-http",
+  "profile_id": "llamacpp-qwen38-flash-next-iq3xxs-v1",
+  "artifact_sha256": "39ad4b0b345954470eb9c644b4898aea98f7c92e2e0c59c9bcb0e5b77bb0b42e",
+  "execution_mode": "backend_managed",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text",
+    "tool_calls",
+    "json_schema"
+  ],
+  "json_schema_dialect": "json-schema-2020-12/llamacpp-162e2bb2e",
+  "json_schema_keywords": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "enum",
+    "const",
+    "anyOf",
+    "allOf",
+    "$ref",
+    "$defs",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "title",
+    "description",
+    "default"
+  ],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "notes": "Backend-declared, unmeasured by CERE. Lab only, not a twin of the production NVFP4 deployment: Qwen3.8-Flash-Next as ISTA-DASLab's GSQ-RCO IQ3_XXS GGUF (3.0 bits per weight, 2 shards, sha256 equal to the release SHA256SUMS; owner's existing files), served by llama.cpp llama-server (commit 162e2bb2e, HIP gfx1151) behind cere-llamacpp-shim on AMD's Radeon 8060S. llama.cpp owns batching, KV cache and scheduling. MTP speculative decoding (llama.cpp draft-mtp, 3 draft tokens per round) from an MTP-only GGUF converted at bf16 by llama.cpp's own converter (convert_hf_to_gguf.py --mtp) from the official BF16 MTP tensors of Qwen/Qwen3.8-Flash-Next rev de4b8e4d plus its embed_tokens and lm_head; the artifact digest covers the two IQ3_XXS shards and that sidecar. Unlike the native CUDA path (spec output == plain), drafted greedy output is NOT bit-identical to plain greedy here: batched verification drifts at near-ties. KV cache f16, 4 slots sharing one 32768-token unified KV cache. Prefix caching is off for salted requests unless the shim runs with --trust-single-scope. Rows are concurrent CERE requests (1-4), not native batch rows. Structured output: response_format json_object/json_schema only, enforced by llama-server's own grammar (json_schema_to_grammar); keywords are those that pass CERE's enforcement variants on llama.cpp 162e2bb2e (bench/reports/amd-llamacpp-grammar-matrix-20261104.json) minus `format` (cered's format list is xgrammar's; llama.cpp enforces 4 of its 13 values). regex and ebnf are refused (the shim returns 400). Tool calls (tool_choice auto/none, unary and streamed): the tools are rendered by the model's template (passed as chat_template_kwargs.tools, byte-identical prompt) and the reply is parsed by CERE's qwen3_coder detector with SGLang d4689328e's value conversion (scripts/live/amd/qwen3_coder_convert.py, equal on all 4,574 tool_convert_cases), not by llama.cpp's stricter parser. Required/named tool_choice and parallel_tool_calls false are refused by the shim (400). Seeded sampling is unsupported. Not a throughput or capacity claim.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+#version 460
+// VulkanAmd P2 K4: the n-gram hash of explicit windows (k4_ple.h ngram_hash_windows), bit-exact 64-bit integer
+// arithmetic: ids[w * 16 + h] = ngram_id(windows[w, 0..2], head h). One invocation per id; grid 2-D (wg_linear).
+#include "k4_common.comp"
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t windows, mult, vocab, offs, ids;
+    int64_t eos;
+    uint64_t outputs;  // n * 16
+} pc;
+
+void main() {
+    const uint64_t i = uint64_t(wg_linear()) * 256ul + uint64_t(gl_LocalInvocationID.x);
+    if (i >= pc.outputs) return;
+    const uint64_t w = i / 16ul;
+    const uint head = uint(i % 16ul);
+    const uint64_t wa = pc.windows + w * 24ul;
+    I64(pc.ids + i * 8ul).v = ngram_id(I64(wa).v, I64(wa + 8ul).v, I64(wa + 16ul).v, head, pc.mult, pc.vocab, pc.offs, pc.eos);
+}

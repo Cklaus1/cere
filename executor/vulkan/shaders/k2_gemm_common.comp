@@ -1,0 +1,62 @@
+// VulkanAmd P2 K2 large-m GEMM: helpers shared by k2_gemm*.comp (included, never compiled on its own; no #version).
+//
+// Row info word (k2_gemm_scan.comp writes one per x row and per w row; the GEMM and the FP32 route read it):
+//   bit 31      FB: the row cannot be carried exactly as FP16 * 2^-shift; every output it touches takes the FP32 route
+//   bit 30      SPLIT (P4-B, never with FB): the row's values with BF16 magnitude bits >= split_threshold(shift) are
+//               exact as FP16 * 2^-shift; its other nonzero values ("tail", at most SPLIT_MAX) are not. An x row:
+//               the matrix unit takes the row without its tail, an exact FP32 fma chain takes the tail (k2_gemm.comp).
+//               A w row: treated as FB (no w-side split).
+//   bits 16..22 SPLIT rows: the number of tail values (1 .. SPLIT_MAX); 0 otherwise
+//   bits 0..15  shift + 32768: the row's power-of-two scale (the FP16 operand is value * 2^shift, shift = 15 - E with
+//               E the exponent of the row's largest |value|), a function of the row's own values only.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U32 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F32 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer U16 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer U8 { uint8_t v; };
+
+// 64-bit base + zero-extended 32-bit byte offset (every tensor is one <= 4 GiB buffer; P1's rule).
+uvec4 ld16(uint64_t b, uint o) { return V4(b + uint64_t(o)).v; }
+uvec2 ld8(uint64_t b, uint o) { return V2(b + uint64_t(o)).v; }
+uint ld4(uint64_t b, uint o) { return U32(b + uint64_t(o)).v; }
+uint ld1(uint64_t b, uint o) { return uint(U8(b + uint64_t(o)).v); }
+void st4(uint64_t b, uint o, uint v) { U32(b + uint64_t(o)).v = v; }
+void stf(uint64_t b, uint o, float v) { F32(b + uint64_t(o)).v = v; }
+void st2(uint64_t b, uint o, uint v) { U16(b + uint64_t(o)).v = uint16_t(v); }
+
+const uint FB = 0x80000000u;
+const uint SPLIT = 0x40000000u;
+const uint SPLIT_MAX = 64u;  // most tail values of a SPLIT row (k2_gemm.comp's per-row list capacity)
+int info_shift(uint i) { return int(i & 0xFFFFu) - 32768; }
+uint info_tails(uint i) { return (i >> 16u) & 0x7Fu; }
+// A row with shift sh = 15 - E: a BF16 value is in the row's tail iff it is nonzero and its magnitude bits
+// (bits & 0x7FFF) are below (E - 32 + 127) << 7 = (110 - sh) << 7, i.e. its exponent is below E - 32 (BF16
+// subnormals included). Only used for rows with E in [-80, 100] (threshold in (0, 0x7F80)).
+uint split_threshold(int sh) { return uint(110 - sh) << 7u; }
+
+float bf_lo(uint u) { return uintBitsToFloat(u << 16); }
+float bf_hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+// FP32 -> BF16 round to nearest even, NaN -> 0x7FFF (the HIP / CUDA canonical NaN).
+uint f2bf(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+// 2^c as an FP32 normal (c clamped to [-126, 127]: only rows that already take the FP32 route can need more).
+float pow2(int c) { return uintBitsToFloat(uint(clamp(c, -126, 127) + 127) << 23); }
+
+// OCP E4M3 byte (no NaN byte, by contract) times sc (a power of two), exact without FP32 denormal intermediates when
+// the product is normal: normal bytes by exponent rebias, subnormal ones as an exact int * 2^-9 (k2_mgemv.comp's).
+float e4m3(uint b, float sc) {
+    const uint a = b & 0x7Fu;
+    const float v = (a >= 8u) ? uintBitsToFloat((a << 20) + (120u << 23)) : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v * sc) | ((b & 0x80u) << 24));
+}

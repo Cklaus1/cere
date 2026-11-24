@@ -1,0 +1,264 @@
+{
+  "by_dtype": {
+    "BF16": {
+      "bytes": 4490231072,
+      "count": 1048,
+      "misaligned": 0
+    },
+    "F32": {
+      "bytes": 991392,
+      "count": 154,
+      "misaligned": 0
+    },
+    "F8_E4M3": {
+      "bytes": 5350883328,
+      "count": 48,
+      "misaligned": 0
+    },
+    "U8": {
+      "bytes": 10319560704,
+      "count": 48,
+      "misaligned": 0
+    }
+  },
+  "by_placement": {
+    "device": {
+      "bytes": 18889358496,
+      "count": 822
+    },
+    "unused": {
+      "bytes": 1272308000,
+      "count": 476
+    }
+  },
+  "families": [
+    {
+      "bytes": 1852637184,
+      "component": "target",
+      "count": 2,
+      "dtype": "BF16",
+      "family": "target_embed",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 9216,
+      "component": "target",
+      "count": 2,
+      "dtype": "BF16",
+      "family": "target_final_norm",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 516096,
+      "component": "target",
+      "count": 48,
+      "dtype": "F32",
+      "family": "target_depth_residual_queries",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 442368,
+      "component": "target",
+      "count": 2,
+      "dtype": "F32",
+      "family": "target_cross_pass_queries",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 1293355008,
+      "component": "target",
+      "count": 296,
+      "dtype": "BF16",
+      "family": "target_layer_attention",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 258048,
+      "component": "target",
+      "count": 56,
+      "dtype": "BF16",
+      "family": "target_layer_norm",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 884736,
+      "component": "target",
+      "count": 48,
+      "dtype": "BF16",
+      "family": "target_layer_static_conv",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 56623104,
+      "component": "target",
+      "count": 144,
+      "dtype": "BF16",
+      "family": "target_layer_controllers",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 14155776,
+      "component": "target",
+      "count": 24,
+      "dtype": "BF16",
+      "family": "target_router_weight",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 12288,
+      "component": "target",
+      "count": 24,
+      "dtype": "F32",
+      "family": "target_router_bias",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 10192158720,
+      "component": "target",
+      "count": 40,
+      "dtype": "U8",
+      "family": "target_expert_nvfp4_codes",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 1274019840,
+      "component": "target",
+      "count": 40,
+      "dtype": "F8_E4M3",
+      "family": "target_expert_nvfp4_block_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 20480,
+      "component": "target",
+      "count": 40,
+      "dtype": "F32",
+      "family": "target_expert_nvfp4_amax",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 160,
+      "component": "target",
+      "count": 40,
+      "dtype": "F32",
+      "family": "target_expert_nvfp4_outer_scale_denominator",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 4076863488,
+      "component": "target",
+      "count": 8,
+      "dtype": "F8_E4M3",
+      "family": "target_expert_mxfp8_values",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 127401984,
+      "component": "target",
+      "count": 8,
+      "dtype": "U8",
+      "family": "target_expert_mxfp8_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 635795744,
+      "component": "draft",
+      "count": 54,
+      "dtype": "BF16",
+      "family": "draft_mtp",
+      "misaligned": 0,
+      "placement": "unused",
+      "role": "draft"
+    },
+    {
+      "bytes": 636512256,
+      "component": "vision",
+      "count": 422,
+      "dtype": "BF16",
+      "family": "vision",
+      "misaligned": 0,
+      "placement": "unused",
+      "role": "vision"
+    }
+  ],
+  "family_rules": {
+    "rules_id": "inkling2_loop-nvfp4-mxfp8-v1",
+    "sha256": "6906dc3c49a52a2c7cfaab11fb7476e0f3542a8c90f037c9a93c1128596bf171"
+  },
+  "files": [
+    {
+      "bytes": 19526019168,
+      "header_bytes": 148416,
+      "header_sha256": "a154b6ce2ead7032e9c0edcdcf020bf819a35f5078a36cce90938abe4d2c5247",
+      "path": "model-00001-of-00001.safetensors",
+      "tensors": 1244,
+      "upstream": {
+        "lfs_sha256": "65e60f51aa1284d4fb022584908c315270334d991828bb774af60584523539d1",
+        "size": 19526019168
+      }
+    },
+    {
+      "bytes": 635801416,
+      "header_bytes": 5672,
+      "header_sha256": "ff8521b19f4d6d82559f48343f3c2c47ede616f3f5d6d7198fb98d5cb8f38f03",
+      "path": "mtp.safetensors",
+      "tensors": 54,
+      "upstream": {
+        "lfs_sha256": "7c3b651317f01f73bcf4e1dceba66ef8b7e1a1eac6bc171e882e690a4b10a1d2",
+        "size": 635801416
+      }
+    }
+  ],
+  "header_digest": "8900d36d4b5892c71a67dae480f438391a5c0cc78ea158249575daff3140ef6e",
+  "schema_version": "1",
+  "source": {
+    "revision": "b85c3cfa615fc413cc9af3379f491b963f3b586a",
+    "tree_sha256": "43b3c19db4d2f0ab833de694a65aa928356012156429bf14775cd7bc95f4094b"
+  },
+  "totals": {
+    "data_bytes": 20161666496,
+    "file_bytes": 20161820584,
+    "files": 2,
+    "header_bytes": 154088,
+    "misaligned": 0,
+    "tensors": 1298
+  },
+  "upstream": {
+    "lfs_files": 2,
+    "lfs_size_match": 2,
+    "non_lfs_files": 0,
+    "not_in_tree": 0
+  }
+}

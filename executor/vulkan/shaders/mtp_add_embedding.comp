@@ -1,0 +1,48 @@
+#version 460
+// VulkanAmd P3 (T3): the MTP fusion's broadcast add (executor/cuda/src/model/mtp.cu:73-80 add_embedding_kernel):
+//   hyper[r, s, c] = bf16(float(hyper[r, s, c]) + float(e[r, c])), r < rows, s < 4, c < 2560 (hyper [rows, 10240]).
+// One invocation per 8 consecutive hyper elements (one 16-byte word; 2560 % 8 == 0, so the 8 stay inside one stream).
+// BF16 decode is exact; the FP32 add is `precise` (one IEEE add, never contracted); encode is round to nearest even with
+// NaN -> 0x7FFF (the CUDA __float2bfloat16 rule). Float controls: SignedZeroInfNanPreserve and DenormPreserve for fp32
+// (RADV advertises both, k12_common.comp), so denormal sums and NaN / Inf / -0 are not flushed or folded.
+// Byte offsets are unsigned 32-bit from the 64-bit bases (hyper < 4 GiB, checked by the host).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_spirv_intrinsics : require
+
+spirv_execution_mode(capabilities = [4466], 4461, 32);
+spirv_execution_mode(capabilities = [4464], 4459, 32);
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+bool isnanf(float f) { return (floatBitsToUint(f) & 0x7FFFFFFFu) > 0x7F800000u; }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnanf(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint add2(uint h, uint e) {
+    precise float a = lo(h) + lo(e);
+    precise float b = hi(h) + hi(e);
+    return bf16_rne(a) | (bf16_rne(b) << 16);
+}
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t hyper, e;
+    uint vecs;  // 8-element groups of hyper: rows * 1280
+    uint pad;
+} pc;
+
+void main() {
+    const uint g = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * 256u);
+    if (g >= pc.vecs) return;
+    const uint row = g / 1280u;              // 10240 / 8 groups per row
+    const uint col8 = (g % 1280u) % 320u;    // 2560 / 8 groups per stream
+    const uint64_t ha = pc.hyper + uint64_t(g * 16u);
+    const uvec4 h = V4(ha).v;
+    const uvec4 e = V4(pc.e + uint64_t(row * 5120u + col8 * 16u)).v;
+    V4(ha).v = uvec4(add2(h.x, e.x), add2(h.y, e.y), add2(h.z, e.z), add2(h.w, e.w));
+}

@@ -1,0 +1,1 @@
+Fixture stray file: present in the source directory, never in the payload.

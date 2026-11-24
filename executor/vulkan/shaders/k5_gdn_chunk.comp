@@ -1,0 +1,501 @@
+#version 460
+// VulkanAmd P2: K5 chunked prefill on Vulkan (the executor/cuda/src/kernels/k5_gdn_chunk.h contract, re-proven per device;
+// the HIP reference is executor/hip/src/k5_gdn_chunk_hip.cpp, whose three-phase structure this follows).
+//
+// math_reference: flash-linear-attention (chunk_gated_delta_rule, via the CUDA header's documented math; nothing is vendored)
+//
+// Per chunk of up to 64 rows and value head h (key head h / 3), G = per-chunk inclusive cumsum of g (FP32, row order):
+//   A = (I + tril(diag(beta) (k k^T * exp(G_i - G_j)), -1))^-1 -> BF16
+//   u = BF16(A BF16(v * beta)),  w = BF16(A BF16(k * beta * exp(G)))
+//   h_c = BF16(h);  d = u - w h_c^T;  v_new = BF16(d)
+//   o = BF16((q h_c^T) * exp(G) * scale + (BF16(tril(q k^T * exp(G_i - G_j))) v_new) * scale)
+//   h = fma(h, exp(G_last), k^T BF16(d * exp(G_last - G)))
+// final state = BF16(h); FP32 resume / capture (and their _hi split) as the header.
+//
+// Numerics (the choice, see the report): every product is FP32 FMA on SIMT lanes, no cooperative matrices. All matrix
+// operands but A and L are BF16 by the contract, so each product is exact in FP32 and only the accumulation rounds. Each
+// output's summation order is fixed by the code and independent of the workgroup, the chunk index and the call's length:
+// one FMA chain in ascending k (or t / m) order (prep, output, the state update), or, for d = w h_c^T in the recurrence,
+// 8 per-lane chains over 16 consecutive k then a fixed xor butterfly. So a chunk's result depends only on its own rows
+// and the incoming FP32 state, which is what capture continuity needs (a call from a 64-aligned row with the captured
+// FP32 state redoes the same chunks with the same bits). The inverse is exact forward substitution in FP32 (HIP's
+// order: 4 partial chains m = j + p (mod 4), summed ((p0 + p1) + p2) + p3). exp is GLSL exp (not correctly rounded;
+// deterministic). Every multiply and add the expressions above name is `precise` (never contracted); FMAs are explicit
+// fma(). Cooperative matrices (FP16 only on RADV) are not used: BF16 operands such as BF16(d exp(G_last - G)), q k^T
+// terms and A's entries reach below FP16's normal / subnormal range, so FP16 carriage would not be exact without
+// per-tile scaling and a checked fallback.
+//
+// STAGE 0: permute 128-wide BF16 rows token-major [T, H] -> head-major [H, T]; STAGE 5: back (o).
+// STAGE 1: cumsum: G[h, t] (per-chunk inclusive), B[h, t] = beta[t, h]; one invocation per (chunk, head).
+// STAGE 2: prep, workgroup (chunk, value head): P (BF16 intra-chunk q k^T), A, w, u.
+// STAGE 3: recurrence, workgroup (value head, 32 value rows of h): every chunk in order; h_c, v_new, state, capture.
+// STAGE 4: output, workgroup (chunk, value head, 64 value columns): o head-major.
+//
+// Addresses: 64-bit base + 32-bit byte offset (every tensor lies in one <= 4 GiB buffer; T <= 4096 keeps every offset
+// below 2^32). Shared memory: <= 35 KB per workgroup.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#ifndef STAGE
+#define STAGE 2
+#endif
+
+#if STAGE != 3
+layout(local_size_x = 256) in;
+#endif
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer R16 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer W16 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RU { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer WU { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RF { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer WF { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) readonly buffer RH { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) writeonly buffer WH { uint16_t v; };
+
+const uint BT = 64u;   // chunk rows
+const uint D = 128u;   // head dim
+const uint VH = 48u;   // value heads
+const uint KS_ = 65u;  // padded shared row stride (uints) of a 128-wide BF16 row stored as 64 packed pairs
+
+uint ldu(uint64_t base, uint off) { return RU(base + uint64_t(off)).v; }
+void stu(uint64_t base, uint off, uint x) { WU(base + uint64_t(off)).v = x; }
+float ldf(uint64_t base, uint off) { return RF(base + uint64_t(off)).v; }
+void stf(uint64_t base, uint off, float x) { WF(base + uint64_t(off)).v = x; }
+float ldbf(uint64_t base, uint off) { return uintBitsToFloat(uint(RH(base + uint64_t(off)).v) << 16); }
+void stbf(uint64_t base, uint off, uint b) { WH(base + uint64_t(off)).v = uint16_t(b); }
+
+float lo(uint p) { return uintBitsToFloat(p << 16); }
+float hi(uint p) { return uintBitsToFloat(p & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+float rb(float f) { return uintBitsToFloat(bf16_rne(f) << 16); }
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+#if STAGE == 0
+// Token-major [T, H] -> head-major [H, T]: one invocation per 16 bytes, in source order (measured faster for this
+// direction than the whole-page form of STAGE 5).
+layout(push_constant, std430) uniform PC {
+    uint64_t src, dst;
+    uint T, H;
+} pc;
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pc.T * pc.H * 16u) return;
+    const uint c16 = idx & 15u, r = idx >> 4;  // r = t * H + h
+    const uint t = r / pc.H, h = r - t * pc.H;
+    W16(pc.dst + uint64_t((h * pc.T + t) * 256u + c16 * 16u)).v = R16(pc.src + uint64_t(r * 256u + c16 * 16u)).v;
+}
+
+#elif STAGE == 5
+// Head-major [H, T] -> token-major [T, H]. Workgroup: 16 tokens x all H heads (H % 8 == 0), invocation (token tid / 16,
+// 16-byte column tid % 16), 8 rows in flight per pass: both sides touch whole pages (for a head its 16 rows are
+// contiguous head-major, for a token its H rows token-major). The source-order form wrote 256-byte rows at a 12 KB
+// stride and ran ~3x slower.
+layout(push_constant, std430) uniform PC {
+    uint64_t src, dst;
+    uint T, H;
+} pc;
+
+void main() {
+    const uint t = gl_WorkGroupID.x * 16u + (gl_LocalInvocationID.x >> 4), c16 = (gl_LocalInvocationID.x & 15u) * 16u;
+    if (t >= pc.T) return;
+    for (uint h0 = 0u; h0 < pc.H; h0 += 8u) {
+        uvec4 r[8];
+        [[unroll]] for (uint q = 0u; q < 8u; ++q) r[q] = R16(pc.src + uint64_t(((h0 + q) * pc.T + t) * 256u + c16)).v;
+        [[unroll]] for (uint q = 0u; q < 8u; ++q) W16(pc.dst + uint64_t((t * pc.H + h0 + q) * 256u + c16)).v = r[q];
+    }
+}
+
+#elif STAGE == 1
+layout(push_constant, std430) uniform PC {
+    uint64_t g, beta, G, B;
+    uint T, chunks;
+} pc;
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.x;
+    if (idx >= pc.chunks * VH) return;
+    const uint c = idx / VH, h = idx - c * VH;
+    precise float acc = 0.0;
+    const uint t1 = min(pc.T, (c + 1u) * BT);
+    for (uint t = c * BT; t < t1; ++t) {
+        acc = acc + ldf(pc.g, (t * VH + h) * 4u);
+        stf(pc.G, (h * pc.T + t) * 4u, acc);
+        stf(pc.B, (h * pc.T + t) * 4u, ldf(pc.beta, (t * VH + h) * 4u));
+    }
+}
+
+#elif STAGE == 2
+// Prep. Shared: KS = k rows (packed pairs) -> BF16(k beta exp G) -> BF16(v beta); XS = q rows (packed) -> L (FP32 bits)
+// -> BF16(A) (FP32 bits). Required subgroup size 32 (the inverse's 4-lane column groups).
+layout(push_constant, std430) uniform PC {
+    uint64_t qn, kn, vt, G, B, P, u, w;
+    uint T;
+} pc;
+
+shared uint KS[BT * KS_];
+shared uint XS[BT * KS_];
+shared float Gs[BT], Bs[BT], Eg[BT];
+
+void main() {
+    const uint c = gl_WorkGroupID.x, vh = gl_WorkGroupID.y, kh = vh / 3u, tid = gl_LocalInvocationID.x;
+    const uint r0 = c * BT;
+    const uint n = min(BT, pc.T - r0);
+    for (uint e = tid; e < BT * 64u; e += 256u) {
+        const uint t = e >> 6, p = e & 63u, tt = min(t, n - 1u);  // clamped row, value replaced by 0 below
+        const uint kx = ldu(pc.kn, ((kh * pc.T + r0 + tt) * D + 2u * p) * 2u);
+        const uint qx = ldu(pc.qn, ((kh * pc.T + r0 + tt) * D + 2u * p) * 2u);
+        KS[t * KS_ + p] = t < n ? kx : 0u;
+        XS[t * KS_ + p] = t < n ? qx : 0u;
+    }
+    if (tid < BT) {
+        const uint tt = min(tid, n - 1u);
+        const float gv = ldf(pc.G, (vh * pc.T + r0 + tt) * 4u), bv = ldf(pc.B, (vh * pc.T + r0 + tt) * 4u);
+        Gs[tid] = tid < n ? gv : 0.0;
+        Bs[tid] = tid < n ? bv : 0.0;
+        Eg[tid] = exp(tid < n ? gv : 0.0);
+    }
+    barrier();
+    // S_kk = k k^T, S_qk = q k^T: thread rows i = ti + 16 a, columns j = tj + 16 b; one FMA chain over k ascending.
+    const uint ti = tid >> 4, tj = tid & 15u;
+    float skk[4][4], sqk[4][4];
+    [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint b = 0u; b < 4u; ++b) { skk[a][b] = 0.0; sqk[a][b] = 0.0; }
+    for (uint p = 0u; p < 64u; ++p) {
+        uint ki[4], qi[4], kj[4];
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) { ki[a] = KS[(ti + 16u * a) * KS_ + p]; qi[a] = XS[(ti + 16u * a) * KS_ + p]; }
+        [[unroll]] for (uint b = 0u; b < 4u; ++b) kj[b] = KS[(tj + 16u * b) * KS_ + p];
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint b = 0u; b < 4u; ++b) {
+            skk[a][b] = fma(lo(ki[a]), lo(kj[b]), skk[a][b]);
+            skk[a][b] = fma(hi(ki[a]), hi(kj[b]), skk[a][b]);
+            sqk[a][b] = fma(lo(qi[a]), lo(kj[b]), sqk[a][b]);
+            sqk[a][b] = fma(hi(qi[a]), hi(kj[b]), sqk[a][b]);
+        }
+    }
+    float lval[4][4];
+    [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint b = 0u; b < 4u; ++b) {
+        const uint i = ti + 16u * a, j = tj + 16u * b;
+        precise float dg = Gs[i] - Gs[j];
+        const float e = exp(dg);
+        precise float bl = Bs[i] * skk[a][b];
+        precise float lv = bl * e;
+        lval[a][b] = (i < n && j < i) ? lv : (i == j ? 1.0 : 0.0);
+        precise float pv = sqk[a][b] * e;
+        if (i < n) stbf(pc.P, ((vh * pc.T + r0 + i) * BT + j) * 2u, j <= i ? bf16_rne(pv) : 0u);
+    }
+    barrier();  // q is dead: XS becomes L (strictly lower), 1 on the diagonal, 0 above
+    [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint b = 0u; b < 4u; ++b)
+        XS[(ti + 16u * a) * KS_ + tj + 16u * b] = floatBitsToUint(lval[a][b]);
+    barrier();
+    // A = (I + L)^-1 by forward substitution, column by column (columns are independent): A[i][j] = -sum_{m=j}^{i-1}
+    // L[i][m] A[m][j], A[j][j] = 1. Lanes (j, p), p < 4, adjacent in one subgroup, own column j; lane p holds A[m][j] for
+    // m = j + p + 4 r in registers and sums its m ascending (HIP's 4 partial chains); the 4 partials meet by shuffles,
+    // ((p0 + p1) + p2) + p3, in every lane alike. No workgroup barrier per row; L stays in XS until all rows are done.
+    {
+        const uint j = tid >> 2, p = tid & 3u, base = gl_SubgroupInvocationID & ~3u;
+        float Ar[16];
+        [[unroll]] for (uint r = 0u; r < 16u; ++r) Ar[r] = (r == 0u && p == 0u) ? 1.0 : 0.0;
+        for (uint i = 1u; i < n; ++i) {
+            float lr[16];  // all 16 loads issued before the chain (clamped index; terms m >= i are skipped)
+            [[unroll]] for (uint r = 0u; r < 16u; ++r) lr[r] = uintBitsToFloat(XS[i * KS_ + min(j + p + 4u * r, BT - 1u)]);
+            float s = 0.0;
+            [[unroll]] for (uint r = 0u; r < 16u; ++r) {
+                const float f = fma(lr[r], Ar[r], s);
+                s = (j + p + 4u * r < i) ? f : s;
+            }
+            const float p0 = subgroupShuffle(s, base), p1 = subgroupShuffle(s, base + 1u);
+            const float p2 = subgroupShuffle(s, base + 2u), p3 = subgroupShuffle(s, base + 3u);
+            precise float s01 = p0 + p1;
+            precise float s012 = s01 + p2;
+            precise float s0123 = s012 + p3;
+            const uint own = i - j;  // row i is lane (own % 4)'s register own / 4 (when j < i)
+            [[unroll]] for (uint r = 0u; r < 16u; ++r)
+                if (j < i && p == (own & 3u) && r == (own >> 2)) Ar[r] = -s0123;
+        }
+        barrier();  // every read of L done
+        [[unroll]] for (uint r = 0u; r < 16u; ++r) {
+            const uint m = j + p + 4u * r;
+            if (m < BT) XS[m * KS_ + j] = floatBitsToUint(rb(Ar[r]));  // BF16(A); above the diagonal L's zeros stay
+        }
+    }
+    // KS (k) -> BF16(k beta exp G) in place
+    for (uint e = tid; e < BT * 64u; e += 256u) {
+        const uint t = e >> 6, p = e & 63u;
+        const uint x = KS[t * KS_ + p];
+        precise float a0 = lo(x) * Bs[t];
+        precise float a1 = a0 * Eg[t];
+        precise float b0 = hi(x) * Bs[t];
+        precise float b1 = b0 * Eg[t];
+        KS[t * KS_ + p] = pack2(a1, b1);
+    }
+    barrier();
+    // w = BF16(A KB), then u = BF16(A VB): thread rows i = ti + 16 a, column pairs pc_ = tj + 16 s; chain over m ascending.
+    for (uint pass = 0u; pass < 2u; ++pass) {
+        if (pass == 1u) {
+            barrier();  // every read of KB done
+            for (uint e = tid; e < BT * 64u; e += 256u) {
+                const uint t = e >> 6, p = e & 63u, tt = min(t, n - 1u);
+                const uint x = ldu(pc.vt, ((vh * pc.T + r0 + tt) * D + 2u * p) * 2u);
+                precise float a0 = lo(x) * Bs[t];
+                precise float b0 = hi(x) * Bs[t];
+                KS[t * KS_ + p] = t < n ? pack2(a0, b0) : 0u;
+            }
+            barrier();
+        }
+        float acc[4][8];
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint q = 0u; q < 8u; ++q) acc[a][q] = 0.0;
+        for (uint m = 0u; m < BT; ++m) {
+            float av[4];
+            uint bv[4];
+            [[unroll]] for (uint a = 0u; a < 4u; ++a) av[a] = uintBitsToFloat(XS[(ti + 16u * a) * KS_ + m]);
+            [[unroll]] for (uint s = 0u; s < 4u; ++s) bv[s] = KS[m * KS_ + tj + 16u * s];
+            [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint s = 0u; s < 4u; ++s) {
+                acc[a][2u * s] = fma(av[a], lo(bv[s]), acc[a][2u * s]);
+                acc[a][2u * s + 1u] = fma(av[a], hi(bv[s]), acc[a][2u * s + 1u]);
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) {
+            const uint i = ti + 16u * a;
+            if (i < n)
+                [[unroll]] for (uint s = 0u; s < 4u; ++s)
+                    stu(pass == 0u ? pc.w : pc.u, ((vh * pc.T + r0 + i) * D + 2u * (tj + 16u * s)) * 2u,
+                        pack2(acc[a][2u * s], acc[a][2u * s + 1u]));
+        }
+    }
+}
+
+#elif STAGE == 3
+// Recurrence, workgroup (value head, 32 value rows of h), required subgroup size 32. NV = 1 (the default, measured
+// fastest): 256 invocations, lane group of 8 (l = tid % 8, g = tid / 8) owns row v = v0 + g of h (NV = 2: 128
+// invocations, rows v0 + g and v0 + g + 16, 192 VGPRs, measured slower); lane l holds h[v][16 l .. 16 l + 15] in FP32
+// registers. Per chunk, rows i ascending: d_i = u[i][v] - sum_k w[i][k] h_c[v][k] (each lane one FMA chain over its 16
+// k ascending, then the fixed xor butterfly 1, 2, 4 inside the 8-lane group: every lane ends with the same bits, since
+// x + y == y + x), v_new = BF16(d_i), DS_i = BF16(d_i exp(G_last - G_i)), acc[k] = fma(DS_i, k[i][k], acc[k]) (a chain
+// over i ascending); then h = fma(h, exp(G_last), acc). w and k rows stream from global as 16-byte loads of BF16 (a lane
+// group reads one whole 256-byte row), RIF = 4 rows in flight (2 and 8 measured slower; FP32 copies of w and k, which
+// skip the BF16 decode, were slower too: the stage is bound by vector-cache traffic); u and G of the chunk are staged in
+// shared memory.
+layout(push_constant, std430) uniform PC {
+    uint64_t u, w, kn, G, hc, vn, state, in32, in32_hi, cap, cap_hi;
+    uint T, chunks, cap_chunk, has_cap;
+} pc;
+
+#ifndef NV
+#define NV 1   // h rows per lane group
+#endif
+#ifndef RIF
+#define RIF 4u  // rows of w and k in flight
+#endif
+const uint VT = 32u;
+const uint NG = VT / NV;      // lane groups
+const uint NT = 8u * NG;      // invocations
+#if NV == 1
+layout(local_size_x = 256) in;
+#else
+layout(local_size_x = 128) in;
+#endif
+shared float US[BT * VT];  // u [t][v] of the tile (BF16 values)
+shared float Gs[BT];
+
+void unpack8(uvec4 x, inout float f[16], uint at) {
+    f[at + 0u] = lo(x.x); f[at + 1u] = hi(x.x); f[at + 2u] = lo(x.y); f[at + 3u] = hi(x.y);
+    f[at + 4u] = lo(x.z); f[at + 5u] = hi(x.z); f[at + 6u] = lo(x.w); f[at + 7u] = hi(x.w);
+}
+
+void main() {
+    const uint vh = gl_WorkGroupID.x, v0 = gl_WorkGroupID.y * VT, kh = vh / 3u, tid = gl_LocalInvocationID.x;
+    const uint grp = tid >> 3, l = tid & 7u, k0 = 16u * l;
+    const bool split = vh >= 24u && pc.in32_hi != 0ul;
+    const bool csplit = vh >= 24u && pc.cap_hi != 0ul;
+    float h[NV][16];
+    [[unroll]] for (uint r = 0u; r < NV; ++r) {
+        const uint v = v0 + grp + NG * r;
+        if (pc.in32 != 0ul) {
+            const uint64_t base = split ? pc.in32_hi : pc.in32;
+            const uint e = (((split ? vh - 24u : vh) * D + v) * D + k0) * 4u;
+            [[unroll]] for (uint q = 0u; q < 4u; ++q) {
+                const uvec4 x = R16(base + uint64_t(e + 16u * q)).v;
+                h[r][4u * q] = uintBitsToFloat(x.x); h[r][4u * q + 1u] = uintBitsToFloat(x.y);
+                h[r][4u * q + 2u] = uintBitsToFloat(x.z); h[r][4u * q + 3u] = uintBitsToFloat(x.w);
+            }
+        } else {
+            const uint e = ((vh * D + v) * D + k0) * 2u;
+            unpack8(R16(pc.state + uint64_t(e)).v, h[r], 0u);
+            unpack8(R16(pc.state + uint64_t(e + 16u)).v, h[r], 8u);
+        }
+    }
+    for (uint c = 0u; c <= pc.chunks; ++c) {
+        if (pc.has_cap != 0u && c == pc.cap_chunk) {
+            const uint64_t base = csplit ? pc.cap_hi : pc.cap;
+            [[unroll]] for (uint r = 0u; r < NV; ++r) {
+                const uint e = (((csplit ? vh - 24u : vh) * D + v0 + grp + NG * r) * D + k0) * 4u;
+                [[unroll]] for (uint q = 0u; q < 4u; ++q)
+                    W16(base + uint64_t(e + 16u * q)).v = uvec4(floatBitsToUint(h[r][4u * q]), floatBitsToUint(h[r][4u * q + 1u]),
+                                                                floatBitsToUint(h[r][4u * q + 2u]), floatBitsToUint(h[r][4u * q + 3u]));
+            }
+        }
+        if (c == pc.chunks) break;
+        const uint r0 = c * BT;
+        const uint n = min(BT, pc.T - r0);
+        // h_c = BF16(h) in registers and to hc [48, chunks, 128 (v), 128 (k)]
+        float hc[NV][16];
+        [[unroll]] for (uint r = 0u; r < NV; ++r) {
+            uint pk[8];
+            [[unroll]] for (uint q = 0u; q < 16u; ++q) hc[r][q] = rb(h[r][q]);
+            [[unroll]] for (uint q = 0u; q < 8u; ++q) pk[q] = pack2(hc[r][2u * q], hc[r][2u * q + 1u]);
+            const uint e = (((vh * pc.chunks + c) * D + v0 + grp + NG * r) * D + k0) * 2u;
+            W16(pc.hc + uint64_t(e)).v = uvec4(pk[0], pk[1], pk[2], pk[3]);
+            W16(pc.hc + uint64_t(e + 16u)).v = uvec4(pk[4], pk[5], pk[6], pk[7]);
+        }
+        for (uint e = tid; e < BT * VT; e += NT) {
+            const uint t = e / VT, vv = e - t * VT;
+            US[e] = ldbf(pc.u, ((vh * pc.T + r0 + min(t, n - 1u)) * D + v0 + vv) * 2u);
+        }
+        if (tid < BT) {
+            const float gv = ldf(pc.G, (vh * pc.T + r0 + min(tid, n - 1u)) * 4u);
+            Gs[tid] = tid < n ? gv : 0.0;
+        }
+        barrier();
+        const float gl = Gs[n - 1u];
+        float acc[NV][16];
+        [[unroll]] for (uint r = 0u; r < NV; ++r) [[unroll]] for (uint q = 0u; q < 16u; ++q) acc[r][q] = 0.0;
+        for (uint i0 = 0u; i0 < n; i0 += RIF) {
+            uvec4 wr[2u * RIF], kr[2u * RIF];
+            [[unroll]] for (uint j = 0u; j < RIF; ++j) {
+                const uint row = r0 + min(i0 + j, n - 1u);
+                const uint ew = ((vh * pc.T + row) * D + k0) * 2u, ek = ((kh * pc.T + row) * D + k0) * 2u;
+                wr[2u * j] = R16(pc.w + uint64_t(ew)).v;
+                wr[2u * j + 1u] = R16(pc.w + uint64_t(ew + 16u)).v;
+                kr[2u * j] = R16(pc.kn + uint64_t(ek)).v;
+                kr[2u * j + 1u] = R16(pc.kn + uint64_t(ek + 16u)).v;
+            }
+            [[unroll]] for (uint j = 0u; j < RIF; ++j) {
+                const uint i = i0 + j;
+                if (i < n) {  // uniform
+                    float wf[16], kf[16];
+                    unpack8(wr[2u * j], wf, 0u); unpack8(wr[2u * j + 1u], wf, 8u);
+                    unpack8(kr[2u * j], kf, 0u); unpack8(kr[2u * j + 1u], kf, 8u);
+                    precise float dg = gl - Gs[i];
+                    const float eds = exp(dg);
+                    [[unroll]] for (uint r = 0u; r < NV; ++r) {
+                        float s = 0.0;
+                        [[unroll]] for (uint q = 0u; q < 16u; ++q) s = fma(wf[q], hc[r][q], s);
+                        precise float s1 = s + subgroupShuffleXor(s, 1u);
+                        precise float s2 = s1 + subgroupShuffleXor(s1, 2u);
+                        precise float s4 = s2 + subgroupShuffleXor(s2, 4u);
+                        precise float d = US[i * VT + grp + NG * r] - s4;
+                        if (l == (i & 7u)) stbf(pc.vn, ((vh * pc.T + r0 + i) * D + v0 + grp + NG * r) * 2u, bf16_rne(d));
+                        precise float dsx = d * eds;
+                        const float ds = rb(dsx);
+                        [[unroll]] for (uint q = 0u; q < 16u; ++q) acc[r][q] = fma(ds, kf[q], acc[r][q]);
+                    }
+                }
+            }
+        }
+        const float eg = exp(gl);
+        [[unroll]] for (uint r = 0u; r < NV; ++r) [[unroll]] for (uint q = 0u; q < 16u; ++q) h[r][q] = fma(h[r][q], eg, acc[r][q]);
+        barrier();  // US, Gs reads done before the next chunk rewrites them
+    }
+    [[unroll]] for (uint r = 0u; r < NV; ++r) {
+        uint pk[8];
+        [[unroll]] for (uint q = 0u; q < 8u; ++q) pk[q] = pack2(h[r][2u * q], h[r][2u * q + 1u]);
+        const uint e = ((vh * D + v0 + grp + NG * r) * D + k0) * 2u;
+        W16(pc.state + uint64_t(e)).v = uvec4(pk[0], pk[1], pk[2], pk[3]);
+        W16(pc.state + uint64_t(e + 16u)).v = uvec4(pk[4], pk[5], pk[6], pk[7]);
+    }
+}
+
+#elif STAGE == 4
+// Output: o[i][v] = BF16((q h_c^T)[i][v] * exp(G_i) * scale + (P v_new)[i][v] * scale) for 64 value columns.
+// Thread (ti = tid / 16, tc = tid % 16): rows i = ti + 16 a, columns v = 2 (tc + 16 s) + {0, 1}, s < 2.
+layout(push_constant, std430) uniform PC {
+    uint64_t qn, hc, P, vn, G, ot;
+    uint T, chunks;
+    float scale;
+} pc;
+
+const uint OT = 64u;
+const uint PS_ = 33u;  // padded stride (uints) of a 64-wide BF16 row as 32 packed pairs
+shared uint R1[BT * KS_];
+shared uint R2[OT * KS_];
+shared float Eg[BT];
+
+void main() {
+    const uint c = gl_WorkGroupID.x, vh = gl_WorkGroupID.y, v0 = gl_WorkGroupID.z * OT, kh = vh / 3u, tid = gl_LocalInvocationID.x;
+    const uint r0 = c * BT;
+    const uint n = min(BT, pc.T - r0);
+    const uint ti = tid >> 4, tc = tid & 15u;
+    for (uint e = tid; e < BT * 64u; e += 256u) {
+        const uint t = e >> 6, p = e & 63u, tt = min(t, n - 1u);
+        const uint qx = ldu(pc.qn, ((kh * pc.T + r0 + tt) * D + 2u * p) * 2u);
+        R1[t * KS_ + p] = t < n ? qx : 0u;
+        R2[t * KS_ + p] = ldu(pc.hc, (((vh * pc.chunks + c) * D + v0 + t) * D + 2u * p) * 2u);  // t = v row here
+    }
+    if (tid < BT) {
+        const float gv = ldf(pc.G, (vh * pc.T + r0 + min(tid, n - 1u)) * 4u);
+        Eg[tid] = tid < n ? exp(gv) : 0.0;
+    }
+    barrier();
+    float sq[4][4], sp[4][4];
+    [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint q = 0u; q < 4u; ++q) { sq[a][q] = 0.0; sp[a][q] = 0.0; }
+    // sq = q h_c^T: chain over k ascending
+    for (uint p = 0u; p < 64u; ++p) {
+        uint qv[4], hv[4];
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) qv[a] = R1[(ti + 16u * a) * KS_ + p];
+        [[unroll]] for (uint s = 0u; s < 2u; ++s) {
+            hv[2u * s] = R2[(2u * (tc + 16u * s)) * KS_ + p];
+            hv[2u * s + 1u] = R2[(2u * (tc + 16u * s) + 1u) * KS_ + p];
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint q = 0u; q < 4u; ++q) {
+            sq[a][q] = fma(lo(qv[a]), lo(hv[q]), sq[a][q]);
+            sq[a][q] = fma(hi(qv[a]), hi(hv[q]), sq[a][q]);
+        }
+    }
+    barrier();  // R1 <- P [i][m pairs], R2 <- v_new [m][v pairs]
+    for (uint e = tid; e < BT * 32u; e += 256u) {
+        const uint t = e >> 5, p = e & 31u, tt = min(t, n - 1u);
+        const uint px = ldu(pc.P, ((vh * pc.T + r0 + tt) * BT + 2u * p) * 2u);
+        const uint vx = ldu(pc.vn, ((vh * pc.T + r0 + tt) * D + v0 + 2u * p) * 2u);
+        R1[t * PS_ + p] = t < n ? px : 0u;
+        R2[t * PS_ + p] = t < n ? vx : 0u;
+    }
+    barrier();
+    // sp = P v_new: chain over m ascending
+    for (uint mp = 0u; mp < 32u; ++mp) {
+        uint pv[4], v0x[2], v1x[2];
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) pv[a] = R1[(ti + 16u * a) * PS_ + mp];
+        [[unroll]] for (uint s = 0u; s < 2u; ++s) {
+            v0x[s] = R2[(2u * mp) * PS_ + tc + 16u * s];
+            v1x[s] = R2[(2u * mp + 1u) * PS_ + tc + 16u * s];
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; ++a) [[unroll]] for (uint s = 0u; s < 2u; ++s) {
+            sp[a][2u * s] = fma(lo(pv[a]), lo(v0x[s]), sp[a][2u * s]);
+            sp[a][2u * s] = fma(hi(pv[a]), lo(v1x[s]), sp[a][2u * s]);
+            sp[a][2u * s + 1u] = fma(lo(pv[a]), hi(v0x[s]), sp[a][2u * s + 1u]);
+            sp[a][2u * s + 1u] = fma(hi(pv[a]), hi(v1x[s]), sp[a][2u * s + 1u]);
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; ++a) {
+        const uint i = ti + 16u * a;
+        if (i < n) {
+            float o[4];
+            [[unroll]] for (uint q = 0u; q < 4u; ++q) {
+                precise float x0 = sq[a][q] * Eg[i];
+                precise float x1 = x0 * pc.scale;
+                precise float y1 = sp[a][q] * pc.scale;
+                precise float s_ = x1 + y1;
+                o[q] = s_;
+            }
+            [[unroll]] for (uint s = 0u; s < 2u; ++s)
+                stu(pc.ot, ((vh * pc.T + r0 + i) * D + v0 + 2u * (tc + 16u * s)) * 2u, pack2(o[2u * s], o[2u * s + 1u]));
+        }
+    }
+}
+#endif

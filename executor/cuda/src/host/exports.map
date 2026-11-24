@@ -1,0 +1,13 @@
+/* Dynamic symbol list of libcere_executor.so and the toy libraries: the ABI v5 functions of
+ * include/cere_executor.h only; everything else (C++ internals, template instantiations, the static NVIDIA
+ * libraries) stays local. */
+{
+  global:
+    cere_executor_*;
+    cere_model_*;
+    cere_session_*;
+    cere_snapshot_*;
+    cere_prefix_cache_*;
+  local:
+    *;
+};

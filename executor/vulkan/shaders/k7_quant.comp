@@ -1,0 +1,41 @@
+#version 460
+// VulkanAmd P2 K7: the K0 NVFP4 activation quantizer (executor/cuda/src/kernels/k0_nvfp4.cuh quantize_block16) on
+// Vulkan. One invocation per 16-element block of a BF16 row [rows, k] (k % 16 == 0):
+//   vmax = max |x|; sf = e4m3(gs * (vmax * (1/6))); os = vmax != 0 ? 1 / (float(sf) * (1 / gs)) : 0;
+//   code_i = e2m1(x_i * os); codes (element 2j in the low nibble of byte j) [rows, k/2], scales [rows, k/16].
+// The reciprocals are exact divisions here (cdiv; NVIDIA uses rcp.approx, HIP v_rcp_f32: the HIP test's 1e-2 bound
+// covers a neighbouring FP8 code), so the result follows the host mirror of k7_test (exact reciprocals).
+#include "k7_common.comp"
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, codes, scales;
+    float gs;
+    uint blocks;
+} pc;
+
+void main() {
+    const uint b = gl_GlobalInvocationID.x;
+    if (b >= pc.blocks) return;
+    const uvec4 q0 = ld16(pc.x, b * 32u), q1 = ld16(pc.x, b * 32u + 16u);
+    const uint w[8] = uint[8](q0.x, q0.y, q0.z, q0.w, q1.x, q1.y, q1.z, q1.w);
+    float v[16];
+    [[unroll]] for (int i = 0; i < 8; ++i) { v[2 * i] = bf_lo(w[i]); v[2 * i + 1] = bf_hi(w[i]); }
+    float vmax = 0.0;
+    [[unroll]] for (int i = 0; i < 16; ++i) vmax = max(vmax, abs(v[i]));  // BF16 inputs: NaN rows are not served
+    precise float sfv = pc.gs * (vmax * uintBitsToFloat(0x3E2AAAABu));   // 1/6 rounded to FP32
+    const uint sf = float_to_e4m3(sfv);
+    const float sff = e4m3_to_float(sf);
+    precise float inv_gs = cdiv(1.0, pc.gs);
+    precise float den = sff * inv_gs;
+    const float os = vmax != 0.0 ? cdiv(1.0, den) : 0.0;
+    uint c0 = 0u, c1 = 0u;
+    [[unroll]] for (int i = 0; i < 8; ++i) {
+        precise float s0 = v[i] * os;
+        precise float s1 = v[8 + i] * os;
+        c0 |= float_to_e2m1(s0) << (4 * i);
+        c1 |= float_to_e2m1(s1) << (4 * i);
+    }
+    st8(pc.codes, b * 8u, uvec2(c0, c1));
+    st1(pc.scales, b, sf);
+}

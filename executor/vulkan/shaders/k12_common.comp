@@ -1,0 +1,320 @@
+// VulkanAmd P2 K12/K13S: shared GLSL of the sampler shaders (included by k12_*.comp and k13s_*.comp after their #version
+// and #extension GL_GOOGLE_include_directive lines; never compiled alone).
+//
+// What lives here: the buffer-reference accessors (unsigned 32-bit byte offsets from a 64-bit base), float controls
+// (NaN / Inf / signed zero / denormals preserved: the sampler's hardening rows depend on them), the murmur counter RNG
+// (integer, exact), the exactness helpers that make device arithmetic equal the host reference BY CONSTRUCTION
+// (correctly rounded fp32 and fp64 division, software fp64 exp / log whose operation order is fixed), fixed-order block
+// reductions (subgroup size 32 required: xor butterfly inside a warp, then the warps in order), the 64-bit
+// order-preserving candidate key of top-2 (NaN above +inf, ties to the lower id).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// SPV_KHR_float_controls: SignedZeroInfNanPreserve (cap 4466, mode 4461) and DenormPreserve (cap 4464, mode 4459) for fp32 (glslang
+// keeps one operand per mode, so fp64 is not listed; the fp64 code never tests NaN with a float compare). Without them the compiler may
+// fold x != x and flush fp32 denormals. WG (the workgroup size, defined by the including shader before the include; gl_WorkGroupSize is not
+// usable here because the layout line comes after the include) must be a multiple of 32.
+spirv_execution_mode(capabilities = [4466], 4461, 32);
+spirv_execution_mode(capabilities = [4464], 4459, 32);
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer D1 { double v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer B1 { uint8_t v; };
+
+uint ldu(uint64_t a, uint i) { return U1(a + uint64_t(i * 4u)).v; }
+void stu(uint64_t a, uint i, uint x) { U1(a + uint64_t(i * 4u)).v = x; }
+float ldf(uint64_t a, uint i) { return F1(a + uint64_t(i * 4u)).v; }
+void stf(uint64_t a, uint i, float x) { F1(a + uint64_t(i * 4u)).v = x; }
+double ldd(uint64_t a, uint i) { return D1(a + uint64_t(i * 8u)).v; }
+void std_(uint64_t a, uint i, double x) { D1(a + uint64_t(i * 8u)).v = x; }
+
+const uint NONE = 0xffffffffu;
+const uint SUBGROUP = 32u;
+
+float f_inf() { return uintBitsToFloat(0x7f800000u); }
+float f_ninf() { return uintBitsToFloat(0xff800000u); }
+float f_max() { return uintBitsToFloat(0x7f7fffffu); }
+bool isnanf(float x) { return (floatBitsToUint(x) & 0x7fffffffu) > 0x7f800000u; }
+bool isfinf(float x) { return (floatBitsToUint(x) & 0x7f800000u) != 0x7f800000u; }
+bool isnand(double x) { const uvec2 u = unpackDouble2x32(x); return ((u.y & 0x7fffffffu) > 0x7ff00000u) || ((u.y & 0x7fffffffu) == 0x7ff00000u && u.x != 0u); }
+double d_inf() { return packDouble2x32(uvec2(0u, 0x7ff00000u)); }
+double d_ninf() { return packDouble2x32(uvec2(0u, 0xfff00000u)); }
+
+// What an entry of z contributes to the softmax: +inf saturates to the largest finite float, NaN and -inf carry none.
+float mass_z(float z) { return isnanf(z) ? f_ninf() : min(z, f_max()); }
+
+// ---- D4 counter: murmur_hash32 (sampler_ref.cpp), integer arithmetic: exact ----
+uint rotl32(uint x, uint r) { return (x << r) | (x >> (32u - r)); }
+uint mixk(uint h, uint k) {
+    k *= 0xCC9E2D51u;
+    k = rotl32(k, 15u);
+    k *= 0x1B873593u;
+    h ^= k;
+    h = rotl32(h, 13u);
+    return h * 5u + 0xE6546B64u;
+}
+uint murmur_hash32(uint64_t seed, uint key, uint c) {
+    const uvec2 s = unpackUint2x32(seed);
+    uint h = mixk(0u, s.x);
+    h = mixk(h, s.y);
+    h = mixk(h, key);
+    h = mixk(h, c);
+    h ^= 16u;
+    h ^= h >> 16;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13;
+    h *= 0xC2B2AE35u;
+    return h ^ (h >> 16);
+}
+// u = (x >> 11) * 2^-53 with x = h_ca * 2^32 + h_cb: (x >> 11) = h_ca * 2^21 + (h_cb >> 11), exact in fp64 (< 2^53).
+double uniform_u(uint64_t seed, uint key, uint ca, uint cb) {
+    const uint h1 = murmur_hash32(seed, key, ca);
+    const uint h2 = murmur_hash32(seed, key, cb);
+    const double top = double(h1) * 2097152.0;
+    const double x = top + double(h2 >> 11);
+    return x * packDouble2x32(uvec2(0u, 0x3CA00000u));  // 2^-53
+}
+
+// ---- correctly rounded division ----
+// fp64: q = a / b refined by the exact residual fma(-c, b, a) over the candidates q - ulp, q, q + ulp; the least |residual|
+// wins (|a - c b| = |b| |a/b - c|), an exact tie goes to the even mantissa. Positive finite normal operands (else the
+// hardware division, which is exact for 0 / inf / NaN cases).
+double fdiv_rn64(double a, double b) {
+    const double q = a / b;
+    const uvec2 ua = unpackDouble2x32(a), ub = unpackDouble2x32(b);
+    const uint ea = (ua.y >> 20) & 0x7ffu, eb = (ub.y >> 20) & 0x7ffu;
+    if (ea == 0u || ea == 0x7ffu || eb == 0u || eb == 0x7ffu || ea < 60u || eb < 60u || ea > 1900u || eb > 1900u) return q;
+    const uint64_t bq = packUint2x32(unpackDouble2x32(q));
+    const double qd = packDouble2x32(unpackUint2x32(bq - 1ul));
+    const double qu = packDouble2x32(unpackUint2x32(bq + 1ul));
+    const double r0 = abs(fma(-q, b, a));
+    const double rd = abs(fma(-qd, b, a));
+    const double ru = abs(fma(-qu, b, a));
+    double best = q; double rb = r0; uint64_t bb = bq;
+    if (rd < rb || (rd == rb && (((bq - 1ul) & 1ul) == 0ul) && ((bb & 1ul) != 0ul))) { best = qd; rb = rd; bb = bq - 1ul; }
+    if (ru < rb || (ru == rb && (((bq + 1ul) & 1ul) == 0ul) && ((bb & 1ul) != 0ul))) { best = qu; rb = ru; bb = bq + 1ul; }
+    return best;
+}
+
+// fp32 correctly rounded a / b. Fast path: reciprocal, two Newton / Markstein steps with exact fma residuals, accepted only
+// when the final exact residual proves the quotient is the nearest float (|residual| < 0.99 * half an ulp of the quotient,
+// times |b|); otherwise (a near-tie, or a quotient outside [2^-54, 2^54]) the fp64 residual selection among the three
+// neighbouring floats. Zero, denormal, Inf and NaN operands take the hardware division (IEEE for Inf / NaN / zero cases).
+float fdiv_rn32(float a, float b) {
+    const uint ba = floatBitsToUint(a), bb = floatBitsToUint(b);
+    const uint ea = (ba >> 23) & 255u, eb = (bb >> 23) & 255u;
+    if (ea == 0u || ea == 255u || eb == 0u || eb == 255u) return a / b;
+    if (ea >= 100u && ea <= 154u && eb >= 100u && eb <= 154u) {
+        precise float y = 1.0 / b;
+        precise float q = a * y;
+        precise float e = fma(-b, q, a);
+        q = fma(e, y, q);
+        e = fma(-b, q, a);
+        q = fma(e, y, q);
+        const float e1 = fma(-b, q, a);
+        const uint eq = (floatBitsToUint(q) >> 23) & 255u;
+        if (eq > 30u && eq < 220u) {
+            const float ulp = uintBitsToFloat((eq - 23u) << 23);
+            if (abs(e1) < 0.49f * abs(b) * ulp) return q;
+        }
+    }
+    // Slow path on magnitudes: the nearest of the three neighbouring floats (denormal results included, built from integer bits since a
+    // float(double) conversion may flush) by the exact fp64 residual |a| - c |b|.
+    const double da = abs(double(a)), db = abs(double(b));
+    const uint sgn = (ba ^ bb) & 0x80000000u;
+    const double q = da / db;
+    uint bf = q < 1.1754943508222875e-38LF ? uint(roundEven(q * 7.1362384635297994e44LF)) : floatBitsToUint(float(q));  // 2^149
+    if (bf >= 0x7f800000u) return uintBitsToFloat(0x7f800000u | sgn);
+    const double tiny = packDouble2x32(uvec2(0u, 0x36A00000u));  // 2^-149
+    const uint cands[3] = uint[3](bf > 0u ? bf - 1u : bf, bf, bf + 1u);
+    uint best = bf; double rb = 1.0e300LF;
+    const uint order[3] = uint[3](bf, cands[0], cands[2]);
+    for (int k = 0; k < 3; ++k) {
+        const uint c = order[k];
+        const uint ec = c >> 23;
+        const double cd = ec == 0u ? double(c & 0x7fffffu) * tiny : double(uintBitsToFloat(c));
+        const double r = abs(fma(-cd, db, da));
+        if (r < rb || (r == rb && (c & 1u) == 0u && (best & 1u) != 0u)) { rb = r; best = c; }
+    }
+    return uintBitsToFloat(best | sgn);
+}
+
+// ---- software fp64 exp / log (GLSL has none for double); a fixed operation order, accurate to a few 1e-17 relative. `precise` marks every
+// chain whose operation order matters: RADV's optimizer otherwise reassociates constant-multiplier fma chains. ----
+// ln 2 as three parts of at most 32 significant bits (the last is the remainder): k * part is exact for |k| < 2^21, and the 32-bit parts have
+// zero low words, which RADV's compiler keeps exact (a full-precision LN2_LO constant came out rounded to ~23 bits when fused with the polynomial).
+const double LN2_C1 = 0.6931471803691238LF;
+const double LN2_C2 = 1.9082149288430703e-10LF;
+const double LN2_C3 = 4.275175589747649e-20LF;
+double exp64(double x) {
+    if (x < -745.2LF) return 0.0LF;
+    if (x > 709.7LF) return d_inf();
+    const double kd = roundEven(x * 1.44269504088896338700LF);
+    const int k = int(kd);
+    // Plain `precise` mul / sub, not fma(): RADV's optimizer folds a chain of constant-multiplier fmas into one fma with the rounded sum of the
+    // constants (ln 2 rounded to 53 bits: a relative error growing as 3e-17 |x|); decorated mul and sub (NoContraction -> NIR exact) are kept.
+    precise double t1 = kd * LN2_C1;  // exact (32-bit constant)
+    precise double r = x - t1;       // exact
+    precise double t2 = kd * LN2_C2;  // exact
+    r = r - t2;
+    precise double t3 = kd * LN2_C3;
+    r = r - t3;
+    // Taylor to r^13 (|r| <= 0.3466: truncation < 5e-18)
+    double p = 1.0LF / 6227020800.0LF;
+    p = fma(p, r, 1.0LF / 479001600.0LF);
+    p = fma(p, r, 1.0LF / 39916800.0LF);
+    p = fma(p, r, 1.0LF / 3628800.0LF);
+    p = fma(p, r, 1.0LF / 362880.0LF);
+    p = fma(p, r, 1.0LF / 40320.0LF);
+    p = fma(p, r, 1.0LF / 5040.0LF);
+    p = fma(p, r, 1.0LF / 720.0LF);
+    p = fma(p, r, 1.0LF / 120.0LF);
+    p = fma(p, r, 1.0LF / 24.0LF);
+    p = fma(p, r, 1.0LF / 6.0LF);
+    p = fma(p, r, 0.5LF);
+    p = fma(p, r, 1.0LF);
+    p = fma(p, r, 1.0LF);
+    // Scale by 2^k with exact power-of-two multiplies (the built-in ldexp was not the cause of the |x|-proportional error found here, but exact
+    // multiplies make the operation order explicit); two steps keep the exponent field in range, and a subnormal result takes one rounding.
+    const int k1 = k / 2, k2 = k - k1;
+    const double s1 = packDouble2x32(uvec2(0u, uint(k1 + 1023) << 20));
+    const double s2 = packDouble2x32(uvec2(0u, uint(k2 + 1023) << 20));
+    return (p * s1) * s2;
+}
+double log64(double x) {
+    if (isnand(x) || x < 0.0LF) return packDouble2x32(uvec2(0u, 0x7ff80000u));
+    if (x == 0.0LF) return d_ninf();
+    if (x == d_inf()) return x;
+    int e;
+    double f = frexp(x, e);  // f in [0.5, 1)
+    if (f < 0.70710678118654752440LF) { f *= 2.0LF; e -= 1; }
+    const double s = (f - 1.0LF) / (f + 1.0LF);
+    const double z = s * s;
+    // 2 atanh(s) = 2 (s + s^3/3 + s^5/5 + ...), |s| <= 0.1716
+    double p = 1.0LF / 23.0LF;
+    p = fma(p, z, 1.0LF / 21.0LF);
+    p = fma(p, z, 1.0LF / 19.0LF);
+    p = fma(p, z, 1.0LF / 17.0LF);
+    p = fma(p, z, 1.0LF / 15.0LF);
+    p = fma(p, z, 1.0LF / 13.0LF);
+    p = fma(p, z, 1.0LF / 11.0LF);
+    p = fma(p, z, 1.0LF / 9.0LF);
+    p = fma(p, z, 1.0LF / 7.0LF);
+    p = fma(p, z, 1.0LF / 5.0LF);
+    p = fma(p, z, 1.0LF / 3.0LF);
+    p = fma(p, z, 1.0LF);
+    const double lf = 2.0LF * s * p;
+    const double ed = double(e);
+    precise double u3 = ed * LN2_C3;
+    precise double u2 = ed * LN2_C2;
+    precise double u1 = ed * LN2_C1;  // exact
+    precise double t = lf + u3;
+    t = t + u2;
+    return t + u1;
+}
+
+// ---- fixed-order block reductions (workgroup = N threads, N a multiple of 32; subgroup size 32 required) ----
+shared float sh_f[32];
+shared double sh_d[32];
+shared uint sh_u[32];
+shared uvec2 sh_k[32];
+
+float block_max_f(float v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) v = max(v, subgroupShuffleXor(v, o));
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_f[gl_LocalInvocationID.x >> 5] = v;
+    barrier();
+    float acc = sh_f[0];
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc = max(acc, sh_f[w]);
+    barrier();
+    return acc;
+}
+float block_min_f(float v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) v = min(v, subgroupShuffleXor(v, o));
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_f[gl_LocalInvocationID.x >> 5] = v;
+    barrier();
+    float acc = sh_f[0];
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc = min(acc, sh_f[w]);
+    barrier();
+    return acc;
+}
+double block_sum_d(double v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) {
+        const uvec2 u = unpackDouble2x32(v);
+        v = v + packDouble2x32(uvec2(subgroupShuffleXor(u.x, o), subgroupShuffleXor(u.y, o)));
+    }
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_d[gl_LocalInvocationID.x >> 5] = v;
+    barrier();
+    double acc = sh_d[0];
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc = acc + sh_d[w];
+    barrier();
+    return acc;
+}
+uint block_sum_u(uint v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) v += subgroupShuffleXor(v, o);
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_u[gl_LocalInvocationID.x >> 5] = v;
+    barrier();
+    uint acc = sh_u[0];
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc += sh_u[w];
+    barrier();
+    return acc;
+}
+uint block_min_u(uint v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) v = min(v, subgroupShuffleXor(v, o));
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_u[gl_LocalInvocationID.x >> 5] = v;
+    barrier();
+    uint acc = sh_u[0];
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc = min(acc, sh_u[w]);
+    barrier();
+    return acc;
+}
+
+// ---- top-2 candidate key: order-preserving 32-bit key of the float (NaN above +inf, -0 keyed as +0) << 32 | ~id ----
+uint64_t key_of(float v, uint id) {
+    const uint b = floatBitsToUint(v);
+    uint k;
+    if ((b & 0x7fffffffu) > 0x7f800000u) k = 0xffffffffu;
+    else if (b == 0x80000000u) k = 0x80000000u;
+    else k = (b >> 31) != 0u ? ~b : (b | 0x80000000u);
+    return (uint64_t(k) << 32) | uint64_t(~id);
+}
+uint64_t shfl_key(uint64_t v, uint o) {
+    const uvec2 u = unpackUint2x32(v);
+    return packUint2x32(uvec2(subgroupShuffleXor(u.x, o), subgroupShuffleXor(u.y, o)));
+}
+uint64_t block_max_key(uint64_t v) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) v = max(v, shfl_key(v, o));
+    if ((gl_LocalInvocationID.x & 31u) == 0u) sh_k[gl_LocalInvocationID.x >> 5] = unpackUint2x32(v);
+    barrier();
+    uint64_t acc = packUint2x32(sh_k[0]);
+    for (uint w = 1u; w < (WG >> 5u); ++w) acc = max(acc, packUint2x32(sh_k[w]));
+    barrier();
+    return acc;
+}
+
+// ---- scratch layout shared by probabilities / keep_mask / the draws (byte offsets; scratch_bytes() = 38952) ----
+const uint W_MAXPART = 0u;      // f32 [512]
+const uint W_SUMPART = 2048u;   // f64 [512]
+const uint W_NANPART = 6144u;   // u32 [512]
+const uint W_HIST = 8192u;      // u32 [3][2048]
+const uint W_ABOVE = 32768u;    // u32 (zeroed with the histograms: 6145 words from W_HIST)
+const uint W_SELECT = 32784u;   // u32 [4]: positive, sel, bits, rank
+const uint W_TIE = 32800u;      // u32 [512]
+const uint W_CAND = 34848u;     // u32 [1024]
+const uint W_MODE = 38944u;     // u32
+const uint W_COUNTER_WORDS = 6145u;
+// DrawScratch: f64 prefix[1025] at 0, u32 last_kept at 8200.
+const uint D_LAST = 8200u;
+const uint kChunks = 1024u;

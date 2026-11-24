@@ -1,0 +1,114 @@
+{
+  "repo": "DeadlyKitt3n/DICE-8B",
+  "revision": "ca80967e77126a7b5854b51e6eeb4f1125543d94",
+  "url": "https://huggingface.co/DeadlyKitt3n/DICE-8B/resolve/ca80967e77126a7b5854b51e6eeb4f1125543d94/config.json",
+  "sha256": "b8c590079d62b58fef6932d2bf8313a0eb45d0951df35b297b13454c509bb8ab",
+  "fetched": "2026-11-11",
+  "why": "The repo tasks/selftune-spec.md Q1 names (owner 2026-10-18; model card links arXiv 2602.11715 and github.com/deadlykitten4/DICE). The revision is the repo's main commit on 2026-11-11 (HF api sha and X-Repo-Commit; lastModified 2026-06-18). config.json is committed byte for byte. `files` pins every file at the revision (weights by LFS oid) and `decode_loop` the authors' block-diffusion decode loop; scripts/native/model_source.py checks a directory against both (ST4 S0/S1).",
+  "files": {
+    ".gitattributes": {
+      "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+      "bytes": 1519,
+      "role": "doc"
+    },
+    "README.md": {
+      "sha256": "5c8218f8e95c69675ce64111efce4b72456aaf1a60939de1071e1aec62319dd1",
+      "bytes": 912,
+      "role": "doc"
+    },
+    "added_tokens.json": {
+      "sha256": "321e1bf30087d5b410aa5b76677941f614da428e5da1085a6523f121ecf23e68",
+      "bytes": 729,
+      "role": "tokenizer"
+    },
+    "chat_template.jinja": {
+      "sha256": "87a2728cb8dc9fe424d624542f6060ec05a1d285ebbec578bb078900e33396b5",
+      "bytes": 4116,
+      "role": "tokenizer"
+    },
+    "config.json": {
+      "sha256": "b8c590079d62b58fef6932d2bf8313a0eb45d0951df35b297b13454c509bb8ab",
+      "bytes": 1098,
+      "role": "config"
+    },
+    "configuration_sdar.py": {
+      "sha256": "73f6e1eaa4018f2f4023c4c9f90a4a401f67762a106644e248c35f0233ef5db4",
+      "bytes": 11233,
+      "role": "code"
+    },
+    "generation_config.json": {
+      "sha256": "787409d8b23543ca6a24affbca01de9251ec48e5b0f268911ca92daabde329bf",
+      "bytes": 214,
+      "role": "config"
+    },
+    "merges.txt": {
+      "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+      "bytes": 1671853,
+      "role": "tokenizer"
+    },
+    "model-00001-of-00004.safetensors": {
+      "sha256": "4093024bd4bfdf3f8d09ae05330ca6848e088d818ae3c656626cab55700e626e",
+      "bytes": 4902257696,
+      "role": "weights"
+    },
+    "model-00002-of-00004.safetensors": {
+      "sha256": "2820c1e6642af8e8ad1103d0d72d4248f9f83f7ebe24fa9e6a45cdebb3d1c2c6",
+      "bytes": 4915960368,
+      "role": "weights"
+    },
+    "model-00003-of-00004.safetensors": {
+      "sha256": "8b0ad63aa6a719de32df4a656ea9daf4b85cfa4812ef31b453c8297605850fcf",
+      "bytes": 4983068496,
+      "role": "weights"
+    },
+    "model-00004-of-00004.safetensors": {
+      "sha256": "2f5ab912a0b9d362f653cccdfedd8f26a7dd52a3fe46e770fe426eac7cf1ef55",
+      "bytes": 1580230264,
+      "role": "weights"
+    },
+    "model.safetensors.index.json": {
+      "sha256": "3649bb967710edc0f995e3839a363a069482a1688216f87745248966751d0221",
+      "bytes": 32878,
+      "role": "config"
+    },
+    "modeling_sdar.py": {
+      "sha256": "6ebf3124a5fd17171be0d2f6f7674eb76dcf997a8a6cae8720131187bb30ac95",
+      "bytes": 40351,
+      "role": "code"
+    },
+    "special_tokens_map.json": {
+      "sha256": "8f53fa0c50b74bf0b53321ba9b500465b32e8e24b8a43d69b59f21b8a4c005a6",
+      "bytes": 771,
+      "role": "tokenizer"
+    },
+    "tokenization_qwen2.py": {
+      "sha256": "ce10fa3509652ad56a39b62dbafddb5441db1916f3b3525c7f2d5a302e4e6be4",
+      "bytes": 13964,
+      "role": "never_execute"
+    },
+    "tokenization_qwen2_fast.py": {
+      "sha256": "1ed7a7ad1199d79d38b1bae0ee655e1e0e227fce54ed43dafc68b189e8b4f7fb",
+      "bytes": 5241,
+      "role": "never_execute"
+    },
+    "tokenizer_config.json": {
+      "sha256": "34bc53976968063bc1e32b390bb9c34c64f3ddece5f59783a4a4ffc51bfdd4f9",
+      "bytes": 5754,
+      "role": "tokenizer"
+    },
+    "vocab.json": {
+      "sha256": "87a257b04b17642a0688c98cd1df89c398bda4fee532d6f88b38a659ecb4ac8d",
+      "bytes": 3383407,
+      "role": "tokenizer"
+    }
+  },
+  "decode_loop": {
+    "repo": "deadlykitten4/DICE",
+    "commit": "1abe88761f7715f82da84c838b387ea282b8b898",
+    "path": "evaluation/scripts/sdar_utils.py",
+    "file": "sdar_utils.py",
+    "url": "https://raw.githubusercontent.com/deadlykitten4/DICE/1abe88761f7715f82da84c838b387ea282b8b898/evaluation/scripts/sdar_utils.py",
+    "sha256": "81f549b19c2799cf24235d2baa395630718d2fc607c297c02cdf36c1525db867",
+    "bytes": 8651
+  }
+}

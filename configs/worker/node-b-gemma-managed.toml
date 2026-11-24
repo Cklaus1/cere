@@ -1,0 +1,60 @@
+# N3 managed node agent profile (n3 design note D5, D11): `cere-worker` for `worker-a` on node-b, launching and
+# supervising the Gemma SGLang server itself when the coordinator issues `LoadModel` for the approved lock. The agent
+# runs as root in `cere-worker-a` (the pinned SGLang image) and drops the child to uid/gid 65534. `lock_sha256` is the
+# SHA-256 of `configs/deployments/gemma-4-e4b-it.lock.json`, the deployment `configs/runtime/federation-gemma.toml`
+# pins; the live harness checks it instead of patching it. The PEM paths are placeholders that the live harness
+# patches with its per-run PKI directory. Timings and limits equal `configs/cluster/dev-tailnet.yaml` `control_plane`.
+cluster_id = "lab-cere"
+worker_id = "worker-a"
+listen = "100.71.1.1:7443"
+principal = "cere-worker-a"
+ca_file = "/tmp/cere-fed-PLACEHOLDER/pki/ca.pem"
+cert_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a.pem"
+key_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a-key.pem"
+state_dir = "/var/lib/cere-worker/worker-a"
+
+[coordinator]
+endpoint = "https://100.72.2.2:7443"
+principal = "cere-coordinator"
+coordinator_id = "cere-coordinator"
+
+[backend]
+base_url = "http://127.0.0.1:18328"
+load_endpoint = "/get_load"
+served_model_name = "gemma-4-e4b-it"
+lock_sha256 = "46597f55bb2fa509fe36d57bfd6266b4d5aaba3b693ea4fac119125e141f224a"
+
+# D6/D7: `scripts/live/gemma_deploy.py` `sglang_argv(FRACTION_NODE_B)` and `LAUNCH_ENV` (a test pins both). The
+# child env is cleared and PATH fixed to /usr/bin:/bin by the agent; caches live in the 65534-owned home
+# `/var/lib/cere/cache/nobody` mounted at /tmp/cere-sglang-home. stop_timeout_ms keeps its default (30000).
+[backend.launch]
+argv = ["/opt/sglang/bin/python3", "-m", "sglang.launch_server", "--model-path", "/models/gemma-4-e4b-it-hf/snapshots/d6436b3d62967e1af08bbb046c6300b2a9ae8e85", "--served-model-name", "gemma-4-e4b-it", "--host", "127.0.0.1", "--port", "18328", "--tensor-parallel-size", "1", "--mem-fraction-static", "0.80", "--max-running-requests", "4", "--context-length", "32768", "--reasoning-parser", "gemma4", "--tool-call-parser", "gemma4", "--enable-cache-report", "--enable-metrics", "--watchdog-timeout", "1800"]
+startup_timeout_ms = 900000
+uid = 65534
+gid = 65534
+
+[backend.launch.env]
+CUDA_HOME = "/usr/local/cuda"
+FLASHINFER_WORKSPACE_BASE = "/tmp/cere-sglang-home"
+HF_HUB_OFFLINE = "1"
+HOME = "/tmp/cere-sglang-home"
+LD_LIBRARY_PATH = "/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
+PYTHONUNBUFFERED = "1"
+SGLANG_CACHE_DIR = "/tmp/cere-sglang-home/sglang"
+TORCHINDUCTOR_CACHE_DIR = "/tmp/cere-sglang-home/inductor"
+TRITON_CACHE_DIR = "/tmp/cere-sglang-home/triton"
+XDG_CACHE_HOME = "/tmp/cere-sglang-home/.cache"
+
+# Q12: retained operations and the tombstone horizon (at least the 600 s work cap).
+[journal]
+max_operations = 4096
+retry_horizon_ms = 600000
+
+# Q14; output_stall_ms defaults to rpc_timeout_ms and must not exceed lost_after_ms.
+[limits]
+heartbeat_interval_ms = 1000
+lost_after_ms = 15000
+rpc_timeout_ms = 5000
+control_quota = 64
+output_buffer_bytes = 1048576
+output_stall_ms = 5000

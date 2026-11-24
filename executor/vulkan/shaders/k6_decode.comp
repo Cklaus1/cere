@@ -1,0 +1,205 @@
+#version 460
+// VulkanAmd P2 K6: dense causal GQA, the split-key kernel for calls of <= 16 rows (decode, MTP extend, verify chain).
+// Contract: executor/cuda/src/kernels/k6_attention.h (k6::attention), re-proven per device (vulkan-amd design note):
+//   out[t, h] = softmax_j(q[t, h] . K[j] * scale) V[j] over j = 0 .. pos0 + t, KV head h / 12; FP32 scores, softmax and
+//   accumulation; BF16 output (RNE, NaN 0x7FFF; written by k6_combine.comp).
+// K/V: BF16 rows (FP8 0; row strides in bytes) or the FP8 E4M3 cache (FP8 1; scale 1.0), key j at row slots[j] (int64)
+// or row j when slots is 0. Both decoded exactly to FP32 in the shader (RADV has no BF16 / FP8 type).
+//
+// Workgroup (split s, KV head g, row t): keys s * KS .. min(s * KS + KS, pos0 + t + 1) - 1 of row t, its 12 query heads.
+// The split boundaries are a function of the row's own key count only (KS fixed per build, never of the call's row
+// count, first row or cls), so every row's bits depend on its position, its q row and the keys only: a row computed
+// in any call (one token, a chain of rows, an extend) is bit-equal to the one-token call at its position. That is how
+// the verify chain is "its rows' one-token calls" (the contract) in one dispatch.
+// Arithmetic per (row, head) of one split:
+//   dot_j = fma chain over d ascending from 0 (q, k exact FP32); s_j = dot_j * (scale log2 e) (one rounding);
+//   m = max_j s_j (exact); p_j = exp2(s_j - m); l = fixed-order sum of p_j (16 lanes x KS/16 keys ascending, then the
+//   xor butterfly 8, 4, 2, 1); o[d] = fma chain over j ascending of p_j v_j[d]. Partials (o, m, l) go to the workspace.
+// Every key loop stops at the split's last key: no K/V row past pos0 + t is read.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#ifndef FP8
+#define FP8 0
+#endif
+#ifndef KS
+#define KS 64
+#endif
+#define NT 256
+#define D 256
+#define GROUP 12
+#define QHEADS 24
+#define QW (QHEADS * D)
+#define MAXS (2048 / KS)        // splits of a kMaxContext key range
+#define HPT (GROUP * KS / NT)   // heads per thread in the score phase
+#define PER (KS / 16)           // keys per lane in the softmax phase
+#if (NT % KS) != 0 || (GROUP % (NT / KS)) != 0 || KS < 16
+#error "unsupported KS"
+#endif
+
+layout(local_size_x = NT) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer V1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer I64 { int64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer F4 { vec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) writeonly buffer F2 { vec2 v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, k, v, slots, po, pml;  // device addresses (po/pml: partials)
+    uint tokens, pos0, kstride, vstride;  // K/V row strides in bytes
+    float sl2;                            // scale * log2(e)
+    uint pad;
+} pc;
+
+shared float QS[GROUP * D];
+shared float SS[GROUP * KS];
+shared uint ROWS[KS];
+
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+// OCP E4M3 -> FP32, exact, no FP32 denormal intermediate: normal bytes by exponent rebias, subnormal ones as an exact
+// int * 2^-9; magnitude 0x7F is NaN; the sign is OR-ed in.
+float e4m3(uint b) {
+    const uint a = b & 0x7Fu;
+    const float v = a == 0x7Fu ? uintBitsToFloat(0x7FC00000u)
+                  : a >= 8u    ? uintBitsToFloat((a << 20) + (120u << 23))
+                               : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v) | ((b & 0x80u) << 24));
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint s = gl_WorkGroupID.x, g = gl_WorkGroupID.y, t = gl_WorkGroupID.z;
+    const uint kvlen = pc.pos0 + t + 1u;
+    if (s * KS >= kvlen) return;  // past this row's splits (uniform)
+    const uint kb = s * KS, n = min(kvlen - kb, uint(KS));
+
+    if (tid < KS) {
+        const uint j = kb + tid;
+        ROWS[tid] = tid < n ? (pc.slots != 0ul ? uint(I64(pc.slots + uint64_t(j) * 8ul).v) : j) : 0u;
+    }
+    // q rows (exact BF16 widening): 12 heads x 256 dims, 8 per load
+    for (uint i = tid; i < GROUP * D / 8; i += NT) {
+        const uint h = i / (D / 8), c = (i % (D / 8)) * 8u;
+        const uvec4 r = V4(pc.q + uint64_t((t * QW + (g * GROUP + h) * D + c) * 2u)).v;
+        const uint o = h * D + c;
+        QS[o + 0] = lo(r.x); QS[o + 1] = hi(r.x); QS[o + 2] = lo(r.y); QS[o + 3] = hi(r.y);
+        QS[o + 4] = lo(r.z); QS[o + 5] = hi(r.z); QS[o + 6] = lo(r.w); QS[o + 7] = hi(r.w);
+    }
+    memoryBarrierShared();
+    barrier();
+
+    {   // scores: thread (key j, heads hg * HPT ..)
+        const uint j = tid % KS, hg = tid / KS;
+        float dot[HPT];
+        [[unroll]] for (int i = 0; i < HPT; ++i) dot[i] = 0.0;
+        if (j < n) {
+#if FP8
+            const uint64_t base = pc.k + uint64_t(ROWS[j] * pc.kstride + g * D);
+            [[unroll]] for (uint c = 0; c < D / 16; ++c) {
+                const uvec4 r = V4(base + uint64_t(c * 16u)).v;
+                const uint w[4] = uint[4](r.x, r.y, r.z, r.w);
+                float kf[16];
+                [[unroll]] for (int e = 0; e < 16; ++e) kf[e] = e4m3((w[e / 4] >> (8 * (e % 4))) & 0xFFu);
+#else
+            const uint64_t base = pc.k + uint64_t(ROWS[j] * pc.kstride + g * D * 2u);
+            [[unroll]] for (uint c = 0; c < D / 16; ++c) {
+                const uvec4 r0 = V4(base + uint64_t(c * 32u)).v, r1 = V4(base + uint64_t(c * 32u + 16u)).v;
+                const float kf[16] = float[16](lo(r0.x), hi(r0.x), lo(r0.y), hi(r0.y), lo(r0.z), hi(r0.z), lo(r0.w), hi(r0.w),
+                                               lo(r1.x), hi(r1.x), lo(r1.y), hi(r1.y), lo(r1.z), hi(r1.z), lo(r1.w), hi(r1.w));
+#endif
+                [[unroll]] for (int i = 0; i < HPT; ++i) {
+                    precise float a = dot[i];
+                    const uint qo = (hg * HPT + i) * D + c * 16u;
+                    [[unroll]] for (int e = 0; e < 16; ++e) a = fma(QS[qo + e], kf[e], a);
+                    dot[i] = a;
+                }
+            }
+        }
+        [[unroll]] for (int i = 0; i < HPT; ++i) {
+            precise float sc = dot[i] * pc.sl2;
+            SS[(hg * HPT + i) * KS + j] = j < n ? sc : uintBitsToFloat(0xFF800000u);
+        }
+    }
+    memoryBarrierShared();
+    barrier();
+
+    if (tid < GROUP * 16) {  // softmax of head h over the split's keys: 16 lanes, PER keys each
+        const uint h = tid / 16, sub = tid % 16, j0 = h * KS + sub * PER;
+        float mx = uintBitsToFloat(0xFF800000u);
+        [[unroll]] for (int i = 0; i < PER; ++i) mx = max(mx, SS[j0 + i]);
+        [[unroll]] for (uint o = 8; o >= 1u; o /= 2u) mx = max(mx, subgroupShuffleXor(mx, o));
+        precise float sum = 0.0;
+        [[unroll]] for (int i = 0; i < PER; ++i) {
+            precise float d = SS[j0 + i] - mx;
+            const float p = exp2(d);  // masked keys: exp2(-inf) = 0; mx is finite (key kb is always valid)
+            SS[j0 + i] = p;
+            sum = sum + p;
+        }
+        [[unroll]] for (uint o = 8; o >= 1u; o /= 2u) {
+            precise float x = sum + subgroupShuffleXor(sum, o);
+            sum = x;
+        }
+        if (sub == 0u) F2(pc.pml + uint64_t((((t * QHEADS + g * GROUP + h) * MAXS + s) * 2u) * 4u)).v = vec2(mx, sum);
+    }
+    memoryBarrierShared();
+    barrier();
+
+    {   // P . V: thread (dims 4 dq .. 4 dq + 3, heads 3 hq .. 3 hq + 2), keys ascending
+        const uint dq = tid % 64u, hq = tid / 64u;
+        float acc[3][4];
+        [[unroll]] for (int i = 0; i < 3; ++i) [[unroll]] for (int e = 0; e < 4; ++e) acc[i][e] = 0.0;
+#if FP8
+        const uint voff = g * D + dq * 4u;
+#else
+        const uint voff = (g * D + dq * 4u) * 2u;
+#endif
+        uint j = 0;
+        // 4 keys per iteration: the 4 loads first, then the FMAs in key order (the order of a one-key loop)
+        for (; j + 4u <= n; j += 4u) {
+            float vf[4][4];
+            [[unroll]] for (uint u = 0; u < 4u; ++u) {
+#if FP8
+                const uint r = V1(pc.v + uint64_t(ROWS[j + u] * pc.vstride + voff)).v;
+                vf[u][0] = e4m3(r & 0xFFu); vf[u][1] = e4m3((r >> 8) & 0xFFu); vf[u][2] = e4m3((r >> 16) & 0xFFu); vf[u][3] = e4m3(r >> 24);
+#else
+                const uvec2 r = V2(pc.v + uint64_t(ROWS[j + u] * pc.vstride + voff)).v;
+                vf[u][0] = lo(r.x); vf[u][1] = hi(r.x); vf[u][2] = lo(r.y); vf[u][3] = hi(r.y);
+#endif
+            }
+            [[unroll]] for (uint u = 0; u < 4u; ++u)
+                [[unroll]] for (int i = 0; i < 3; ++i) {
+                    const float p = SS[(hq * 3u + i) * KS + j + u];
+                    [[unroll]] for (int e = 0; e < 4; ++e) {
+                        precise float a = fma(p, vf[u][e], acc[i][e]);
+                        acc[i][e] = a;
+                    }
+                }
+        }
+        for (; j < n; ++j) {
+            float vf[4];
+#if FP8
+            const uint r = V1(pc.v + uint64_t(ROWS[j] * pc.vstride + voff)).v;
+            vf[0] = e4m3(r & 0xFFu); vf[1] = e4m3((r >> 8) & 0xFFu); vf[2] = e4m3((r >> 16) & 0xFFu); vf[3] = e4m3(r >> 24);
+#else
+            const uvec2 r = V2(pc.v + uint64_t(ROWS[j] * pc.vstride + voff)).v;
+            vf[0] = lo(r.x); vf[1] = hi(r.x); vf[2] = lo(r.y); vf[3] = hi(r.y);
+#endif
+            [[unroll]] for (int i = 0; i < 3; ++i) {
+                const float p = SS[(hq * 3u + i) * KS + j];
+                [[unroll]] for (int e = 0; e < 4; ++e) {
+                    precise float a = fma(p, vf[e], acc[i][e]);
+                    acc[i][e] = a;
+                }
+            }
+        }
+        [[unroll]] for (int i = 0; i < 3; ++i) {
+            const uint h = g * GROUP + hq * 3u + i;
+            F4(pc.po + uint64_t((((t * QHEADS + h) * MAXS + s) * D + dq * 4u) * 4u)).v = vec4(acc[i][0], acc[i][1], acc[i][2], acc[i][3]);
+        }
+    }
+}

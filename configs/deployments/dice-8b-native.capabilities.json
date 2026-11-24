@@ -1,0 +1,73 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-cuda",
+  "profile_id": "native-g0-dice-8b-v1",
+  "artifact_sha256": "be8c16464a6d5f58c98f61b306f5b826c7a4c9d7e390f8d4bfe5dd57a56ebbec",
+  "execution_mode": "native",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 1,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "sampling_params": [],
+  "thinking_toggle": false,
+  "token_controls": [],
+  "vocab_size": 151936,
+  "notes": "SelfTune ST4 S3d (tasks/selftune-spec.md ST4, D-j, D-m): DICE-8B (family sdar, block diffusion over 4-token blocks, 36 dense GQA layers, BF16) on the in-process CERE executor built for it (native_dev.py build --model dice-8b, executor/models/dice-8b.json) on GPU0: one session, eager (no graphs), greedy only, no speculation, prefix cache, snapshot, LoRA, research points, levers other than the defaults, grammar, tools, logprobs or images. Context is the model's max_position_embeddings (32,768). The artifact is the D-m rebuild whose tokenizer.json was converted in the pinned S2 reference image (scripts/native/dice_reference.py tokenizer); the tokenizer sidecar runs with --thinking-kwarg unset, so a request renders its chat template exactly as the S2 reference does.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+#version 460
+// Inkling S11: causal short convolutions, kernel 4, over T tokens (prefill chunk or decode T = 1), one invocation per
+// (token, channel); bit-equal to executor/ref/inkling/conv_ref.h. Position s < 0 reads the carried state
+// st_in[3 + s][c] (FP32 [3][C], row 0 the oldest); invocations with token index < 3 also write the next state
+// st_out[k][c] = input at T - 3 + k (st_out != st_in: the host ping-pongs).
+// MODE 0, static (conv_static_point), w[c][k] (k = 0 the oldest tap): acc = 0; acc = fma(w[k], x[t - 3 + k], acc),
+//   k = 0..3; out = (acc + x[t]) / fp32(sqrt(5)).
+// MODE 1, dynamic (conv_dynamic_point), taps by backward distance lag: tap[lag] = static_w[lag][c] + dyn[t][h * 4 + lag]
+//   (h = c / (C / heads)); acc = 0; acc = fma(tap[lag], x[t - lag], acc), lag = 0..3; out = (acc + x[t]) / 3.
+// dtype bits in `flags`: 1 x BF16, 2 out BF16, 4 w BF16, 8 dyn BF16 (else FP32).
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t x, w, dyn, o, st_in, st_out;
+    uint T, C, heads, flags;
+} p;
+
+float ld_x(uint i) { return (p.flags & 1u) != 0u ? ldbf(p.x, i) : ldf(p.x, i); }
+float ld_w(uint i) { return (p.flags & 4u) != 0u ? ldbf(p.w, i) : ldf(p.w, i); }
+float ld_d(uint i) { return (p.flags & 8u) != 0u ? ldbf(p.dyn, i) : ldf(p.dyn, i); }
+// Input at position s (s < 0: the carried state), channel c.
+float at(int s, uint c) { return s >= 0 ? ld_x(uint(s) * p.C + c) : ldf(p.st_in, uint(3 + s) * p.C + c); }
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x, t = gl_GlobalInvocationID.y;
+    if (c >= p.C) return;
+    const int ti = int(t);
+    if (t < 3u) stf(p.st_out, t * p.C + c, at(int(p.T) - 3 + ti, c));
+    if (t >= p.T) return;
+    const float x0 = at(ti, c);
+    float acc = 0.0;
+#if MODE == 0
+    [[unroll]] for (uint k = 0u; k < 4u; ++k) acc = ki_fma(ld_w(c * 4u + k), at(ti - 3 + int(k), c), acc);
+    const float sc = uintBitsToFloat(0x400f1bbdu);  // fp32(sqrt(5))
+#else
+    const uint h = c / (p.C / p.heads);
+    [[unroll]] for (uint lag = 0u; lag < 4u; ++lag)
+        acc = ki_fma(ki_add(ld_w(lag * p.C + c), ld_d(t * p.heads * 4u + h * 4u + lag)), at(ti - int(lag), c), acc);
+    const float sc = 3.0;
+#endif
+    const float y = ki_div(ki_add(acc, x0), sc);
+    if ((p.flags & 2u) != 0u) stbf(p.o, t * p.C + c, y); else stf(p.o, t * p.C + c, y);
+}

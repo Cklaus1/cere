@@ -1,0 +1,25 @@
+{
+  "compute_capability": "0.0",
+  "compute_capability_source": "inferred",
+  "device_memory_mib": 1024,
+  "device_model": "fixture-cpu",
+  "modalities": [
+    "text"
+  ],
+  "placement": {
+    "dense": "device",
+    "draft": "device",
+    "nvfp4_block_scale": "device",
+    "nvfp4_global_scale": "device",
+    "nvfp4_input_scale": "device",
+    "nvfp4_weight": "device",
+    "ple_index": "host_pinned",
+    "ple_module": "device",
+    "ple_scale": "host_pinned",
+    "ple_table": "host_pinned",
+    "vision": "unused"
+  },
+  "profile_id": "fixture-plehost-text-v1",
+  "schema_version": "1",
+  "speculative": "nextn"
+}

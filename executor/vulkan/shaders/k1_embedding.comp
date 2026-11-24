@@ -1,0 +1,44 @@
+#version 460
+// VulkanAmd P2 K1: embedding gather, out[t, :] = table[ids[t], :] (bit-exact 16-byte copy; the contract of
+// executor/cuda/src/kernels/k1_primitives.h embedding_gather). Grid (ceil(hidden / 8 / WG), n). hidden % 8 == 0.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC { uint64_t table, ids, out_; uint hidden, n; } pc;
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x * 8u;
+    if (c >= pc.hidden) return;
+    const uint t = gl_WorkGroupID.y;
+    const uint id = U1(pc.ids + uint64_t(t * 4u)).v;
+    // 64-bit row bases (uniform per workgroup row), 32-bit offsets inside the row.
+    const uint64_t src = pc.table + uint64_t(id) * uint64_t(pc.hidden) * 2ul;
+    const uint64_t dst = pc.out_ + uint64_t(t) * uint64_t(pc.hidden) * 2ul;
+    V4(dst + uint64_t(c * 2u)).v = V4(src + uint64_t(c * 2u)).v;
+}

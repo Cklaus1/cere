@@ -1,0 +1,118 @@
+{
+  "schema_version": "2",
+  "plugin": "cpu-reference",
+  "profile_id": "synthetic-v1",
+  "artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "execution_mode": "native",
+  "evidence": "synthetic",
+  "operations": [
+    "prefill",
+    "decode",
+    "snapshot",
+    "restore",
+    "cancel"
+  ],
+  "native_decode_batch": true,
+  "decode_batch_min": 1,
+  "decode_batch_max": 16,
+  "max_context_tokens": 4096,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": true,
+  "structured_outputs": [
+    "text"
+  ],
+  "numerical_modes": [
+    "reference"
+  ],
+  "checkpoint_mode": "exact",
+  "modalities": [
+    "text"
+  ],
+  "thinking_toggle": false,
+  "token_controls": [
+    "stop_token_ids"
+  ],
+  "vocab_size": 1000,
+  "notes": "Synthetic capability fixture. Not GPU support or a performance claim.",
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "reference",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "max_context_tokens": 4096
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "reference",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "max_context_tokens": 4096
+    },
+    {
+      "operation": "snapshot",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "reference",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "max_context_tokens": 4096
+    },
+    {
+      "operation": "restore",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "reference",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "max_context_tokens": 4096
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "reference",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        4,
+        8,
+        16
+      ],
+      "max_context_tokens": 4096
+    }
+  ]
+}

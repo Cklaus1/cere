@@ -1,0 +1,78 @@
+#version 460
+// VulkanAmd P2 K4: the PLE embedding stage (k4_ple.h embed; forward / forward_rows' first stage). One workgroup of 160
+// per row r of the call: its segment s (first[s] <= r < first[s] + count[s], from the call table; nseg 1 takes the
+// history from the push constants), j = r - first[s]; the window (c0, c1, token) over history[s] ++ tokens[first[s] ..];
+// threads 0..15 hash the 16 n-gram ids into shared memory while threads 16..159 copy the block table (2 x 64 u64) and
+// the scale into shared memory (no dependent global load is left after the barrier but the row itself); then each
+// thread decodes one 16-element chunk of one row into emb[r, head * 160 ..]. NVFP4 as k4_gather.comp. History is only
+// read here (the state shader commits it after the step).
+#include "k4_common.comp"
+
+#ifndef NVFP4
+#define NVFP4 0
+#endif
+
+layout(local_size_x = 160) in;
+// The call table's segment list (k4_ple_vk.cpp CallTable): 16 x {history, conv_state, first, count, pad, pad}.
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Segments {
+    uvec4 seg[32];  // seg[2s] = (history lo, hi, conv lo, hi), seg[2s + 1] = (first, count, 0, 0)
+};
+layout(push_constant, std430) uniform PC {
+    uint64_t desc, segments, tokens, emb;
+    uint64_t mult, vocab, offs, scale;  // scale: BF16 scale or 0 (FP8) / F32 global (NVFP4)
+    int64_t eos;
+    uint64_t rows;
+    uint rpb, nseg, total, pad;
+    uint64_t history;  // nseg == 1: the only segment's history (first 0)
+} pc;
+
+shared int64_t ids[16];
+shared uint64_t bases[2 * kMaxBlocks];
+shared float scale_s;
+
+void main() {
+    const uint r = wg_linear();
+    if (r >= pc.total) return;  // spill workgroups of the 2-D grid (uniform per workgroup, before the barrier)
+    const uint tid = gl_LocalInvocationID.x;
+    if (tid < kNgramHeads) {
+        uint64_t history = pc.history;
+        uint first = 0u;
+        if (pc.nseg > 1u) {
+            Segments sg = Segments(pc.segments);
+            uint s = 0u;
+            for (; s + 1u < pc.nseg; ++s) {
+                const uvec4 m = sg.seg[2u * s + 1u];
+                if (r < m.x + m.y) break;
+            }
+            history = packUint2x32(sg.seg[2u * s].xy);
+            first = sg.seg[2u * s + 1u].x;
+        }
+        const int j = int(r - first);
+        const uint64_t tok = pc.tokens + uint64_t(first) * 8ul;
+        const int64_t c0 = j >= 2 ? I64(tok + uint64_t(j - 2) * 8ul).v : I64(history + uint64_t(j) * 8ul).v;
+        const int64_t c1 = j >= 1 ? I64(tok + uint64_t(j - 1) * 8ul).v : I64(history + 8ul).v;
+        ids[tid] = ngram_id(c0, c1, I64(tok + uint64_t(j) * 8ul).v, tid, pc.mult, pc.vocab, pc.offs, pc.eos);
+    } else if (tid - kNgramHeads < 2u * kMaxBlocks) {
+        bases[tid - kNgramHeads] = U64(pc.desc + uint64_t((tid - kNgramHeads) * 8u)).v;
+    } else if (tid == 159u) {
+#if NVFP4
+        scale_s = F1(pc.scale).v;
+#else
+        scale_s = pc.scale != 0ul ? bf(uint(H1(pc.scale).v)) : 1.0;
+#endif
+    }
+    barrier();
+    const uint row = tid / kRowChunks;
+    const uint chunk = tid % kRowChunks;
+    const uint64_t dst = pc.emb + uint64_t(r) * uint64_t(kHidden * 2u) + uint64_t(row * kHeadDim * 2u + chunk * 32u);
+    const int64_t id = ids[row];
+    const bool valid = row_valid(id, pc.rows);
+    uint b = 0u, rr = 0u;
+    if (valid) split_row(id, pc.rpb, b, rr);
+#if NVFP4
+    nvfp4_chunk_at(valid, bases[b] + uint64_t(rr * kNvfp4RowBytes), bases[kMaxBlocks + b] + uint64_t(rr * kNvfp4RowScales), chunk,
+                   scale_s, dst);
+#else
+    fp8_chunk_at(valid, bases[b] + uint64_t(rr * kHeadDim), chunk, pc.scale != 0ul, scale_s, dst);
+#endif
+}

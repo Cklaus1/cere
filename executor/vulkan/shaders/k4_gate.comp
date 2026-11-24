@@ -1,0 +1,59 @@
+#version 460
+// VulkanAmd P2 K4: the PLE gate (k4_ple.cu gate_kernel; `Qwen4ExpPLELayer.forward` :1184-1205). One workgroup of 320
+// (subgroup size 32 required: 10 subgroups) per row (token * 4 + g): thread i owns elements 8i .. 8i + 7 of the 2,560
+// group; partial = ascending pairs, partial += bf16(k0 q0) + bf16(k1 q1) (products rounded to BF16, FP32 adds never
+// contracted); a fixed xor butterfly (16 .. 1) per subgroup; the 10 subgroup sums added in order from 0. Then with every
+// BF16 rounding of the eager graph: dot = bf16(sum), gate = bf16(dot * inv_sqrt_hidden), root = bf16(sqrt(max(|gate|,
+// bf16(1e-6)))), transformed = bf16(root * sign(gate)), activated = bf16(1 / (1 + exp(-transformed))), gated =
+// bf16(activated * value). The order is Vulkan's own (per-device contract), fixed: a row's bits depend on its data only.
+#include "k4_common.comp"
+
+layout(local_size_x = 320) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t kn, qn, value, gated;
+    uint rows;
+    float inv_sqrt_hidden;
+} pc;
+
+shared float partial[10];
+
+void main() {
+    const uint row = wg_linear();
+    if (row >= pc.rows) return;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint token = row / 4u;
+    const uint e = tid * 8u;
+    const uvec4 kq = V4(pc.kn + uint64_t(row) * uint64_t(kHidden * 2u) + uint64_t(e * 2u)).v;
+    const uvec4 qq = V4(pc.qn + uint64_t(row) * uint64_t(kHidden * 2u) + uint64_t(e * 2u)).v;
+    const uvec4 vq = V4(pc.value + uint64_t(token) * uint64_t(kHidden * 2u) + uint64_t(e * 2u)).v;
+    precise float p = 0.0;
+    [[unroll]] for (int i = 0; i < 4; ++i) {
+        precise float a = lo(kq[i]) * lo(qq[i]);
+        precise float b = hi(kq[i]) * hi(qq[i]);
+        precise float ab = bf16r(a) + bf16r(b);
+        precise float p2 = p + ab;
+        p = p2;
+    }
+    precise float v = p;
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) { precise float s2 = v + subgroupShuffleXor(v, o); v = s2; }
+    if ((tid & 31u) == 0u) partial[tid >> 5] = v;
+    barrier();
+    precise float total = 0.0;
+    [[unroll]] for (uint w = 0u; w < 10u; ++w) { precise float t2 = total + partial[w]; total = t2; }
+    const float dot = bf16r(total);
+    precise float g0 = dot * pc.inv_sqrt_hidden;
+    const float gate = bf16r(g0);
+    const float root = bf16r(sqrt(max(abs(gate), bf16r(1.0e-6))));
+    const float sgn = gate > 0.0 ? 1.0 : (gate < 0.0 ? -1.0 : 0.0);
+    precise float tr = root * sgn;
+    const float transformed = bf16r(tr);
+    precise float den = 1.0 + exp(-transformed);
+    const float activated = bf16r(1.0 / den);
+    uint o4[4];
+    [[unroll]] for (int i = 0; i < 4; ++i) {
+        precise float a = activated * lo(vq[i]);
+        precise float b = activated * hi(vq[i]);
+        o4[i] = pack2(a, b);
+    }
+    V4(pc.gated + uint64_t(row) * uint64_t(kHidden * 2u) + uint64_t(e * 2u)).v = uvec4(o4[0], o4[1], o4[2], o4[3]);
+}

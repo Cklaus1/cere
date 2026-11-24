@@ -1,0 +1,21 @@
+{
+  "schema_version": "2",
+  "id": "plan-1",
+  "worker_epoch": 1,
+  "config_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "capability_profile_id": "synthetic-v1",
+  "work_unit_ids": [
+    "work-1"
+  ],
+  "device_ids": [
+    "gpu0"
+  ],
+  "mode": "native",
+  "reserved_bytes": 1024,
+  "safe_boundary": "decode_step",
+  "status": "planned",
+  "completion_ticket": null,
+  "worker_id": "worker-local",
+  "coordinator_term": 1,
+  "model_generation": 1
+}

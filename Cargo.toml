@@ -1,0 +1,50 @@
+[workspace]
+members = [
+  "crates/cere-core",
+  "crates/cere-runtime",
+  "crates/cere-compiler",
+  "crates/cere-mock-sglang",
+  "crates/cere-llamacpp-shim",
+  "crates/cere-proto",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/Cklaus1/cere"
+homepage = "https://github.com/Cklaus1/cere"
+
+# Fixed dependency set for M1 (MSRV-checked on 1.85.1). Additions go through the build owner.
+[workspace.dependencies]
+cere-core = { path = "crates/cere-core" }
+cere-mock-sglang = { path = "crates/cere-mock-sglang" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.145", features = ["raw_value"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "io-util", "fs"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio", "query", "matched-path"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream"] }
+toml = "0.9.12"
+sha2 = "0.10.9"
+hmac = "0.12.1"
+futures-util = "0.3"
+tokio-stream = "0.1"
+# Direct use: flock(2) on the ledger state dir (std File::lock needs Rust 1.89; MSRV is 1.85). Already in the tree via tokio/mio.
+libc = "0.2.190"
+# M3.5 worker RPC (m35 design note Q1): gRPC + mTLS. tonic 0.13 is the newest line on Rust 1.85 (0.14 needs
+# tonic-prost, rust-version 1.88). protoc is a build requirement of cere-proto (CI installs protobuf-compiler).
+cere-proto = { path = "crates/cere-proto" }
+# `router`: one agent listener serves WorkerService and WorkerInferenceService (axum 0.8 is already in the tree).
+tonic = { version = "=0.13.1", default-features = false, features = ["transport", "codegen", "prost", "tls-ring", "router"] }
+prost = { version = "=0.13.5", default-features = false, features = ["std", "derive"] }
+tonic-build = { version = "=0.13.1", default-features = false, features = ["prost"] }
+# Tests only: ephemeral cluster CA and leaf certificates.
+rcgen = { version = "=0.14.7", default-features = false, features = ["crypto", "ring", "pem"] }
+# Principal extraction (spec Q2): the single DNS SAN of the CA-verified peer certificate. Already in the tree via rustls.
+rustls-webpki = { version = "=0.103.16", default-features = false, features = ["std"] }
+# PEM parsing of the cluster CA, leaf and key (spec Q2), instead of a hand-written reader. Already in the tree via rustls.
+rustls-pki-types = { version = "=1.15.1", default-features = false, features = ["std"] }
+# Tests only: pins the HTTP/1 client fix every reqwest pool here depends on (PlacementHang O304: hyper < 1.12 could
+# report a connection with a response in flight ready, hyperium/hyper#4207). Already in the tree via reqwest and axum.
+hyper = { version = "1.12", default-features = false, features = ["client", "http1"] }

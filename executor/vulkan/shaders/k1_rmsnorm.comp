@@ -1,0 +1,89 @@
+#version 460
+// VulkanAmd P2 K1: RMSNorm (Gemma / plain, grouped weights) and the sigmoid-gated RMSNorm of k1_primitives.h, one
+// workgroup (WG threads, a multiple of 32, <= 256, subgroup size 32 required) per row, as rmsnorm_kernel:
+//   thread t sums squares of its 8-element chunks c = t*8, t*8 + WG*8, ... (ascending, FP32 adds never contracted:
+//   `precise`), a fixed xor tree over the 32 lanes (16, 8, 4, 2, 1), warp partials added in order from 0.0f;
+//   rstd = inversesqrt(sum / dim + eps); y = bf16(x * rstd * w_r) (w_r = 1 + w gemma / w plain; gated: * (1 / (1 + exp(-z)))).
+// y may alias x with the same stride (each lane re-reads its own chunks). GATED, set by -D. WG is specialization constant 0.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+
+#ifndef GATED
+#define GATED 0
+#endif
+layout(local_size_x_id = 0) in;
+layout(constant_id = 0) const uint WG = 256;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, z, w, y;
+    uint x_stride, z_stride, y_stride, weight_groups;
+    uint dim, gemma;
+    float eps;
+} pc;
+shared float partial[8];
+
+void main() {
+    const uint row = gl_WorkGroupID.x;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint64_t xr = pc.x + uint64_t(row) * uint64_t(pc.x_stride) * 2ul;
+    const uint64_t wr = pc.w + uint64_t(row % pc.weight_groups) * uint64_t(pc.dim) * 2ul;
+    const uint64_t yr = pc.y + uint64_t(row) * uint64_t(pc.y_stride) * 2ul;
+    precise float ss = 0.0;
+    for (uint c = tid * 8u; c < pc.dim; c += WG * 8u) {
+        const uvec4 q = V4(xr + uint64_t(c * 2u)).v;
+        const float v[8] = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+        [[unroll]] for (int i = 0; i < 8; ++i) { precise float sq = v[i] * v[i]; ss = ss + sq; }
+    }
+    precise float v = ss;
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) { precise float s2 = v + subgroupShuffleXor(v, o); v = s2; }
+    const uint warp = tid >> 5;
+    barrier();  // partial[] may still be read by a previous use
+    if ((tid & 31u) == 0u) partial[warp] = v;
+    barrier();
+    precise float total = 0.0;
+    for (uint w = 0u; w < (WG >> 5); ++w) { precise float t2 = total + partial[w]; total = t2; }
+    const float rstd = inversesqrt(total / float(pc.dim) + pc.eps);
+    for (uint c = tid * 8u; c < pc.dim; c += WG * 8u) {
+        const uvec4 q = V4(xr + uint64_t(c * 2u)).v;
+        const uvec4 wq = V4(wr + uint64_t(c * 2u)).v;
+        const float v8[8] = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+        const float w8[8] = float[8](lo(wq.x), hi(wq.x), lo(wq.y), hi(wq.y), lo(wq.z), hi(wq.z), lo(wq.w), hi(wq.w));
+#if GATED
+        const uvec4 gq = V4(pc.z + uint64_t(row) * uint64_t(pc.z_stride) * 2ul + uint64_t(c * 2u)).v;
+        const float g8[8] = float[8](lo(gq.x), hi(gq.x), lo(gq.y), hi(gq.y), lo(gq.z), hi(gq.z), lo(gq.w), hi(gq.w));
+#endif
+        float o8[8];
+        [[unroll]] for (int i = 0; i < 8; ++i) {
+#if GATED
+            o8[i] = v8[i] * rstd * w8[i] * (1.0 / (1.0 + exp(-g8[i])));
+#else
+            o8[i] = v8[i] * rstd * (pc.gemma != 0u ? 1.0 + w8[i] : w8[i]);
+#endif
+        }
+        V4(yr + uint64_t(c * 2u)).v = uvec4(pack2(o8[0], o8[1]), pack2(o8[2], o8[3]), pack2(o8[4], o8[5]), pack2(o8[6], o8[7]));
+    }
+}

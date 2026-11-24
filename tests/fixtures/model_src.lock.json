@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "fixture-model-lock-v1",
+  "recipe_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "artifact_sha256": "7c8e9fc6ceef8589361e49c8c7ad50bc1adb5e7e4a0adfc5ea4fe5f0814c2f5b",
+  "model_content_sha256": "7709f7c8f54806a0a34e82d8ae5815d8b0af81490626a34309f0856f4361d08d",
+  "tokenizer_sha256": "31fb9829422ff269582da1f012eb332d06f2d825dad670c7ec94b8ced7d8a3fb",
+  "template_sha256": "5ef87e01e7fd51bd30269f9657444128afcdffe4a23fadd75499c52274167f0f",
+  "backend_build_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "backend_profile_id": "fixture-backend-v1",
+  "effective_context_tokens": 4096,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

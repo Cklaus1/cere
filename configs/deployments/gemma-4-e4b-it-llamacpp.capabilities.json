@@ -1,0 +1,92 @@
+{
+  "schema_version": "2",
+  "plugin": "llamacpp-http",
+  "profile_id": "llamacpp-gemma-4-e4b-it-v1",
+  "artifact_sha256": "55c7e52880c6e3f9614d45365057c266650e714f42a063dd3997d520cf7ce414",
+  "execution_mode": "backend_managed",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "notes": "Backend-declared, unmeasured by CERE. llama.cpp llama-server (commit 162e2bb2e, HIP build for gfx1151, rocWMMA; flash attention auto-disabled for gemma4) behind cere-llamacpp-shim on AMD's Radeon 8060S owns batching, KV cache and scheduling. bf16 GGUF converted from HF snapshot d6436b3d (no quantization, server reports quantization null), no speculative decoding, KV cache f16, 4 slots sharing one 32768-token unified KV cache. Prefix caching is off for salted requests unless the shim runs with --trust-single-scope. llama.cpp kernels are not a CERE reference numerical mode. Rows are concurrent CERE requests (1-4), not native batch rows. Seeded sampling, json_schema, grammar and tool calls are unsupported. Not a throughput or capacity claim.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

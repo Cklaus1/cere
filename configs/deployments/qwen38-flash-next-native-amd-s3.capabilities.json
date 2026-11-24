@@ -1,0 +1,96 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-hip",
+  "profile_id": "native-amd-qwen38-flash-next-v60",
+  "artifact_sha256": "dedc7dba9bc84493aa0c7a6e29edcd34c2636fe662af86f5d23cb7564bdde058",
+  "execution_mode": "native",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 1,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "max_top_logprobs": 20,
+  "sampling_params": [
+    "top_k",
+    "min_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "logit_bias"
+  ],
+  "thinking_toggle": true,
+  "token_controls": [
+    "stop_token_ids",
+    "ignore_eos"
+  ],
+  "vocab_size": 248320,
+  "notes": "AmdAmd PAR-6 first-light profile (tasks/amd-amd-spec.md): the S3 FP4-Local artifact on the AMD Strix Halo GPU (gfx1151) through the HIP executor (executor/hip); one row, no speculation, text output only, 32768 tokens. Declared from the S3 profile (native-g0-qwen38-flash-next-v21), not measured.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

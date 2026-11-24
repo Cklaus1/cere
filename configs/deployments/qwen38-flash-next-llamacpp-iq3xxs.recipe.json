@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "recipe_id": "qwen38-flash-next-llamacpp-iq3xxs",
+  "model_ref": "local://models/qwen38-flash-next-iq3xxs/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf",
+  "backend_profile_id": "llamacpp-qwen38-flash-next-iq3xxs-v1",
+  "context_tokens": 32768,
+  "required_operations": [
+    "chat"
+  ],
+  "adapters": [],
+  "residency": {
+    "priority": 1000,
+    "keep_warm_seconds": 0,
+    "pinned": true
+  },
+  "sampling_defaults": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  }
+}

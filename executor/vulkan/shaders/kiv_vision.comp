@@ -1,0 +1,240 @@
+#version 460
+// Inkling S12: the vision tower's non-GEMM kernels on Vulkan (src/device/inkling/ki_vision.h), the Vulkan port of
+// executor/cuda/src/kernels/inkling/vision.cu (S7; contracts in its vision.h: transformers 5.24.0
+// `Inkling2VisionModel`, modeling_inkling2.py:983-1266, 1533-1603). The tower's gate is statistical (spec 3.6: cosine and
+// rel-L2 against the reference tower in FP32), not bit-exact, so these kernels are not under check_nocontract.py (the
+// `kiv_` prefix) and are compiled optimized; they keep the reference's BF16 rounding points.
+//   MODE 0 bias_act: y[r][c] = bf16(act(bf16(acc[r][c] + bias[c]))), act none / GELU (erf).
+//   MODE 1 scaled_residual: x[r][c] = bf16(x + bf16(gamma[c] * bf16(acc + bias[c]))).
+//   MODE 2 layernorm: y = bf16((x - mean) * rstd * w + b), FP32 mean and biased variance, one workgroup per row.
+//   MODE 3 embed: class rows (class + cls_position) and patch rows bf16(bf16(acc) + bf16(bilinear position)).
+//   MODE 4 qkv_rope: q, k, v = bf16(acc + bias); q, k turned by the axial 2D RoPE (cos / sin from the host's table).
+//   MODE 5 attention: bidirectional per image segment, FP32 scores / online softmax (base 2) / PV, BF16 out.
+// Row info (MODE 3 / 4, written by the host per call): per sequence row 8 uints {patch row in acc or ~0u for a class
+// row, grid row, grid col, h, w, -, -, -}. Image table (MODE 5): per image {segment start, segment length}.
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t a, b, c, d, e, f, g, h;
+    uint n0, n1, n2, n3;
+    float f0, f1;
+} p;
+
+const uint kHid = 1024u;
+const uint kSide = 32u;  // the position table's side
+
+#if MODE == 0 || MODE == 1
+// erf(x): Numerical Recipes erfcc (fractional error < 1.2e-7 on erfc) on |x|.
+float erf_f(float x) {
+    const float z = abs(x);
+    const float t = 1.0 / (1.0 + 0.5 * z);
+    const float r = t * exp(-z * z - 1.26551223 +
+                            t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 +
+                            t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 +
+                            t * 0.17087277)))))))));
+    return x >= 0.0 ? 1.0 - r : r - 1.0;
+}
+float gelu(float x) { return x * 0.5 * (1.0 + erf_f(x * 0.70710678118654752)); }
+#endif
+
+#if MODE == 3
+// _interpolation_axis_taps_weights (bilinear, align_corners false, border clamp) in FP32.
+void axis_taps(uint index, uint size, out uint t0, out uint t1, out float w0, out float w1) {
+    precise float src = (float(index) + 0.5) * float(kSide) / float(size) - 0.5;
+    const float fl = floor(src);
+    const int base = int(fl);
+    t0 = uint(clamp(base, 0, int(kSide) - 1));
+    t1 = uint(clamp(base + 1, 0, int(kSide) - 1));
+    precise float d0 = abs(src - fl), d1 = abs(src - fl - 1.0);
+    w0 = max(1.0 - d0, 0.0);
+    w1 = max(1.0 - d1, 0.0);
+}
+#endif
+
+#if MODE == 5
+#define AR 32u   // query rows per workgroup
+#define AL 8u    // lanes per query row
+#define AK 32u   // keys per tile
+#define HD 64u
+shared float ks[AK * (HD + 1u)];
+shared float vs[AK * HD];
+shared float ps[AR * (AK + 1u)];
+shared float red[WG];
+#endif
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x;
+#if MODE == 0
+    // a acc F32 [rows][n], b bias BF16 [n] or 0, c y BF16 (row stride n2); n0 rows, n1 n, n2 ldy, n3 act (1 = GELU)
+    const uint r = gl_WorkGroupID.y, col = gl_WorkGroupID.x * WG + lid;
+    if (col >= p.n1) return;
+    precise float hsum = ldf(p.a, r * p.n1 + col) + (p.b != 0ul ? ldbf(p.b, col) : 0.0);
+    float y = round_bf(hsum);
+    if (p.n3 == 1u) y = gelu(y);
+    stbf(p.c, r * p.n2 + col, y);
+#elif MODE == 1
+    // a acc F32 [rows][1024], b bias, c gamma, d x BF16 [rows][1024]
+    const uint r = gl_WorkGroupID.y, col = gl_WorkGroupID.x * WG + lid;
+    const uint o = r * kHid + col;
+    precise float hsum = ldf(p.a, o) + ldbf(p.b, col);
+    precise float sc = ldbf(p.c, col) * round_bf(hsum);
+    precise float res = ldbf(p.d, o) + round_bf(sc);
+    stbf(p.d, o, res);
+#elif MODE == 2
+    // a x BF16 [rows][n1], b w, c bias, d y BF16; n1 dim (a multiple of WG, <= 8 WG); f0 eps
+    const uint r = gl_WorkGroupID.x, n = p.n1, per = n / WG;
+    float v[8];
+    float s = 0.0;
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+        if (i < per) { v[i] = ldbf(p.a, r * n + i * WG + lid); s += v[i]; }
+    }
+    const float mean = ki_tree_sum(s, WG) / float(n);
+    float ss = 0.0;
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+        if (i < per) { const float d = v[i] - mean; ss = fma(d, d, ss); }
+    }
+    const float rstd = inversesqrt(ki_tree_sum(ss, WG) / float(n) + p.f0);
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+        if (i < per) {
+            const uint c = i * WG + lid;
+            precise float y = (v[i] - mean) * rstd * ldbf(p.b, c) + ldbf(p.c, c);
+            stbf(p.d, r * n + c, y);
+        }
+    }
+#elif MODE == 3
+    // a acc F32 [P][1024] (patch embedding), b table BF16 [1024][1024], c class_embedding, d cls_position, e row info,
+    // f seq BF16 [S][1024]; n0 S
+    const uint r = gl_WorkGroupID.y, col = gl_WorkGroupID.x * WG + lid;
+    const uint src = ldu(p.e, r * 8u);
+    if (src == 0xffffffffu) {
+        precise float y = ldbf(p.c, col) + ldbf(p.d, col);
+        stbf(p.f, r * kHid + col, y);
+        return;
+    }
+    const uint grow = ldu(p.e, r * 8u + 1u), gcol = ldu(p.e, r * 8u + 2u);
+    const uint h = ldu(p.e, r * 8u + 3u), w = ldu(p.e, r * 8u + 4u);
+    uint ht[2], wt[2];
+    float hw[2], ww[2];
+    axis_taps(grow, h, ht[0], ht[1], hw[0], hw[1]);
+    axis_taps(gcol, w, wt[0], wt[1], ww[0], ww[1]);
+    precise float pos = 0.0;
+    [[unroll]] for (uint i = 0u; i < 2u; ++i) {
+        [[unroll]] for (uint j = 0u; j < 2u; ++j) {
+            precise float wgt = hw[i] * ww[j];
+            precise float term = ldbf(p.b, (ht[i] * kSide + wt[j]) * kHid + col) * wgt;
+            pos = pos + term;
+        }
+    }
+    precise float y = round_bf(ldf(p.a, src * kHid + col)) + round_bf(pos);
+    stbf(p.f, r * kHid + col, y);
+#elif MODE == 4
+    // a acc F32 [3][S][1024] (q | k | v), b / c / d bias q / k / v, e out BF16 [3][S][1024], f row info,
+    // g cos / sin table F32 [positions][16][2]; n0 S, n1 swap axes (mutant)
+    const uint r = gl_WorkGroupID.y, pair = gl_WorkGroupID.x * WG + lid;  // < 512
+    const uint S = p.n0, col = 2u * pair, j = pair % 32u;
+    uint hpos = 0u, wpos = 0u;
+    if (ldu(p.f, r * 8u) != 0xffffffffu) {
+        hpos = ldu(p.f, r * 8u + 1u) + 1u;
+        wpos = ldu(p.f, r * 8u + 2u) + 1u;
+    }
+    if (p.n1 != 0u) { const uint t = hpos; hpos = wpos; wpos = t; }
+    const uint ti = j < 16u ? (wpos * 16u + j) : (hpos * 16u + j - 16u);
+    const float cs = ldf(p.g, 2u * ti), sn = ldf(p.g, 2u * ti + 1u);
+    [[unroll]] for (uint which = 0u; which < 2u; ++which) {
+        const uint o = which * S * kHid + r * kHid + col;
+        const uint64_t bias = which == 0u ? p.b : p.c;
+        precise float s1 = ldf(p.a, o) + ldbf(bias, col);
+        precise float s2 = ldf(p.a, o + 1u) + ldbf(bias, col + 1u);
+        const float x1 = round_bf(s1), x2 = round_bf(s2);
+        precise float y1 = x1 * cs + (-x2) * sn;
+        precise float y2 = x2 * cs + x1 * sn;
+        stbf(p.e, o, y1);
+        stbf(p.e, o + 1u, y2);
+    }
+    const uint ov = 2u * S * kHid + r * kHid + col;
+    precise float v1 = ldf(p.a, ov) + ldbf(p.d, col);
+    precise float v2 = ldf(p.a, ov + 1u) + ldbf(p.d, col + 1u);
+    stbf(p.e, ov, v1);
+    stbf(p.e, ov + 1u, v2);
+#elif MODE == 5
+    // a q | k | v BF16 [3][S][1024], b out BF16 [S][1024], c image table; n0 S; f0 scale * log2(e)
+    // Grid (row tiles of the longest segment, 16 heads, images). Row `row` of the tile is owned by lanes row * 8 ..
+    // row * 8 + 7 (scores of keys lane + 8 j, output dims lane + 8 i); online softmax over key tiles of the segment.
+    const uint seg = ldu(p.c, gl_WorkGroupID.z * 2u), len = ldu(p.c, gl_WorkGroupID.z * 2u + 1u);
+    const uint row0 = gl_WorkGroupID.x * AR;
+    if (row0 >= len) return;  // uniform over the workgroup
+    const uint head = gl_WorkGroupID.y, S = p.n0;
+    const uint row = lid / AL, lane = lid % AL;
+    const uint qrow = row0 + row;
+    const bool valid = qrow < len;
+    float qv[HD];
+    {
+        const uint qb = (seg + (valid ? qrow : 0u)) * kHid + head * HD;
+        [[unroll]] for (uint d = 0u; d < HD; d += 2u) {
+            const uint wd = ldu(p.a, (qb + d) >> 1);
+            qv[d] = bf2f(wd) * p.f0;
+            qv[d + 1u] = bf2f(wd >> 16) * p.f0;
+        }
+    }
+    float acc[HD / AL];
+    [[unroll]] for (uint i = 0u; i < HD / AL; ++i) acc[i] = 0.0;
+    float m = uintBitsToFloat(0xff800000u), l = 0.0;
+    const uint kb = S * kHid, vb = 2u * S * kHid;
+    for (uint key0 = 0u; key0 < len; key0 += AK) {
+        barrier();  // the previous tile's ks / vs / ps / red are no longer read
+        for (uint e = lid; e < AK * HD / 2u; e += WG) {
+            const uint kk = e / (HD / 2u), d = 2u * (e % (HD / 2u));
+            const uint key = key0 + kk;
+            uint kw = 0u, vw = 0u;
+            if (key < len) {
+                const uint o = (seg + key) * kHid + head * HD + d;
+                kw = ldu(p.a, (kb + o) >> 1);
+                vw = ldu(p.a, (vb + o) >> 1);
+            }
+            ks[kk * (HD + 1u) + d] = bf2f(kw);
+            ks[kk * (HD + 1u) + d + 1u] = bf2f(kw >> 16);
+            vs[kk * HD + d] = bf2f(vw);
+            vs[kk * HD + d + 1u] = bf2f(vw >> 16);
+        }
+        barrier();
+        float s[AK / AL];
+        [[unroll]] for (uint j = 0u; j < AK / AL; ++j) s[j] = 0.0;
+        [[unroll]] for (uint d = 0u; d < HD; ++d) {
+            [[unroll]] for (uint j = 0u; j < AK / AL; ++j) s[j] = fma(qv[d], ks[(lane + AL * j) * (HD + 1u) + d], s[j]);
+        }
+        float tmax = uintBitsToFloat(0xff800000u);
+        [[unroll]] for (uint j = 0u; j < AK / AL; ++j)
+            if (key0 + lane + AL * j < len) tmax = max(tmax, s[j]);
+        red[lid] = tmax;
+        barrier();
+        [[unroll]] for (uint o = 0u; o < AL; ++o) tmax = max(tmax, red[row * AL + o]);
+        barrier();
+        const float mn = max(m, tmax);  // finite: every tile holds at least one key
+        const float alpha = m == uintBitsToFloat(0xff800000u) ? 0.0 : exp2(m - mn);
+        float psum = 0.0;
+        [[unroll]] for (uint j = 0u; j < AK / AL; ++j) {
+            const float pj = key0 + lane + AL * j < len ? exp2(s[j] - mn) : 0.0;
+            psum += pj;
+            ps[row * (AK + 1u) + lane + AL * j] = pj;
+        }
+        red[lid] = psum;
+        barrier();
+        float tot = 0.0;
+        [[unroll]] for (uint o = 0u; o < AL; ++o) tot += red[row * AL + o];
+        l = l * alpha + tot;
+        m = mn;
+        [[unroll]] for (uint i = 0u; i < HD / AL; ++i) acc[i] *= alpha;
+        const uint keys = min(len - key0, AK);
+        for (uint kk = 0u; kk < keys; ++kk) {
+            const float pk = ps[row * (AK + 1u) + kk];
+            [[unroll]] for (uint i = 0u; i < HD / AL; ++i) acc[i] = fma(pk, vs[kk * HD + lane + AL * i], acc[i]);
+        }
+    }
+    if (!valid) return;
+    const float inv = 1.0 / l;
+    const uint ob = (seg + qrow) * kHid + head * HD;
+    [[unroll]] for (uint i = 0u; i < HD / AL; ++i) stbf(p.b, ob + lane + AL * i, acc[i] * inv);
+#endif
+}

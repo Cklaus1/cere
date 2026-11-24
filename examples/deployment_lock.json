@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "lock_id": "primary-coder-lock-v1",
+  "recipe_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "model_content_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "tokenizer_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "template_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "backend_build_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "backend_profile_id": "sglang-pinned-profile",
+  "effective_context_tokens": 131072,
+  "effective_operations": ["chat","infill"],
+  "adapter_sha256s": []
+}

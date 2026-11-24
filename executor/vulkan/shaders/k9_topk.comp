@@ -1,0 +1,122 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: token selection from a logits tile (contract executor/cuda/src/kernels/k9_qsa.h qsa_topk /
+// qsa_select's selection), exact: per row (logical position p, nv = floor((p + 1) / 4) visible blocks) the top-512
+// blocks by fast_topk's order-preserving uint32 key of the F32 logit (-0 < +0), equal keys lowest block first, every
+// visible block when nv <= 512; each block expanded to its 4 positions, blocks ascending; then the tail
+// nv * 4 .. p; then -1 up to 2,051 entries.
+// Method (topk_kernel's, integer only, so the bytes cannot depend on thread timing): 4 radix passes of 8 bits from the
+// top over the keys matching the prefix so far (shared-memory histogram by integer atomics: order-free counts; the
+// bin by one parallel suffix scan), giving the 512th key `prefix` and `need`, the number of keys == prefix to take;
+// then one pass over the blocks in chunks of 256 in ascending order: a block is taken when key > prefix, or
+// key == prefix and its rank among the keys == prefix (block exclusive scan) is below need; taken blocks are written
+// at their rank among the taken ones (a second scan), i.e. in ascending block order. Workgroup = one row.
+// Row r's logical position: pos ? pos[row0 + r] clamped to 0 .. seq_len - 1 (fault word) : seq_len - rows_total +
+// row0 + r. Only the row's visible logits are read.
+#include "k9_common.comp"
+
+#define NT 256
+#define TOPK 512
+#define RW 2051
+
+layout(local_size_x = NT) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t logits, pos, out_idx, fault;
+    uint ld, row0, rows_total, seq_len;
+} pc;
+
+shared uint HIST[256];
+shared uint SG[NT / 8];
+shared uint S_BIN, S_K;
+
+// Block-wide exclusive prefix sum of v in thread order; *total = the block sum (integers: exact in any order).
+uint block_scan(uint v, out uint total) {
+    const uint incl = subgroupInclusiveAdd(v);
+    if (gl_SubgroupInvocationID == gl_SubgroupSize - 1u) SG[gl_SubgroupID] = incl;
+    memoryBarrierShared();
+    barrier();
+    uint base = 0u, tot = 0u;
+    for (uint s = 0u; s < gl_NumSubgroups; ++s) {
+        const uint x = SG[s];
+        if (s < gl_SubgroupID) base += x;
+        tot += x;
+    }
+    memoryBarrierShared();
+    barrier();  // SG is reused by the next scan
+    total = tot;
+    return base + incl - v;
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint r = gl_WorkGroupID.x;
+    int64_t p;
+    if (pc.pos != 0ul) {
+        p = L1(pc.pos + uint64_t((pc.row0 + r) * 8u)).v;
+        if (p < 0l || p >= int64_t(pc.seq_len)) {
+            if (pc.fault != 0ul) U1(pc.fault).v = 1u;
+            p = p < 0l ? 0l : int64_t(pc.seq_len) - 1l;
+        }
+    } else {
+        p = int64_t(pc.seq_len) - int64_t(pc.rows_total) + int64_t(pc.row0 + r);
+    }
+    const uint nv = uint((p + 1l) / 4l);
+    const uint64_t x = pc.logits + uint64_t(r * pc.ld * 4u);
+    const uint64_t o = pc.out_idx + uint64_t((pc.row0 + r) * RW * 4u);
+    uint selected;
+    if (nv <= TOPK) {
+        for (uint e = tid; e < nv * 4u; e += NT) I1(o + uint64_t(e * 4u)).v = int(e);
+        selected = nv;
+    } else {
+        uint prefix = 0u, mask = 0u, k = TOPK;
+        for (int pass = 0; pass < 4; ++pass) {
+            const uint shift = 24u - 8u * uint(pass);
+            HIST[tid] = 0u;
+            memoryBarrierShared();
+            barrier();
+            for (uint i = tid; i < nv; i += NT) {
+                const uint key = order_key(F1(x + uint64_t(i * 4u)).v);
+                if ((key & mask) == prefix) atomicAdd(HIST[(key >> shift) & 0xffu], 1u);
+            }
+            memoryBarrierShared();
+            barrier();
+            // bin = the b with S(b) >= k > S(b) - hist[b], S(b) = sum of hist[b'] for b' >= b (thread tid: b = 255 - tid)
+            const uint b = 255u - tid, hb = HIST[b];
+            uint dummy;
+            const uint s_incl = block_scan(hb, dummy) + hb;
+            if (s_incl >= k && s_incl - hb < k) { S_BIN = b; S_K = k - (s_incl - hb); }
+            memoryBarrierShared();
+            barrier();
+            prefix |= S_BIN << shift;
+            mask |= 0xffu << shift;
+            k = S_K;
+            memoryBarrierShared();
+            barrier();
+        }
+        const uint need = k;
+        uint eq_base = 0u, sel_base = 0u;
+        for (uint base = 0u; base < nv; base += NT) {
+            const uint i = base + tid;
+            const uint key = i < nv ? order_key(F1(x + uint64_t(i * 4u)).v) : 0u;
+            const bool gt = i < nv && key > prefix;
+            const bool eq = i < nv && key == prefix;
+            uint eq_total, sel_total;
+            const uint eq_rank = block_scan(eq ? 1u : 0u, eq_total);
+            const bool take = gt || (eq && eq_base + eq_rank < need);
+            const uint sel_rank = block_scan(take ? 1u : 0u, sel_total);
+            if (take) {
+                const uint at = (sel_base + sel_rank) * 4u;
+                [[unroll]] for (uint q = 0u; q < 4u; ++q) I1(o + uint64_t((at + q) * 4u)).v = int(i * 4u + q);
+            }
+            eq_base += eq_total;
+            sel_base += sel_total;
+        }
+        selected = TOPK;
+    }
+    const uint tail = uint(p + 1l) - nv * 4u;
+    for (uint e = selected * 4u + tid; e < RW; e += NT) {
+        const uint jj = e - selected * 4u;
+        I1(o + uint64_t(e * 4u)).v = jj < tail ? int(nv * 4u + jj) : -1;
+    }
+}

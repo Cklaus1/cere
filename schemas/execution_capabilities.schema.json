@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/execution_capabilities.schema.json",
+  "title": "CERE execution_capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plugin",
+    "profile_id",
+    "artifact_sha256",
+    "execution_mode",
+    "evidence",
+    "operations",
+    "native_decode_batch",
+    "decode_batch_min",
+    "decode_batch_max",
+    "max_context_tokens",
+    "native_mixed_prefill_decode",
+    "native_speculative_batch",
+    "native_moe_grouping",
+    "native_state_snapshot",
+    "structured_outputs",
+    "json_schema_dialect",
+    "json_schema_keywords",
+    "numerical_modes",
+    "checkpoint_mode",
+    "modalities",
+    "notes",
+    "validated_combinations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "native",
+        "backend_managed",
+        "serial",
+        "unsupported"
+      ]
+    },
+    "evidence": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "declared",
+        "measured",
+        "synthetic"
+      ]
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "prefill",
+          "decode",
+          "verify",
+          "snapshot",
+          "restore",
+          "cancel",
+          "infill",
+          "embed",
+          "rerank",
+          "classify",
+          "score"
+        ]
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "native_decode_batch": {
+      "type": "boolean"
+    },
+    "decode_batch_min": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "decode_batch_max": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "max_context_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "native_mixed_prefill_decode": {
+      "type": "boolean"
+    },
+    "native_speculative_batch": {
+      "type": "boolean"
+    },
+    "native_moe_grouping": {
+      "type": "boolean"
+    },
+    "native_state_snapshot": {
+      "type": "boolean"
+    },
+    "structured_outputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "text",
+          "json_schema",
+          "tool_calls",
+          "regex",
+          "ebnf",
+          "tool_calls_constrained"
+        ]
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "numerical_modes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "reference",
+          "optimized",
+          "approximate"
+        ]
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "checkpoint_mode": {
+      "type": "string",
+      "enum": [
+        "none",
+        "exact",
+        "replay"
+      ]
+    },
+    "modalities": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "text",
+          "image"
+        ]
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "max_top_logprobs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20
+    },
+    "sampling_params": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "top_k",
+          "min_p",
+          "seed",
+          "frequency_penalty",
+          "presence_penalty",
+          "repetition_penalty",
+          "logit_bias"
+        ]
+      },
+      "minItems": 0,
+      "uniqueItems": true,
+      "maxItems": 7
+    },
+    "thinking_toggle": {
+      "type": "boolean"
+    },
+    "token_controls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "stop_token_ids",
+          "ignore_eos",
+          "min_tokens"
+        ]
+      },
+      "uniqueItems": true,
+      "maxItems": 3
+    },
+    "vocab_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "prefill_signature": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "json_schema_dialect": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "json_schema_keywords": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "maxItems": 10000
+    },
+    "validated_combinations": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operation",
+          "modality",
+          "output",
+          "numerical_mode",
+          "sampler_mode",
+          "row_counts",
+          "max_context_tokens"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "prefill",
+              "decode",
+              "verify",
+              "snapshot",
+              "restore",
+              "cancel",
+              "infill",
+              "embed",
+              "rerank",
+              "classify",
+              "score"
+            ]
+          },
+          "modality": {
+            "enum": [
+              "text",
+              "image"
+            ]
+          },
+          "output": {
+            "enum": [
+              "text",
+              "json_schema",
+              "tool_calls",
+              "regex",
+              "ebnf",
+              "tool_calls_constrained"
+            ]
+          },
+          "numerical_mode": {
+            "enum": [
+              "reference",
+              "optimized",
+              "approximate"
+            ]
+          },
+          "sampler_mode": {
+            "enum": [
+              "greedy",
+              "sampled",
+              "not_applicable"
+            ]
+          },
+          "row_counts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "max_context_tokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    }
+  }
+}

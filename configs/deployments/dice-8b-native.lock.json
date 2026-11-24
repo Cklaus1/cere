@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "dice-8b-native-lock-v1",
+  "recipe_sha256": "e5fb1e5c129714c74b374e60377813eba3fb95087245f0acaf4858310c11f40d",
+  "artifact_sha256": "be8c16464a6d5f58c98f61b306f5b826c7a4c9d7e390f8d4bfe5dd57a56ebbec",
+  "model_content_sha256": "c636388748cd4f4f3def585344940db5535fd8fc86a970f0c3749b1a39273cb1",
+  "tokenizer_sha256": "71c6b2ae4a42afd49107c2fc055b97e7487d456f7b4d52c36985d0145c2d205f",
+  "template_sha256": "87a2728cb8dc9fe424d624542f6060ec05a1d285ebbec578bb078900e33396b5",
+  "backend_build_sha256": "65751188a0fd4114f695183d052c4af53df1b6ca74826034c4b074a2c8c5106a",
+  "backend_profile_id": "native-g0-dice-8b-v1",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

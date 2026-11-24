@@ -1,0 +1,124 @@
+#version 460
+// VulkanAmd P2: K5 GDN causal conv1d + SiLU with its carried state on Vulkan (the executor/cuda/src/kernels/k5_gdn.h
+// contract of conv1d_silu / conv1d_state_at / conv1d_silu_rows, re-proven per device).
+//
+// math_reference: sglang (via the CUDA kernel's documented arithmetic; nothing is vendored)
+//
+// Per channel c and token t: acc = 0; acc += bf16(x[t - 3 + j, c] * w[c, j]) for j = 0..3 (FP32 adds in tap order, each
+// BF16 x BF16 product exact in FP32 then rounded once to BF16, RNE); y = bf16(acc / (1 + exp(-acc))) with -acc formed as
+// 0 - acc and exp as exp2(. * log2e) (CUDA's kConvVariant 1: ex2.approx + div.full; here v_exp_f32 and the driver's
+// FP32 division). x[t' < 0] is state[c, t' + 3]; state bf16 [dim, 3] oldest first. One invocation per channel: there
+// is no reduction, so a channel's bits depend only on its own window.
+//
+// MODE 0 conv1d_silu: grid (ceil(dim / 256), ceil(tokens / 16)); each invocation runs 16 consecutive tokens of one
+//   channel (its window starts from x or the state). Does not write the state (MODE 1 runs after it, after a barrier).
+// MODE 1 the new state = the last 3 raw inputs before row `tokens` (old state entries when tokens < 3); read before
+//   written by the same invocation, so it updates in place (conv1d_silu's second dispatch and conv1d_state_at).
+// MODE 2 conv1d_silu_rows: grid (ceil(dim / 256), chains); chain z's rows in order from its state; after row r the window
+//   goes to saves[r], after the chain's last row to states[z]. Table layout as k5_gdn_decode.comp's.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+#ifndef MODE
+#define MODE 0
+#endif
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H16 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Table {
+    uint64_t states[16];
+    uint64_t saves[16];
+    uint first[16];
+    uint rows[16];
+};
+
+layout(push_constant, std430) uniform PC {
+#if MODE == 0
+    uint64_t x, w, state, y;
+    uint x_stride, y_stride, tokens, dim;  // strides in elements
+#elif MODE == 1
+    uint64_t x, state;
+    uint x_stride, tokens, dim;
+#else
+    uint64_t x, w, y, table;
+    uint x_stride, y_stride, dim;
+#endif
+} pc;
+
+const float kLog2e = 1.44269502162933349609375;  // 0x3FB8AA3B, exactly representable
+const uint kTokensPerInvocation = 16u;
+
+uint ld(uint64_t base, uint idx) { return uint(H16(base + uint64_t(idx * 2u)).v); }
+void st(uint64_t base, uint idx, uint val) { H16(base + uint64_t(idx * 2u)).v = uint16_t(val); }
+float bf(uint b) { return uintBitsToFloat(b << 16); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+
+#if MODE != 1
+// y of one token from the window (oldest first) and the raw input xt; then the window shifts in xt.
+uint conv_silu_token(inout uint win[3], uint xt, const float w[4]) {
+    precise float acc = 0.0;
+    [[unroll]] for (int j = 0; j < 3; ++j) {
+        precise float p = bf(win[j]) * w[j];  // exact
+        acc = acc + bf(bf16_rne(p));
+    }
+    precise float p3 = bf(xt) * w[3];
+    acc = acc + bf(bf16_rne(p3));
+    win[0] = win[1];
+    win[1] = win[2];
+    win[2] = xt;
+    precise float na = 0.0 - acc;
+    precise float t = na * kLog2e;
+    precise float den = exp2(t) + 1.0;
+    precise float s = acc / den;
+    return bf16_rne(s);
+}
+#endif
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x;
+    if (c >= pc.dim) return;
+#if MODE == 0
+    float w[4];
+    [[unroll]] for (int j = 0; j < 4; ++j) w[j] = bf(ld(pc.w, c * 4u + uint(j)));
+    const uint t0 = gl_WorkGroupID.y * kTokensPerInvocation;
+    uint win[3];
+    [[unroll]] for (int j = 0; j < 3; ++j) {
+        const int tp = int(t0) - 3 + j;
+        win[j] = tp >= 0 ? ld(pc.x, uint(tp) * pc.x_stride + c) : ld(pc.state, c * 3u + uint(tp + 3));
+    }
+    const uint t_end = min(t0 + kTokensPerInvocation, pc.tokens);
+    for (uint t = t0; t < t_end; ++t) {
+        const uint xt = ld(pc.x, t * pc.x_stride + c);
+        st(pc.y, t * pc.y_stride + c, conv_silu_token(win, xt, w));
+    }
+#elif MODE == 1
+    uint nxt[3];
+    [[unroll]] for (int j = 0; j < 3; ++j) {
+        const int tp = int(pc.tokens) - 3 + j;
+        nxt[j] = tp >= 0 ? ld(pc.x, uint(tp) * pc.x_stride + c) : ld(pc.state, c * 3u + uint(tp + 3));
+    }
+    [[unroll]] for (int j = 0; j < 3; ++j) st(pc.state, c * 3u + uint(j), nxt[j]);
+#else
+    Table tb = Table(pc.table);
+    const uint64_t state = tb.states[gl_WorkGroupID.y];
+    const uint first = tb.first[gl_WorkGroupID.y];
+    const uint end = first + tb.rows[gl_WorkGroupID.y];
+    float w[4];
+    [[unroll]] for (int j = 0; j < 4; ++j) w[j] = bf(ld(pc.w, c * 4u + uint(j)));
+    uint win[3];
+    [[unroll]] for (int j = 0; j < 3; ++j) win[j] = ld(state, c * 3u + uint(j));
+    for (uint r = first; r < end; ++r) {
+        const uint xt = ld(pc.x, r * pc.x_stride + c);
+        st(pc.y, r * pc.y_stride + c, conv_silu_token(win, xt, w));
+        const uint64_t dst = r + 1u == end ? state : tb.saves[r];
+        [[unroll]] for (int j = 0; j < 3; ++j) st(dst, c * 3u + uint(j), win[j]);
+    }
+#endif
+}

@@ -1,0 +1,88 @@
+#version 460
+// VulkanAmd P2 K1: the rotary table (rope_table) and partial NeoX RoPE (rope) of k1_primitives.h.
+// TABLE 1: cos_sin[p, i] = cos(angle), cos_sin[p, half + i] = sin(angle), angle = float(p) * (1 / pow(theta, float(2i) / rd)), FP32.
+// TABLE 0 (rope): one workgroup per (token, head), WG threads; row read into shared memory before any write (y may alias x);
+//   d < half: x1 * cs - x2 * sn, half <= d < rd: x2 * cs + x1 * sn, d >= rd copied; BF16 RNE out. positions int64 or pos0 + t.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+
+#ifndef TABLE
+#define TABLE 0
+#endif
+#if TABLE
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC { uint64_t out_; uint64_t n_pos; uint rd; float theta; } pc;
+void main() {
+    const uint half_ = pc.rd / 2u;
+    const uint64_t idx = uint64_t(gl_GlobalInvocationID.x) + uint64_t(gl_GlobalInvocationID.y) * 65535ul * 64ul;
+    if (idx >= pc.n_pos * uint64_t(half_)) return;
+    const uint64_t p = idx / uint64_t(half_);
+    const uint i = uint(idx % uint64_t(half_));
+    const float exponent = float(2u * i) / float(pc.rd);
+    const float inv_freq = 1.0 / pow(pc.theta, exponent);
+    const float angle = float(p) * inv_freq;
+    const uint64_t base = pc.out_ + p * uint64_t(pc.rd) * 4ul;
+    F1(base + uint64_t(i * 4u)).v = cos(angle);
+    F1(base + uint64_t((half_ + i) * 4u)).v = sin(angle);
+}
+#else
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, y, cos_sin, positions;   // positions 0: pos0 + t
+    uint64_t pos0;
+    uint x_stride, y_stride, head_dim, rd;
+} pc;
+shared float vals[1024];
+void main() {
+    const uint64_t t = uint64_t(gl_WorkGroupID.x);
+    const uint head = gl_WorkGroupID.y;
+    const uint64_t xin = pc.x + t * uint64_t(pc.x_stride) * 2ul + uint64_t(head) * uint64_t(pc.head_dim) * 2ul;
+    const uint64_t yout = pc.y + t * uint64_t(pc.y_stride) * 2ul + uint64_t(head) * uint64_t(pc.head_dim) * 2ul;
+    for (uint d = gl_LocalInvocationID.x; d < pc.head_dim; d += 64u) {
+        const uint w = U1(xin + uint64_t((d >> 1) * 4u)).v;
+        vals[d] = (d & 1u) != 0u ? hi(w) : lo(w);
+    }
+    barrier();
+    const uint half_ = pc.rd / 2u;
+    const int64_t p = pc.positions != 0ul ? I64(pc.positions + t * 8ul).v : int64_t(pc.pos0 + t);
+    const uint64_t row = pc.cos_sin + uint64_t(p) * uint64_t(pc.rd) * 4ul;
+    for (uint d = gl_LocalInvocationID.x; d < pc.head_dim; d += 64u) {
+        float r;
+        if (d < pc.rd) {
+            const uint i = d < half_ ? d : d - half_;
+            const float cs = F1(row + uint64_t(i * 4u)).v;
+            const float sn = F1(row + uint64_t((half_ + i) * 4u)).v;
+            const float x1 = vals[i], x2 = vals[i + half_];
+            r = d < half_ ? x1 * cs - x2 * sn : x2 * cs + x1 * sn;
+        } else {
+            r = vals[d];
+        }
+        H1(yout + uint64_t(d * 2u)).v = uint16_t(bf16_rne(r));
+    }
+}
+#endif

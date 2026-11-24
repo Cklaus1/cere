@@ -1,0 +1,319 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P4-A K9: sparse GQA for calls of more than 16 rows (prefill) on VK_KHR_cooperative_matrix (FP16 x FP16 ->
+// FP32, 16x16x16, subgroups of 32). Contract: executor/cuda/src/kernels/k9_qsa.h qsa_attention, as k9_attn.comp:
+// out[t, h] = softmax_j(q[t, h] . K[indices[t, j]] * scale) V[indices[t, j]] over the valid (>= 0) entries j of the row's
+// 2,051 entries, zeros for a row without one; KV head h / 12. K/V BF16 rows (FP8 0; position j at row j) or the FP8
+// E4M3 cache (FP8 1; position j at row slots[j], j when slots is 0). Operand carrying: p4att_common.comp.
+//
+// Workgroup (row t, KV head g), 4 subgroups of 32: one 16-row tile (the 12 query heads, rows 12..15 zero, as HIP's P4)
+// over the row's entries in fixed tiles of 32 at offsets 0, 32, .., 2,048 (65 tiles), in order. Per tile with a valid
+// entry (a tile without one is skipped, the FP32 path's no-op): the entries' K / V rows are gathered one tile ahead into
+// registers and carried into shared memory (lanes 4 e .. 4 e + 3 hold entry e, 64 dims each; V' is written over K' once
+// the QK has read it); QK subgroup (entry half kt = sg % 2, dim half dh = sg / 2) writes S_dh over its 128 dims (8 chunks
+// ascending); then, as p4att_dense.comp, per row 4 lanes x 8 entries on S = S_0 + S_1: s = ldexp(S, -(sq + sk)) * sl2
+// (-inf for an invalid entry), m_new = max(m, tile max), alpha = exp2(m - m_new), p = exp2(s - m_new), l = fma(l, alpha,
+// sum p) (8 entries in order, then the lane pairs xor 1, 2); PV subgroup sg owns dims 64 sg .. + 63 (4 accumulators):
+// O = O * alpha (per element, the index-matrix row), then coopMatMulAdd over the two entry chunks in order (an invalid
+// entry's p' and V' are zero: p4att_common.comp). out = bf16(ldexp(O, -C) * (1 / l)), 0 for a row without a valid entry.
+// A row's bits depend on its q row and its entries only (one row per workgroup; fixed tiles of its own entry list):
+// any partition of a call and any cls give the same bytes. Deterministic.
+// With a route (p4att_route.comp), a workgroup whose 16-row block is a dense prefix returns at once: p4att_dense.comp
+// computes that block with the same per-row arithmetic (the same S halves and order, the same softmax lanes and order,
+// the same products: its partial chunks as p4att_common.comp states), so the bytes do not depend on the routing.
+// Flag words (t * 2 + g) * 3 + 0..2 of `flags` (all three the same: the dense kernel's layout) are 1 when one of the 12
+// q rows has a non-finite value or a valid entry's K / V is bad (p4att_common.comp); such a row is not written here (the
+// FP32 fallback writes it).
+#include "p4att_common.comp"
+
+#ifndef FP8
+#define FP8 0
+#endif
+#define NT 128u
+#define D 256u
+#define GROUP 12u
+#define RW 2051u
+#define TS 32u
+#define NTILES ((RW + TS - 1u) / TS)  // 65
+#define LDK 33u
+#define LDSX 9u
+#define LDP 5u
+
+layout(local_size_x = 128) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, idx, k, v, slots, dst, flags;
+    uint64_t route;                               // p4att_route.comp's block words (0: none)
+    uint q_stride, out_stride, kstride, vstride;  // q / out strides in elements, K / V row strides in bytes
+    float sl2;
+    uint rows;
+} pc;
+
+shared uvec4 KV[TS * LDK];       // K' [entry][dim], then V' [entry][dim] over it; at the start q' [row][dim]
+shared vec4 SX[2u * 16u * LDSX]; // S over dims 0..127 / 128..255 [half][row][entry]; at the start the index matrix
+shared uvec4 PS[16u * LDP];       // p' [row][entry]
+shared int SQ[16];
+shared int SK[TS];
+shared int AV[TS];
+shared uint VALID[TS];
+shared float AL[16];
+shared float LS[16];
+shared float LR[16];  // 1 / l (one rcp per row, the same expression in both kernels)
+shared uint ANY, BAD;
+
+#if FP8
+#define NW 4u   // uvec4 per thread per tensor: 64 E4M3 bytes
+#else
+#define NW 8u   // 64 BF16
+#endif
+
+// entry e0 + el of row t: its K/V row (-1: invalid)
+int entry_row(uint t, uint e) {
+    if (e >= RW) return -1;
+    const int j = P4I1(pc.idx + uint64_t((t * RW + e) * 4u)).v;
+    if (j < 0) return -1;
+#if FP8
+    return pc.slots != 0ul ? int(P4L1(pc.slots + uint64_t(uint(j)) * 8ul).v) : j;
+#else
+    return j;
+#endif
+}
+
+void load_k(int row, uint g, uint part, out uvec4 kr[NW]) {
+    [[unroll]] for (uint i = 0u; i < NW; ++i) kr[i] = uvec4(0u);
+    if (row >= 0) {
+#if FP8
+        const uint ko = uint(row) * pc.kstride + g * D + part * 64u;
+#else
+        const uint ko = uint(row) * pc.kstride + (g * D + part * 64u) * 2u;
+#endif
+        [[unroll]] for (uint i = 0u; i < NW; ++i) kr[i] = P4V4(pc.k + uint64_t(ko + 16u * i)).v;
+    }
+}
+void load_v(int row, uint g, uint part, out uvec4 vr[NW]) {
+    [[unroll]] for (uint i = 0u; i < NW; ++i) vr[i] = uvec4(0u);
+    if (row >= 0) {
+#if FP8
+        const uint vo = uint(row) * pc.vstride + g * D + part * 64u;
+#else
+        const uint vo = uint(row) * pc.vstride + (g * D + part * 64u) * 2u;
+#endif
+        [[unroll]] for (uint i = 0u; i < NW; ++i) vr[i] = P4V4(pc.v + uint64_t(vo + 16u * i)).v;
+    }
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x, sg = gl_SubgroupID;
+    const uint t = gl_WorkGroupID.x, g = gl_WorkGroupID.y;
+    const float NEG_INF = p4_ninf();
+    if (pc.route != 0ul && P4I1(pc.route + uint64_t(t / 16u) * 4ul).v >= 0) return;  // uniform: the dense kernel's block
+    if (tid == 0u) { BAD = 0u; }
+    if (tid < 64u) {  // the index matrix
+        const uint i = tid * 4u;
+        SX[tid] = vec4(float(i), float(i + 1u), float(i + 2u), float(i + 3u));
+    }
+    // q' rows: row r = tid / 8 (heads 0..11; 12..15 zero), dims (tid % 8) * 32 ..
+    {
+        const uint r = tid / 8u, part = tid % 8u;
+        uvec4 qr[4];
+        uint qm = 0u;
+        [[unroll]] for (uint i = 0u; i < 4u; ++i) {
+            qr[i] = r < GROUP ? P4V4(pc.q + uint64_t((t * pc.q_stride + (g * GROUP + r) * D + part * 32u) * 2u + 16u * i)).v : uvec4(0u);
+            qm = max(qm, p4_mag8(qr[i]));
+        }
+        [[unroll]] for (uint o = 1u; o < 8u; o *= 2u) qm = max(qm, subgroupShuffleXor(qm, o));
+        const bool bad = (qm >> 7) >= 0xFFu;
+        const int sq = p4_shift(qm);
+        [[unroll]] for (uint i = 0u; i < 4u; ++i) KV[r * LDK + part * 4u + i] = p4_cvt8(qr[i], sq, bad);
+        if (part == 0u) SQ[r] = sq;
+        memoryBarrierShared();
+        barrier();
+        if (part == 0u && bad) atomicOr(BAD, 1u);
+    }
+    memoryBarrierShared();
+    barrier();
+    MatC ixm;
+    coopMatLoad(ixm, SX, 0, 4, gl_CooperativeMatrixLayoutRowMajor);
+    const uint NE = uint(ixm.length());
+    uint erow[8], ecol[8];
+    [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+        const uint x = e < NE ? uint(ixm[e]) : 0u;
+        erow[e] = x / 16u; ecol[e] = x % 16u;
+    }
+    const uint kt = sg % 2u, dh = sg / 2u;  // QK subgroup: entry half kt, dims 128 dh .. (the dense kernel's halves)
+    MatA qa[8];
+    [[unroll]] for (uint c = 0u; c < 8u; ++c) coopMatLoad(qa[c], KV, 2u * (dh * 8u + c), LDK, gl_CooperativeMatrixLayoutRowMajor);
+    MatC o[4];
+    [[unroll]] for (uint i = 0u; i < 4u; ++i) o[i] = MatC(0.0);
+
+    // loader: entry el of the tile, dims 64 part ..
+    const uint el = tid / 4u, part = tid % 4u;
+    int row = entry_row(t, el);
+    uvec4 kr[NW], vr[NW];
+    load_k(row, g, part, kr);
+    load_v(row, g, part, vr);
+    // softmax thread (tid < 64): row sr = tid / 4, entries 8 (tid % 4) .. (the dense kernel's lanes and order)
+    const uint sr = (tid / 4u) % 16u, sub = tid % 4u;
+    const bool real = sr < GROUP;
+    float m_run = NEG_INF, l_run = 0.0;
+
+    for (uint s = 0u; s < NTILES; ++s) {
+        const uint e0 = s * TS;
+        if (tid == 0u) ANY = 0u;
+        memoryBarrierShared();
+        barrier();  // the previous tile's reads of V' / PS / AL are done (and the q' fragments are loaded)
+        // carry entry el's K into shared memory; its V shift now (V' is staged over K' after the QK)
+        const bool live = row >= 0;
+#if FP8
+        bool kbad = false, vbad = false;
+        [[unroll]] for (uint i = 0u; i < NW; ++i) { kbad = kbad || p4_nan16(kr[i]); vbad = vbad || p4_nan16(vr[i]); }
+        uint b32 = kbad || vbad ? 1u : 0u;
+        [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) b32 |= subgroupShuffleXor(b32, ofs);
+        const bool bad = b32 != 0u && live;
+        const int sk = -8, bv = 6;
+        {
+            const uint ko = el * LDK + part * 8u;
+            [[unroll]] for (uint i = 0u; i < NW; ++i) {
+                uvec4 a, b;
+                p4_cvt16(kr[i], false, bad, a, b); KV[ko + 2u * i] = a; KV[ko + 2u * i + 1u] = b;
+            }
+        }
+#else
+        uint km = 0u, vm = 0u;
+        [[unroll]] for (uint i = 0u; i < NW; ++i) { km = max(km, p4_mag8(kr[i])); vm = max(vm, p4_mag8(vr[i])); }
+        [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) { km = max(km, subgroupShuffleXor(km, ofs)); vm = max(vm, subgroupShuffleXor(vm, ofs)); }
+        const bool bad = live && ((km >> 7) >= 0xFFu || p4_vbad(vm));
+        const int sk = p4_shift(km), bv = p4_vshift(vm);
+        {
+            const uint ko = el * LDK + part * 8u;
+            [[unroll]] for (uint i = 0u; i < NW; ++i) KV[ko + i] = p4_cvt8(kr[i], sk, bad);
+        }
+#endif
+        if (part == 0u) {
+            SK[el] = sk;
+            AV[el] = P4_C - bv;
+            VALID[el] = live ? 1u : 0u;
+            if (live) atomicOr(ANY, 1u);
+            if (bad) atomicOr(BAD, 1u);
+        }
+        const int nrow = s + 1u < NTILES ? entry_row(t, e0 + TS + el) : -1;
+        load_k(nrow, g, part, kr);  // the next tile's K gather, in flight during this tile
+        memoryBarrierShared();
+        barrier();
+        if (ANY == 0u) {  // uniform: no valid entry in this tile
+            row = nrow;
+            load_v(row, g, part, vr);
+            continue;
+        }
+
+        {   // S_dh (16 rows x 16 entries of half kt) over dims 128 dh ..: 8 chunks ascending
+            MatC sc = MatC(0.0);
+            [[unroll]] for (uint c = 0u; c < 8u; ++c) {
+                MatB kb;
+                coopMatLoad(kb, KV, kt * 16u * LDK + 2u * (dh * 8u + c), LDK, gl_CooperativeMatrixLayoutColumnMajor);
+                sc = coopMatMulAdd(qa[c], kb, sc);
+            }
+            coopMatStore(sc, SX, dh * 16u * LDSX + kt * 4u, LDSX, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        memoryBarrierShared();
+        barrier();
+
+        if (tid < 64u) {   // softmax of row sr, entries 8 sub ..
+            const vec4 a0 = SX[sr * LDSX + 2u * sub], a1 = SX[sr * LDSX + 2u * sub + 1u];
+            const vec4 b0 = SX[(16u + sr) * LDSX + 2u * sub], b1 = SX[(16u + sr) * LDSX + 2u * sub + 1u];
+            const float lo[8] = float[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+            const float hi[8] = float[8](b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w);
+            float acc[8];
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                precise float x = lo[i] + hi[i];  // the two dim halves, lo + hi (the dense kernel's order)
+                acc[i] = x;
+            }
+            const int sq = SQ[sr];
+            float sc[8];
+            float tmax = NEG_INF;
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                const uint ee = 8u * sub + i;
+                precise float x = ldexp(acc[i], -(sq + SK[ee])) * pc.sl2;
+                sc[i] = VALID[ee] != 0u && real ? x : NEG_INF;
+                tmax = max(tmax, sc[i]);
+            }
+            [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) tmax = max(tmax, subgroupShuffleXor(tmax, ofs));
+            const float m_new = real ? max(m_run, tmax) : 0.0;  // real rows: finite (the tile has a valid entry)
+            precise float dm = m_run - m_new;
+            const float alpha = real ? exp2(dm) : 1.0;       // m_run -inf (first live tile): 0
+            precise float sum = 0.0;
+            uint pw[4];
+            [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
+                precise float d0 = sc[i] - m_new, d1 = sc[i + 1u] - m_new;
+                const float p0 = exp2(d0), p1 = exp2(d1);  // -inf (invalid entry, padding row): 0
+                sum = sum + p0;
+                sum = sum + p1;
+                pw[i / 2u] = packFloat2x16(f16vec2(ldexp(p0, AV[8u * sub + i]), ldexp(p1, AV[8u * sub + i + 1u])));
+            }
+            [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) {
+                precise float x = sum + subgroupShuffleXor(sum, ofs);
+                sum = x;
+            }
+            precise float ln = fma(l_run, alpha, sum);
+            l_run = ln;
+            m_run = real ? m_new : NEG_INF;
+            PS[sr * LDP + sub] = uvec4(pw[0], pw[1], pw[2], pw[3]);
+            if (sub == 0u) AL[sr] = alpha;
+        }
+        {   // V' over K' (every subgroup's QK reads of K' are done: the barrier above)
+            const uint vo = el * LDK + part * 8u;
+#if FP8
+            [[unroll]] for (uint i = 0u; i < NW; ++i) {
+                uvec4 a, b;
+                p4_cvt16(vr[i], true, bad, a, b); KV[vo + 2u * i] = a; KV[vo + 2u * i + 1u] = b;
+            }
+#else
+            [[unroll]] for (uint i = 0u; i < NW; ++i) KV[vo + i] = p4_cvt8(vr[i], bv, bad);
+#endif
+            row = nrow;
+            load_v(row, g, part, vr);  // the next tile's V gather
+        }
+        memoryBarrierShared();
+        barrier();
+
+        {   // O (dims 64 sg ..): O * alpha, then the two key chunks
+            float al[8];
+            [[unroll]] for (uint e = 0u; e < 8u; ++e) al[e] = AL[erow[e]];
+            [[unroll]] for (uint i = 0u; i < 4u; ++i)
+                [[unroll]] for (uint e = 0u; e < 8u; ++e)
+                    if (e < NE) {
+                        precise float x = o[i][e] * al[e];
+                        o[i][e] = x;
+                    }
+            [[unroll]] for (uint kc = 0u; kc < 2u; ++kc) {
+                MatA pa;
+                coopMatLoad(pa, PS, 2u * kc, LDP, gl_CooperativeMatrixLayoutRowMajor);
+                [[unroll]] for (uint i = 0u; i < 4u; ++i) {
+                    MatB vb;
+                    coopMatLoad(vb, KV, kc * 16u * LDK + 2u * (sg * 4u + i), LDK, gl_CooperativeMatrixLayoutRowMajor);
+                    o[i] = coopMatMulAdd(pa, vb, o[i]);
+                }
+            }
+        }
+    }
+    if (tid < 64u && sub == 0u) {
+        LS[sr] = l_run;
+        precise float rl = 1.0 / l_run;
+        LR[sr] = rl;
+    }
+    memoryBarrierShared();
+    barrier();
+    const bool flag = BAD != 0u;
+    if (tid < 3u) P4W1(pc.flags + uint64_t(((t * 2u + g) * 3u + tid) * 4u)).v = flag ? 1u : 0u;
+    if (flag) return;
+    [[unroll]] for (uint i = 0u; i < 4u; ++i)
+        [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+            if (e >= NE) continue;
+            const uint r = erow[e];
+            if (r >= GROUP) continue;
+            const float l = LS[r];
+            precise float x = l > 0.0 ? ldexp(o[i][e], -P4_C) * LR[r] : 0.0;
+            const uint col = sg * 64u + i * 16u + ecol[e];
+            P4H1(pc.dst + uint64_t((t * pc.out_stride + (g * GROUP + r) * D + col) * 2u)).v = uint16_t(p4_bf16_rne(x));
+        }
+}

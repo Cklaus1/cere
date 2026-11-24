@@ -1,0 +1,4 @@
+{"capture": [],
+ "interventions": [{"kind": "add", "point": "native.layers.L.mlp_mix.out", "layers": "all",
+                    "positions": {"generated": true}, "vector_id": "@steer", "alpha": 4.0}],
+ "seed": 20261104, "target": "coding_output_volume"}

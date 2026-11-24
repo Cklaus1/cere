@@ -1,0 +1,495 @@
+{
+ "omp_version": "omp/18.12.6",
+ "thinking": "high",
+ "compat_snippet": true,
+ "body": {
+  "model": "Qwen3.8-Flash-Next",
+  "messages": [
+   {
+    "role": "system",
+    "content": "<redacted>"
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "<redacted>"
+     },
+     {
+      "type": "text",
+      "text": "<redacted>"
+     }
+    ]
+   }
+  ],
+  "stream": true,
+  "stream_options": {
+   "include_usage": true
+  },
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "read",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "path": {
+        "type": "string",
+        "description": "Local path, internal URI, or URL; selectors inline."
+       }
+      },
+      "required": [
+       "path",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "bash",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "command": {
+        "type": "string"
+       },
+       "timeout": {
+        "type": "number",
+        "description": "timeout in seconds; 0 disables the command deadline; nonzero values are clamped to 1-3600"
+       },
+       "cwd": {
+        "type": "string"
+       },
+       "pty": {
+        "type": "boolean"
+       },
+       "async": {
+        "type": "boolean"
+       },
+       "name": {
+        "type": "string",
+        "maxLength": 48
+       },
+       "ready": {
+        "type": "object",
+        "properties": {
+         "log": {
+          "type": "string"
+         },
+         "port": {
+          "type": "number"
+         },
+         "host": {
+          "type": "string"
+         },
+         "timeout": {
+          "type": "number"
+         }
+        },
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "command",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "edit",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "input": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "input",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "eval",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "language": {
+        "enum": [
+         "py",
+         "js"
+        ],
+        "type": "string",
+        "description": "\"py\": Python with IPython-style magics (not IPython); \"js\": Bun"
+       },
+       "code": {
+        "type": "string",
+        "description": "Code or standalone % command; top-level await works."
+       },
+       "title": {
+        "type": "string",
+        "description": "Short transcript label."
+       },
+       "timeout": {
+        "type": "number",
+        "description": "Cell deadline in seconds; 0 disables it."
+       },
+       "reset": {
+        "type": "boolean",
+        "description": "Wipe only this kernel."
+       }
+      },
+      "required": [
+       "language",
+       "code"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "glob",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "path": {
+        "type": "string"
+       },
+       "hidden": {
+        "type": "boolean"
+       },
+       "gitignore": {
+        "type": "boolean"
+       },
+       "limit": {
+        "type": "number"
+       }
+      },
+      "additionalProperties": false,
+      "required": [
+       "i"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "grep",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "pattern": {
+        "type": "string"
+       },
+       "path": {
+        "type": "string"
+       },
+       "case": {
+        "type": "boolean"
+       },
+       "gitignore": {
+        "type": "boolean"
+       },
+       "skip": {
+        "type": [
+         "number",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "pattern",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "task",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "context": {
+        "type": "string"
+       },
+       "tasks": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "task": {
+           "type": "string"
+          },
+          "solutionSpace": {
+           "type": "string"
+          },
+          "name": {
+           "type": "string"
+          },
+          "agent": {
+           "type": "string"
+          },
+          "tools": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           }
+          },
+          "sourceSession": {
+           "type": "string"
+          },
+          "model": {
+           "anyOf": [
+            {
+             "type": "string"
+            },
+            {
+             "type": "array",
+             "items": {
+              "type": "string"
+             }
+            }
+           ]
+          }
+         },
+         "required": [
+          "task",
+          "solutionSpace"
+         ],
+         "additionalProperties": false
+        }
+       }
+      },
+      "required": [
+       "context",
+       "tasks",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "wait",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       }
+      },
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "todo",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "op": {
+        "enum": [
+         "init",
+         "start",
+         "done",
+         "rm",
+         "drop",
+         "block",
+         "unblock",
+         "append",
+         "view"
+        ],
+        "type": "string"
+       },
+       "list": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "phase": {
+           "type": "string"
+          },
+          "items": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "minItems": 1
+          }
+         },
+         "required": [
+          "phase",
+          "items"
+         ],
+         "additionalProperties": false
+        },
+        "description": "phases for init"
+       },
+       "task": {
+        "type": "string",
+        "description": "verbatim task content"
+       },
+       "phase": {
+        "type": "string"
+       },
+       "items": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        },
+        "description": "tasks for flat init or append"
+       },
+       "reason": {
+        "type": "string",
+        "description": "blocker note for block"
+       }
+      },
+      "required": [
+       "op",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "web_search",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "query": {
+        "type": "string"
+       },
+       "recency": {
+        "enum": [
+         "day",
+         "week",
+         "month",
+         "year"
+        ],
+        "type": "string"
+       },
+       "limit": {
+        "type": "number"
+       },
+       "max_tokens": {
+        "type": "number"
+       },
+       "temperature": {
+        "type": "number"
+       },
+       "num_search_results": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "query",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "write",
+     "description": "<redacted>",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "i": {
+        "type": "string",
+        "description": "concise intent"
+       },
+       "path": {
+        "type": "string"
+       },
+       "content": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "i"
+      ],
+      "additionalProperties": false
+     }
+    }
+   }
+  ],
+  "max_completion_tokens": 32768,
+  "chat_template_kwargs": {
+   "enable_thinking": true
+  }
+ }
+}

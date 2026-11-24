@@ -1,0 +1,113 @@
+#version 460
+// VulkanAmd P2 K2 large-m GEMM: the per-row exactness scan (k2_gemm_common.comp's row info word).
+//
+// One subgroup of 32 per row (8 rows per workgroup). For every nonzero value v of the row (BF16, or with MX=1 the
+// exact decode q * 2^(s - 127) of an MXFP8 row, i.e. its BF16 upcast's value) it takes the exponent e(v) of v's
+// leading bit and l(v) of v's lowest set bit (from the bit pattern: no float arithmetic, so no denormal flush), and
+// reduces E = max e, Emin = min e, L = min l over the row. The row is carried exactly by FP16 as v * 2^(15 - E) iff
+//   - no Inf / NaN (BF16 exponent 0xFF; E4M3 byte 0x7F),
+//   - -80 <= E <= 100 (keeps every exact row's values, 2^shift and the epilogue factor FP32-normal),
+//   - SUBN=1 (FP16 subnormal operands kept by the matrix unit, measured by k2w_test "fp16 subnormal operands"):
+//     L >= E - 39, i.e. every scaled value's lowest bit is >= 2^-24 (FP16's smallest subnormal);
+//     SUBN=0: Emin >= E - 29, i.e. every scaled value is an FP16 normal (11 significant bits hold BF16's 8).
+// Scaled values are < 2^16 with at most 8 significant bits, so <= 65,280 < 65,504: no overflow. A row of zeros has
+// shift 0 and is exact. Everything depends on the row's own values only (shift / row-count invariance holds for the
+// route choice as for the arithmetic).
+//
+// P4-B split rows (lever k2_gemm tail_split: push `split` 1, x rows only; BF16 rows only, MX=1 never splits): a row
+// that is not exact as above but has no Inf / NaN, E in [-80, 100], k < 65,536 and at most SPLIT_MAX "tail" values
+// (nonzero v with e(v) < E - 32, i.e. its BF16 magnitude bits a = bits & 0x7FFF below split_threshold(shift) of
+// k2_gemm_common.comp) gets SPLIT instead of FB: its values with e(v) >= E - 32 are exact as FP16 * 2^(15 - E) (lowest
+// bit >= E - 39) and go through the matrix unit, the tail values go through an exact FP32 fma chain (k2_gemm.comp). A
+// row with more tail values keeps FB (the whole row on the FP32 route). Still a function of the row alone. With
+// `split` 0 (the default, weight scans) every inexact row is FB, the P2 scan's words.
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#include "k2_gemm_common.comp"
+
+#ifndef MX
+#define MX 0
+#endif
+#ifndef SUBN
+#define SUBN 1
+#endif
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t src, scales, info;
+    uint rows, k, split, pad1;
+} pc;
+
+const int NONE = -100000;
+
+void main() {
+    const uint lane = gl_SubgroupInvocationID;
+    const uint row = gl_WorkGroupID.x * 8u + gl_SubgroupID;
+    if (row >= pc.rows) return;  // the whole subgroup
+    const uint k = pc.k;
+    int emax = NONE, emin = 100000, lmin = 100000;
+    bool bad = false;
+#if MX
+    for (uint i = lane * 16u; i < k; i += 512u) {
+        const uvec4 q = ld16(pc.src, row * k + i);
+        const int sb = int(ld1(pc.scales, row * (k / 32u) + i / 32u)) - 127;
+        const uint qw[4] = uint[4](q.x, q.y, q.z, q.w);
+        [[unroll]] for (int j = 0; j < 4; ++j)
+            [[unroll]] for (int b = 0; b < 4; ++b) {
+                const uint a = (qw[j] >> (8 * b)) & 0x7Fu;
+                if (a == 0u) continue;
+                if (a == 0x7Fu) bad = true;
+                const uint ee = a >> 3u, m3 = a & 7u;
+                const int e = ee > 0u ? int(ee) - 7 + sb : findMSB(m3) - 9 + sb;
+                const int l = ee > 0u ? e - 3 + findLSB(m3 | 8u) : findLSB(m3) - 9 + sb;
+                emax = max(emax, e); emin = min(emin, e); lmin = min(lmin, l);
+            }
+    }
+#else
+    for (uint i = lane * 8u; i < k; i += 256u) {
+        const uvec4 v = ld16(pc.src, (row * k + i) * 2u);
+        const uint vw[4] = uint[4](v.x, v.y, v.z, v.w);
+        [[unroll]] for (int j = 0; j < 4; ++j)
+            [[unroll]] for (int h = 0; h < 2; ++h) {
+                const uint a = (vw[j] >> (16 * h)) & 0x7FFFu;
+                if (a == 0u) continue;
+                const uint ef = a >> 7u, mt = a & 0x7Fu;
+                if (ef == 0xFFu) bad = true;
+                const int e = ef > 0u ? int(ef) - 127 : findMSB(mt) - 133;
+                const int l = ef > 0u ? e - 7 + findLSB(mt | 0x80u) : findLSB(mt) - 133;
+                emax = max(emax, e); emin = min(emin, e); lmin = min(lmin, l);
+            }
+    }
+#endif
+    emax = subgroupMax(emax);
+    emin = subgroupMin(emin);
+    lmin = subgroupMin(lmin);
+    bad = subgroupAny(bad);
+    const bool range = emax == NONE || (emax >= -80 && emax <= 100);
+#if SUBN
+    const bool exact = !bad && range && (emax == NONE || lmin >= emax - 39);
+#else
+    const bool exact = !bad && range && (emax == NONE || emin >= emax - 29);
+#endif
+    const int sh = emax == NONE ? 0 : 15 - emax;
+    uint word = exact ? 0u : FB;
+#if !MX
+    if (pc.split != 0u && !exact && !bad && range && k < 65536u) {  // uniform: count the tail values (second read)
+        const uint thr = split_threshold(sh);
+        uint tail = 0u;
+        for (uint i = lane * 8u; i < k; i += 256u) {
+            const uvec4 v = ld16(pc.src, (row * k + i) * 2u);
+            const uint vw[4] = uint[4](v.x, v.y, v.z, v.w);
+            [[unroll]] for (int j = 0; j < 4; ++j)
+                [[unroll]] for (int h = 0; h < 2; ++h) {
+                    const uint a = (vw[j] >> (16 * h)) & 0x7FFFu;
+                    tail += (a != 0u && a < thr) ? 1u : 0u;
+                }
+        }
+        tail = subgroupAdd(tail);
+        if (tail <= SPLIT_MAX) word = SPLIT | (tail << 16u);  // tail >= 1: the row is not exact
+    }
+#endif
+    if (lane == 0u) st4(pc.info, row * 4u, word | uint(sh + 32768));
+}

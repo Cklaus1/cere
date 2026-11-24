@@ -1,0 +1,454 @@
+{
+  "schema_version": "1",
+  "model_id": "inkling-2-mini",
+  "architecture": {
+    "value": [
+      "Inkling2LoopForConditionalGeneration"
+    ],
+    "sources": [
+      "config.json:architectures"
+    ]
+  },
+  "model_type": {
+    "value": "inkling2_loop",
+    "sources": [
+      "config.json:model_type"
+    ]
+  },
+  "checkpoint": {
+    "name": "Inkling-2-Mini",
+    "config_json_sha256": "a7a349601f0984c4abf999c480ef775d8567d21f5f84b4e8a3e035b44f288dc2",
+    "hf_quant_config_sha256": "7c656207d3ce37879c7be209a036b0dde43bf01f78159bff06880b868ed57143",
+    "config_json_fixture": "tests/fixtures/model_configs/inkling-2-mini/config.json",
+    "hub": {
+      "repo": "thinkingmachines/Inkling-2-Mini",
+      "revision": "b85c3cfa615fc413cc9af3379f491b963f3b586a"
+    }
+  },
+  "dimensions": {
+    "vocab_size": {
+      "value": 201024,
+      "sources": [
+        "config.json:text_config.vocab_size"
+      ]
+    },
+    "unpadded_vocab_size": {
+      "value": 200058,
+      "sources": [
+        "config.json:text_config.unpadded_vocab_size"
+      ]
+    },
+    "hidden_size": {
+      "value": 2304,
+      "sources": [
+        "config.json:text_config.hidden_size",
+        "config.json:vision_config.text_hidden_size"
+      ]
+    },
+    "num_hidden_layers": {
+      "value": 24,
+      "sources": [
+        "config.json:text_config.num_hidden_layers"
+      ]
+    },
+    "num_attention_heads": {
+      "value": 24,
+      "sources": [
+        "config.json:text_config.num_attention_heads",
+        "config.json:text_config.swa_num_attention_heads"
+      ]
+    },
+    "num_key_value_heads": {
+      "value": 8,
+      "sources": [
+        "config.json:text_config.num_key_value_heads",
+        "config.json:text_config.swa_num_key_value_heads"
+      ]
+    },
+    "head_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.head_dim",
+        "config.json:text_config.swa_head_dim"
+      ]
+    },
+    "rms_norm_eps": {
+      "value": 1e-06,
+      "sources": [
+        "config.json:text_config.rms_norm_eps"
+      ]
+    },
+    "max_position_embeddings": {
+      "value": 1048576,
+      "sources": [
+        "config.json:text_config.model_max_length"
+      ]
+    },
+    "num_experts": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.n_routed_experts"
+      ]
+    },
+    "num_experts_per_tok": {
+      "value": 8,
+      "sources": [
+        "config.json:text_config.num_experts_per_tok"
+      ]
+    },
+    "moe_intermediate_size": {
+      "value": 1152,
+      "sources": [
+        "config.json:text_config.intermediate_size"
+      ]
+    },
+    "shared_expert_intermediate_size": {
+      "value": 0,
+      "sources": [
+        "config.json:text_config.n_shared_experts"
+      ]
+    },
+    "sliding_window_size": {
+      "value": 1024,
+      "sources": [
+        "config.json:text_config.sliding_window_size"
+      ]
+    },
+    "conv_kernel_size": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.sconv_kernel_size"
+      ]
+    },
+    "n_layers_per_attn_res_block": {
+      "value": 6,
+      "sources": [
+        "config.json:text_config.n_layers_per_attn_res_block"
+      ]
+    },
+    "final_logit_softcapping": {
+      "value": 30.0,
+      "sources": [
+        "config.json:text_config.final_logit_softcapping"
+      ]
+    },
+    "mlp_gate_softcap": {
+      "value": 4.0,
+      "sources": [
+        "config.json:text_config.mlp_gate_softcap"
+      ]
+    },
+    "mlp_up_softcap": {
+      "value": 25.0,
+      "sources": [
+        "config.json:text_config.mlp_up_softcap"
+      ]
+    },
+    "route_scale": {
+      "value": 8.0,
+      "sources": [
+        "config.json:text_config.route_scale"
+      ]
+    },
+    "qk_l2_clip_threshold": {
+      "value": 22.627416997969522,
+      "sources": [
+        "config.json:text_config.qk_l2_clip_threshold"
+      ]
+    },
+    "eos_token_id": {
+      "value": 200006,
+      "sources": [
+        "config.json:eos_token_id"
+      ]
+    }
+  },
+  "loop": {
+    "core_start": {
+      "value": 6,
+      "sources": [
+        "config.json:text_config.loop_config.core_start"
+      ]
+    },
+    "core_end": {
+      "value": 18,
+      "sources": [
+        "config.json:text_config.loop_config.core_end"
+      ]
+    },
+    "num_passes": {
+      "value": 3,
+      "sources": [
+        "config.json:text_config.loop_config.num_passes"
+      ]
+    },
+    "gate_rank": {
+      "value": 64,
+      "sources": [
+        "config.json:text_config.loop_config.gate_rank"
+      ]
+    },
+    "is_varloop": {
+      "value": false,
+      "sources": [
+        "config.json:text_config.loop_config.is_varloop"
+      ]
+    }
+  },
+  "relative_position": {
+    "d_rel": {
+      "value": 16,
+      "sources": [
+        "config.json:text_config.d_rel"
+      ]
+    },
+    "rel_extent": {
+      "value": 1024,
+      "sources": [
+        "config.json:text_config.rel_extent"
+      ]
+    },
+    "rel_l2_clip_threshold": {
+      "value": 8.0,
+      "sources": [
+        "config.json:text_config.rel_l2_clip_threshold"
+      ]
+    },
+    "log_scaling_n_floor": {
+      "value": 8192,
+      "sources": [
+        "config.json:text_config.log_scaling_n_floor"
+      ]
+    },
+    "log_scaling_alpha": {
+      "value": 0.1,
+      "sources": [
+        "config.json:text_config.log_scaling_alpha"
+      ]
+    }
+  },
+  "layers": {
+    "sources": [
+      "config.json:text_config.local_layer_ids",
+      "hf_quant_config.json:model.parameter_groups"
+    ],
+    "kinds": [
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "nvfp4"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "mxfp8"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "mxfp8"
+      },
+      {
+        "mixer": "sliding_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "mxfp8"
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false,
+        "experts": "mxfp8"
+      }
+    ]
+  },
+  "slots": {
+    "sliding_attention": [
+      "norm",
+      "attention.full",
+      "norm",
+      "ffn.moe"
+    ],
+    "full_attention": [
+      "norm",
+      "attention.full",
+      "norm",
+      "ffn.moe"
+    ],
+    "model": [
+      "embed.token",
+      "norm",
+      "lm_head",
+      "sample"
+    ]
+  },
+  "weights": {
+    "quant_algo": {
+      "value": "NVFP4",
+      "sources": [
+        "config.json:quantization_config.quant_algo"
+      ]
+    },
+    "group_size": {
+      "value": 16,
+      "sources": [
+        "hf_quant_config.json:model.parameter_groups.2.weight_block_shape.1"
+      ]
+    },
+    "dense_dtype": {
+      "value": "bfloat16",
+      "sources": [
+        "config.json:dtype",
+        "config.json:text_config.torch_dtype"
+      ]
+    },
+    "unquantized_modules": {
+      "value": [
+        "model.llm.attn_res.*",
+        "model.llm.embed.*",
+        "model.llm.embed_norm.*",
+        "model.llm.middle_cycle_cross_pass_*",
+        "model.llm.norm.*",
+        "model.llm.unembed.*",
+        "model.visual.*",
+        "model.llm.layers.*.attn.*",
+        "model.llm.layers.*.attn_*",
+        "model.llm.layers.*.controllers.*",
+        "model.llm.layers.*.mlp.gate.*",
+        "model.llm.layers.*.mlp_*",
+        "model.llm.layers.*_input_norm.*"
+      ],
+      "sources": [
+        "hf_quant_config.json:model.parameter_groups"
+      ]
+    },
+    "tie_word_embeddings": {
+      "value": false,
+      "sources": [
+        "config.json!tie_word_embeddings"
+      ]
+    }
+  },
+  "graph": null,
+  "draft_head": {
+    "kind": "none"
+  },
+  "vision": null
+}

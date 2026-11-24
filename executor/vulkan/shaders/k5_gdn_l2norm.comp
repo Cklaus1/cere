@@ -1,0 +1,59 @@
+#version 460
+// VulkanAmd P2: K5 GDN l2norm on Vulkan (the executor/cuda/src/kernels/k5_gdn.h `l2norm` contract, re-proven per device).
+//
+// math_reference: flash-linear-attention (l2norm_fwd, via the CUDA kernel's documented arithmetic; nothing is vendored)
+//
+// y = bf16(x / sqrt(sum x^2 + eps)) per row of 128 BF16 values. Mapping (CUDA kL2normVariant 2): 16 lanes per row, lane
+// l of the half-subgroup holds columns [8l, 8l + 8) and sums fma(x0, x0, x1 * x1) then fma(x_j, x_j, s) for j = 2..7;
+// the fixed xor butterfly at offsets 8, 4, 2, 1 inside the half-subgroup (required subgroup size 32); sqrt is sqrt()
+// (v_sqrt_f32; CUDA sqrt.approx.ftz), `/` the driver's FP32 division (CUDA div.full). A row's bits depend only on its own
+// values. Each lane reads only the elements it writes, so y may alias x.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer R4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer W4 { uvec4 v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t x, y;
+    uint rows;
+    float eps;
+} pc;
+
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+
+void main() {
+    const uint row = gl_WorkGroupID.x * 16u + gl_LocalInvocationID.x / 16u;
+    const uint col = 8u * (gl_LocalInvocationID.x & 15u);
+    const bool valid = row < pc.rows;  // no early return: the butterfly shuffles over the whole subgroup
+    const uint off = (row * 128u + col) * 2u;
+    uvec4 raw = uvec4(0u);
+    if (valid) raw = R4(pc.x + uint64_t(off)).v;
+    const uint wd[4] = uint[4](raw.x, raw.y, raw.z, raw.w);
+    float v[8];
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        v[2 * j] = uintBitsToFloat(wd[j] << 16);
+        v[2 * j + 1] = uintBitsToFloat(wd[j] & 0xFFFF0000u);
+    }
+    precise float sq1 = v[1] * v[1];
+    precise float s = fma(v[0], v[0], sq1);
+    [[unroll]] for (int j = 2; j < 8; ++j) s = fma(v[j], v[j], s);
+    [[unroll]] for (uint o = 8u; o >= 1u; o /= 2u) s = s + subgroupShuffleXor(s, o);
+    precise float se = s + pc.eps;
+    const float norm = sqrt(se);
+    if (!valid) return;
+    uint ow[4];
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        precise float lo = v[2 * j] / norm;
+        precise float hi = v[2 * j + 1] / norm;
+        ow[j] = bf16_rne(lo) | (bf16_rne(hi) << 16);
+    }
+    W4(pc.y + uint64_t(off)).v = uvec4(ow[0], ow[1], ow[2], ow[3]);
+}

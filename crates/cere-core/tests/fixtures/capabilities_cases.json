@@ -1,0 +1,67 @@
+{
+  "description": "Shared Python/Rust verdict table for execution_capabilities semantics. Each case replaces the top-level keys in `set` on the base document; every resulting document is schema-valid, so `valid` is the semantic verdict.",
+  "base": "examples/execution_capabilities.json",
+  "cases": [
+    {"name": "baseline", "set": {}, "valid": true},
+    {"name": "batch_min_exceeds_max", "set": {"decode_batch_min": 32}, "valid": false},
+    {"name": "serial_claims_native", "set": {"execution_mode": "serial", "decode_batch_max": 1, "validated_combinations": []}, "valid": false},
+    {"name": "serial_row_capacity_above_one", "set": {"execution_mode": "serial", "native_decode_batch": false, "native_state_snapshot": false, "checkpoint_mode": "none", "validated_combinations": []}, "valid": false},
+    {"name": "serial_single_row", "set": {"execution_mode": "serial", "native_decode_batch": false, "native_state_snapshot": false, "checkpoint_mode": "none", "decode_batch_max": 1, "validated_combinations": []}, "valid": true},
+    {"name": "unsupported_without_operations", "set": {"execution_mode": "unsupported", "operations": [], "native_decode_batch": false, "native_state_snapshot": false, "checkpoint_mode": "none", "validated_combinations": []}, "valid": true},
+    {"name": "unsupported_advertises_operations", "set": {"execution_mode": "unsupported", "operations": ["prefill"], "native_decode_batch": false, "native_state_snapshot": false, "checkpoint_mode": "none", "validated_combinations": []}, "valid": false},
+    {"name": "native_decode_without_decode_operation", "set": {"operations": ["prefill", "snapshot", "restore", "cancel"], "validated_combinations": []}, "valid": false},
+    {"name": "no_native_decode_without_decode_operation", "set": {"operations": ["prefill", "snapshot", "restore", "cancel"], "native_decode_batch": false, "validated_combinations": []}, "valid": true},
+    {"name": "speculation_without_verify", "set": {"native_speculative_batch": true}, "valid": false},
+    {"name": "speculation_with_verify", "set": {"native_speculative_batch": true, "operations": ["prefill", "decode", "verify", "snapshot", "restore", "cancel"]}, "valid": true},
+    {"name": "exact_checkpoint_without_snapshot", "set": {"native_state_snapshot": false}, "valid": false},
+    {"name": "replay_checkpoint_without_snapshot", "set": {"native_state_snapshot": false, "checkpoint_mode": "replay"}, "valid": true},
+    {"name": "json_schema_with_dialect_and_keywords", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1", "json_schema_keywords": ["type", "properties"]}, "valid": true},
+    {"name": "json_schema_every_candidate_keyword", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1", "json_schema_keywords": ["type", "properties", "required", "additionalProperties", "items", "prefixItems", "enum", "const", "anyOf", "allOf", "$ref", "$defs", "minItems", "maxItems", "minLength", "maxLength", "pattern", "format", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "title", "description", "default"]}, "valid": true},
+    {"name": "json_schema_llamacpp_dialect", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/llamacpp-162e2bb2e", "json_schema_keywords": ["type", "properties", "allOf", "title"]}, "valid": true},
+    {"name": "json_schema_llamacpp_unenforced_keyword", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/llamacpp-162e2bb2e", "json_schema_keywords": ["type", "pattern"]}, "valid": false},
+    {"name": "json_schema_llamacpp_format", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/llamacpp-162e2bb2e", "json_schema_keywords": ["type", "format"]}, "valid": false},
+    {"name": "json_schema_llamacpp_other_commit", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/llamacpp-6f4f53f2b", "json_schema_keywords": ["type"]}, "valid": false},
+    {"name": "json_schema_other_dialect", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema", "json_schema_keywords": ["type", "properties"]}, "valid": false},
+    {"name": "json_schema_other_xgrammar", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.5", "json_schema_keywords": ["type"]}, "valid": false},
+    {"name": "json_schema_keyword_one_of", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1", "json_schema_keywords": ["type", "oneOf"]}, "valid": false},
+    {"name": "json_schema_keyword_unknown", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1", "json_schema_keywords": ["type", "maxProperties"]}, "valid": false},
+    {"name": "json_schema_null_dialect", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": null, "json_schema_keywords": ["type", "properties"]}, "valid": false},
+    {"name": "json_schema_empty_dialect", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "", "json_schema_keywords": ["type", "properties"]}, "valid": false},
+    {"name": "json_schema_without_keywords", "set": {"structured_outputs": ["text", "json_schema"], "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1", "json_schema_keywords": []}, "valid": false},
+    {"name": "dialect_without_json_schema_output", "set": {"json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1"}, "valid": false},
+    {"name": "grammar_outputs", "set": {"structured_outputs": ["text", "regex", "ebnf", "tool_calls_constrained"], "validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096},
+      {"operation": "decode", "modality": "text", "output": "regex", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096},
+      {"operation": "decode", "modality": "text", "output": "ebnf", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096},
+      {"operation": "decode", "modality": "text", "output": "tool_calls_constrained", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096}
+    ]}, "valid": true},
+    {"name": "grammar_combination_output_undeclared", "set": {"structured_outputs": ["text", "regex"], "validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "ebnf", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096}
+    ]}, "valid": false},
+    {"name": "grammar_output_with_verify", "set": {"operations": ["prefill", "decode", "verify", "snapshot", "restore", "cancel"], "structured_outputs": ["text", "regex"], "validated_combinations": [
+      {"operation": "verify", "modality": "text", "output": "regex", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096}
+    ]}, "valid": false},
+    {"name": "empty_dialect_without_json_schema_output", "set": {"json_schema_dialect": ""}, "valid": false},
+    {"name": "keywords_without_json_schema_output", "set": {"json_schema_keywords": ["type"]}, "valid": false},
+    {"name": "duplicate_combination", "set": {"validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1, 2], "max_context_tokens": 4096},
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1, 2], "max_context_tokens": 4096}
+    ]}, "valid": false},
+    {"name": "combinations_differ_in_sampler", "set": {"execution_mode": "backend_managed", "validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1, 2], "max_context_tokens": 4096},
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "sampled", "row_counts": [1, 2], "max_context_tokens": 4096}
+    ]}, "valid": true},
+    {"name": "native_sampled_without_sampling_params", "set": {"validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "sampled", "row_counts": [1, 2], "max_context_tokens": 4096}
+    ]}, "valid": false},
+    {"name": "combination_operation_undeclared", "set": {"validated_combinations": [
+      {"operation": "verify", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 4096}
+    ]}, "valid": false},
+    {"name": "combination_context_exceeds_profile", "set": {"validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [1], "max_context_tokens": 8192}
+    ]}, "valid": false},
+    {"name": "combination_rows_exceed_profile", "set": {"validated_combinations": [
+      {"operation": "decode", "modality": "text", "output": "text", "numerical_mode": "reference", "sampler_mode": "greedy", "row_counts": [32], "max_context_tokens": 4096}
+    ]}, "valid": false}
+  ]
+}

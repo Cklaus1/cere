@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/artifact_profile.schema.json",
+  "title": "CERE artifact hardware/placement profile (M2.1 Q6)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "device_model",
+    "device_memory_mib",
+    "compute_capability",
+    "compute_capability_source",
+    "modalities",
+    "speculative",
+    "placement"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "device_model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "device_memory_mib": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "compute_capability": {
+      "type": "string",
+      "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}(?![\\s\\S])"
+    },
+    "compute_capability_source": {
+      "enum": [
+        "inferred",
+        "queried"
+      ]
+    },
+    "modalities": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "speculative": {
+      "enum": [
+        "nextn",
+        "none"
+      ]
+    },
+    "placement": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "nvfp4_weight",
+          "nvfp4_block_scale",
+          "nvfp4_global_scale",
+          "nvfp4_input_scale",
+          "dense",
+          "ple_module",
+          "ple_table",
+          "ple_scale",
+          "ple_index",
+          "draft",
+          "vision"
+        ]
+      },
+      "additionalProperties": {
+        "enum": [
+          "device",
+          "host_pinned",
+          "unused"
+        ]
+      },
+      "minProperties": 1
+    }
+  }
+}

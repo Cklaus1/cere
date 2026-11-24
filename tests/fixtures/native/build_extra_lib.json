@@ -1,0 +1,49 @@
+{
+  "schema_version": "1",
+  "git_head": "0123456789abcdef0123456789abcdef01234567",
+  "git_dirty": false,
+  "image_digest": "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69",
+  "flags": {
+    "cuda": "-O3 -std=c++17 -gencode arch=compute_120a,code=sm_120a -Xcompiler=-fvisibility=hidden",
+    "cxx": "-O3 -std=c++17 -fvisibility=hidden -ffile-prefix-map=/src=.",
+    "link": "-Wl,--build-id=none -lcudart_static -lcublasLt_static -lculibos"
+  },
+  "source_tree_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "static_libs": [
+    "libcudart_static.a",
+    "libcublasLt_static.a",
+    "libculibos.a",
+    "libnccl_static.a"
+  ],
+  "ccache": "off",
+  "outputs": [
+    {
+      "file": "libcere_executor.so",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "bytes": 104857600,
+      "needed": [
+        "libcuda.so.1",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libcublasLt.so.13"
+      ]
+    },
+    {
+      "file": "libcere_ktest.so",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "bytes": 52428800,
+      "needed": [
+        "libcuda.so.1",
+        "libstdc++.so.6",
+        "libm.so.6",
+        "libgcc_s.so.1",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libcublasLt.so.13"
+      ]
+    }
+  ]
+}

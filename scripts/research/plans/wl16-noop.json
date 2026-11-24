@@ -1,0 +1,6 @@
+{"capture": [],
+ "interventions": [{"kind": "add", "point": "native.layers.L.mlp_mix.out", "layers": "all",
+                    "positions": {"prompt": [[0, 4096]], "generated": true}, "vector_id": "@steer", "alpha": 0.0},
+                   {"kind": "expert_mask", "point": "native.layers.L.gemm.moe_router.out", "layers": "all",
+                    "positions": {"prompt": [[0, 4096]], "generated": true}, "experts": []}],
+ "seed": 20261104, "target": "coding_output_volume"}

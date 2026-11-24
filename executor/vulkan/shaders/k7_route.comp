@@ -1,0 +1,221 @@
+#version 460
+// VulkanAmd P2 K7: router top-k and expert grouping (executor/cuda/src/kernels/k7_moe.cu router_kernel, count /
+// offsets / place kernels; executor/hip/src/k7_route_small.inc), one SPIR-V per MODE. Subgroup size 32 required.
+//
+// Router (one subgroup of 32 per token, 8 tokens per 256-thread workgroup): lane l holds experts l + 32 j (j < EPL,
+// E <= 32 EPL). FP32 softmax: row max (NaN logits ignored, as fmaxf), p_e = exp(v_e - max), row_sum = lane-local sums
+// in j order then a fixed xor butterfly. Top-k: route_key (order-preserving logit bits << 16 | 65,535 - id: larger
+// logit first, then the lower id; NaN ranks with -inf; -0 ties +0) sorted per lane (bitonic, descending), then K
+// rounds of subgroupMax over the lane heads, the owner popping its head (a strict total order: the winners and their
+// order do not depend on the reduction). sel_p = p / row_sum (cdiv), the K selected summed in slot order from 0,
+// weights = sel_p / sum; a row whose row_sum is not finite positive gets weights 0. Every token's ids are K distinct
+// experts in [0, E).
+//
+// Grouping (the stable counting sort): expert_offset = exclusive prefix sums of the counts, the active experts (count
+// > 0) listed in ascending order, and pair p = t K + k placed at row expert_offset[id] + #(earlier pairs of id):
+// perm[row] = p, pos[p] = row. grp layout: grp[0 .. E] expert_offset, grp[E + 1] the number of active experts,
+// grp[E + 2 + i] the i-th active expert. All integers: any thread order gives the same values.
+//
+//  MODE 0: router only (grid ceil(m / 8)).
+//  MODE 1: router + grouping in one workgroup (m K <= 256; decode and verify calls).
+//  MODE 2: grouping counts, offsets and the active list in one workgroup (any m K < 2^31).
+//  MODE 3: placement, one workgroup per expert (subgroup ballots in pair order).
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#include "k7_common.comp"
+
+#ifndef MODE
+#define MODE 0
+#endif
+#ifndef EPL
+#define EPL 16
+#endif
+#define MAXE (32 * EPL)
+#define NT 256u
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t logits, ids, wts, grp, perm, pos;
+    uint m, e, k;
+} pc;
+
+#if MODE <= 1
+shared float ps[8 * MAXE];  // each subgroup's token probabilities, by expert
+
+uint route_key(uint b, uint e) {
+    if ((b & 0x7FFFu) > 0x7F80u) b = 0xFF80u;  // NaN ranks with -inf
+    else if (b == 0x8000u) b = 0u;             // -0 ties +0
+    const uint ord = (b & 0x8000u) != 0u ? (~b & 0xFFFFu) : (b | 0x8000u);
+    return (ord << 16) | (0xFFFFu - e);
+}
+
+// Routes token t with this subgroup; returns this lane's id (lane < K) and writes ids / weights. sid: the pair ids
+// also kept in shared memory (MODE 1).
+#if MODE == 1
+shared int sid[256];
+#endif
+void route_token(uint t) {
+    const uint lane = gl_SubgroupInvocationID, sg = gl_SubgroupID;
+    const uint E = pc.e, K = pc.k;
+    uint key[EPL];
+    float lmax = uintBitsToFloat(0xFF800000u);
+    [[unroll]] for (uint j = 0u; j < EPL; ++j) {
+        const uint e = lane + 32u * j;
+        if (e < E) {
+            const uint b = ld2(pc.logits, (t * E + e) * 2u);
+            const float v = bf2f(b);
+            ps[sg * MAXE + e] = v;
+            if (v > lmax) lmax = v;  // NaN never compares greater
+            key[j] = route_key(b, e);
+        } else {
+            key[j] = 0u;  // below every expert's key
+        }
+    }
+    const float rmax = subgroupMax(lmax);
+    precise float lsum = 0.0;
+    [[unroll]] for (uint j = 0u; j < EPL; ++j) {
+        const uint e = lane + 32u * j;
+        if (e < E) {
+            const float p = exp_acc(ps[sg * MAXE + e] - rmax);
+            ps[sg * MAXE + e] = p;
+            lsum = lsum + p;
+        }
+    }
+    precise float row_sum = lsum;
+    [[unroll]] for (uint o = 16u; o >= 1u; o /= 2u) row_sum = row_sum + subgroupShuffleXor(row_sum, o);
+    // bitonic sort of the lane's keys, descending
+    [[unroll]] for (uint size = 2u; size <= EPL; size *= 2u)
+        [[unroll]] for (uint stride = size / 2u; stride > 0u; stride /= 2u)
+            [[unroll]] for (uint j = 0u; j < EPL; ++j) {
+                const uint o = j ^ stride;
+                if (o > j) {
+                    const bool desc = (j & size) == 0u;
+                    const uint a = key[j], b = key[o];
+                    key[j] = desc ? max(a, b) : min(a, b);
+                    key[o] = desc ? min(a, b) : max(a, b);
+                }
+            }
+    uint sel = 0u;
+    for (uint kk = 0u; kk < K; ++kk) {
+        const uint win = subgroupMax(key[0]);
+        const bool own = key[0] == win;
+        [[unroll]] for (uint j = 0u; j + 1u < EPL; ++j) key[j] = own ? key[j + 1u] : key[j];
+        key[EPL - 1u] = own ? 0u : key[EPL - 1u];
+        if (lane == kk) sel = 0xFFFFu - (win & 0xFFFFu);
+    }
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+    const float sel_p = cdiv(ps[sg * MAXE + sel], row_sum);
+    precise float sum = 0.0;
+    for (uint kk = 0u; kk < K; ++kk) sum = sum + subgroupShuffle(sel_p, kk);
+    const bool finite_row = row_sum > 0.0 && row_sum < uintBitsToFloat(0x7F800000u);
+    const float norm = sum > 0.0 ? sum : 1.0;
+    if (lane < K) {
+        sti(pc.ids, (t * K + lane) * 4u, int(sel));
+        stf(pc.wts, (t * K + lane) * 4u, finite_row ? cdiv(sel_p, norm) : 0.0);
+#if MODE == 1
+        sid[t * K + lane] = int(sel);
+#endif
+    }
+    subgroupMemoryBarrierShared();  // ps is reused by this subgroup's next token
+    subgroupBarrier();
+}
+#endif
+
+#if MODE == 1 || MODE == 2
+shared int cnt[1024];
+shared int off[1024];
+shared int scan_r[NT];
+shared int scan_a[NT];
+
+// Exclusive prefix sums of cnt (rows) and of (cnt > 0) (active experts): thread tid owns a contiguous run of experts;
+// Hillis-Steele over the 256 run totals. Writes grp and off.
+void offsets() {
+    const uint tid = gl_LocalInvocationID.x, E = pc.e;
+    const uint per = (E + NT - 1u) / NT;
+    const uint e0 = min(tid * per, E), e1 = min(e0 + per, E);
+    int rows = 0, act = 0;
+    for (uint e = e0; e < e1; ++e) { rows += cnt[e]; act += cnt[e] > 0 ? 1 : 0; }
+    scan_r[tid] = rows;
+    scan_a[tid] = act;
+    barrier();
+    for (uint d = 1u; d < NT; d *= 2u) {
+        const int vr = tid >= d ? scan_r[tid - d] : 0, va = tid >= d ? scan_a[tid - d] : 0;
+        barrier();
+        scan_r[tid] += vr;
+        scan_a[tid] += va;
+        barrier();
+    }
+    int r = scan_r[tid] - rows, a = scan_a[tid] - act;
+    for (uint e = e0; e < e1; ++e) {
+        sti(pc.grp, e * 4u, r);
+        off[e] = r;
+        if (cnt[e] > 0) { sti(pc.grp, (E + 2u + uint(a)) * 4u, int(e)); ++a; }
+        r += cnt[e];
+    }
+    if (tid == NT - 1u) {
+        sti(pc.grp, E * 4u, scan_r[tid]);
+        sti(pc.grp, (E + 1u) * 4u, scan_a[tid]);
+    }
+    barrier();
+}
+#endif
+
+#if MODE == 3
+shared int scan_cnt[8];
+#endif
+
+void main() {
+#if MODE == 0
+    const uint t = gl_WorkGroupID.x * 8u + gl_SubgroupID;
+    if (t < pc.m) route_token(t);
+#elif MODE == 1
+    const uint tid = gl_LocalInvocationID.x, E = pc.e, pairs = pc.m * pc.k;
+    for (uint e = tid; e < E; e += NT) cnt[e] = 0;
+    for (uint t = gl_SubgroupID; t < pc.m; t += 8u) route_token(t);
+    barrier();
+    if (tid < pairs) atomicAdd(cnt[sid[tid]], 1);
+    barrier();
+    offsets();
+    if (tid < pairs) {
+        const int id = sid[tid];
+        int rank = 0;
+        for (uint q = 0u; q < tid; ++q) rank += sid[q] == id ? 1 : 0;
+        const int row = off[id] + rank;
+        sti(pc.perm, uint(row) * 4u, int(tid));
+        sti(pc.pos, tid * 4u, row);
+    }
+#elif MODE == 2
+    const uint tid = gl_LocalInvocationID.x, E = pc.e, pairs = pc.m * pc.k;
+    for (uint e = tid; e < E; e += NT) cnt[e] = 0;
+    barrier();
+    for (uint p = tid; p < pairs; p += NT) atomicAdd(cnt[ldi(pc.ids, p * 4u)], 1);
+    barrier();
+    offsets();
+#else
+    // MODE 3: expert e's pairs in ascending pair order
+    const uint e = gl_WorkGroupID.x, tid = gl_LocalInvocationID.x, pairs = pc.m * pc.k;
+    const int first = ldi(pc.grp, e * 4u);
+    if (ldi(pc.grp, (e + 1u) * 4u) == first) return;
+    int base = first;
+    const uint sg = gl_SubgroupID;
+    for (uint p0 = 0u; p0 < pairs; p0 += NT) {
+        const uint p = p0 + tid;
+        const bool hit = p < pairs && ldi(pc.ids, p * 4u) == int(e);
+        const uvec4 bal = subgroupBallot(hit);
+        if (gl_SubgroupInvocationID == 0u) scan_cnt[sg] = int(subgroupBallotBitCount(bal));
+        barrier();
+        int before = 0, total = 0;
+        for (uint w = 0u; w < 8u; ++w) { before += w < sg ? scan_cnt[w] : 0; total += scan_cnt[w]; }
+        if (hit) {
+            const int row = base + before + int(subgroupBallotExclusiveBitCount(bal));
+            sti(pc.perm, uint(row) * 4u, int(p));
+            sti(pc.pos, p * 4u, row);
+        }
+        base += total;
+        barrier();
+    }
+#endif
+}

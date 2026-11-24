@@ -1,0 +1,15 @@
+{
+  "benchmark_record.json": "benchmark_record",
+  "cluster_config.json": "cluster_config",
+  "deployment_lock.json": "deployment_lock",
+  "execution_capabilities.json": "execution_capabilities",
+  "execution_plan.json": "execution_plan",
+  "model_instance.json": "model_instance",
+  "model_recipe.json": "model_recipe",
+  "resource_graph.json": "resource_graph",
+  "state_object.json": "state_object",
+  "trace_event.json": "trace_event",
+  "work_unit.json": "work_unit",
+  "worker_node.json": "worker_node",
+  "control_command.json": "control_command"
+}

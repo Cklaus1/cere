@@ -1,0 +1,306 @@
+{
+  "schema_version": "2",
+  "plugin": "sglang-http",
+  "profile_id": "sglang-t4-qwen38-flash-next-v1",
+  "artifact_sha256": "66aebc98b653415fff9e4e4104ba1047f76d5e19455266f45c110ca7c130dcca",
+  "execution_mode": "backend_managed",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 200000,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text",
+    "tool_calls",
+    "json_schema",
+    "regex",
+    "ebnf",
+    "tool_calls_constrained"
+  ],
+  "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1",
+  "json_schema_keywords": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "prefixItems",
+    "enum",
+    "const",
+    "anyOf",
+    "$ref",
+    "$defs",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "title",
+    "description",
+    "default"
+  ],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text",
+    "image"
+  ],
+  "max_top_logprobs": 20,
+  "sampling_params": [
+    "top_k",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "logit_bias"
+  ],
+  "notes": "Backend-declared, unmeasured by CERE. SGLang sglang-t4 owns batching, KV cache and EAGLE speculative decoding (steps 3, topk 1, draft tokens 4); EAGLE is declared lossless by the backend and has not been measured. NVFP4 weights and fp8_e4m3 KV cache, so not a reference numerical mode. Rows are concurrent CERE requests (1-4, up to max_running_requests 4), not native batch rows; rows 3-4 exercised only on cere-bench-g0, see bench/reports; sglang-t4 capped at 2 by its config. Tool calls are backend-declared (SGLang qwen3_coder parser; unmeasured by CERE); logprobs pass through with top_logprobs up to 20. top_k, frequency/presence/repetition penalties and logit_bias are forwarded verbatim (declared, unmeasured; under NEXTN speculation top-k/top-p apply sequentially and penalties count once per verify step after the first token); min_p and seed are refused (M2.7 D9). Grammar (M2.8) is backend-declared: SGLang's xgrammar 0.2.1 backend enforces response_format json_object/json_schema (dialect json-schema-2020-12/xgrammar-0.2.1, the listed keywords only; numeric bounds only on integer schemas in enforced forms), top-level regex and ebnf, and tool_choice required/named or a strict tool (tool_calls_constrained); one constraint per request, greedy or sampled, rows as text decoding; CERE forwards the client's bytes and refuses what the keyword list and format set exclude. Seeded sampling is unsupported. Image input (data:image/png and data:image/jpeg base64 URLs in user content parts, at most 4 images, 1,024 tokens per image, 2,048 per request) is backend-declared and unmeasured by CERE: SGLang decodes, resizes and encodes the images. Not a throughput or capacity claim.",
+  "thinking_toggle": true,
+  "token_controls": [
+    "stop_token_ids",
+    "ignore_eos",
+    "min_tokens"
+  ],
+  "vocab_size": 248320,
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "regex",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "regex",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "ebnf",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "ebnf",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls_constrained",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls_constrained",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "image",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "image",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    }
+  ]
+}

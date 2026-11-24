@@ -1,0 +1,71 @@
+schema_version = "2"
+planning_only = true
+
+[server]
+bind = "127.0.0.1:8000"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "unconfigured"
+profile_id = "unverified-do-not-run"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+
+[model_management]
+load_on_demand = true
+single_flight_loads = true
+unload_idle = true
+idle_unload_seconds = 1800
+min_resident_seconds = 120
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "lru_priority"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = true
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 4096
+max_output_tokens = 4096
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+[admission]
+max_backend_inflight = 4
+per_scope_inflight = 4
+queue_depth = 64
+
+[[auth.scopes]]
+scope_id = "dev"
+token_env = "CERE_TOKEN_DEV"
+
+[ledger]
+state_dir = "/var/lib/cere/dev-single-gpu"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

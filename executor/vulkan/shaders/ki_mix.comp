@@ -1,0 +1,230 @@
+#version 460
+// Inkling S11: the residual-stream ops, bit-equal to executor/ref/inkling (InkS3): one SPIR-V per MODE.
+// MODE 0 depth mix (depth_ref.h depth_mix_row), one workgroup per token: S <= 5 states (a0..a4, bit s of n3 = state s
+//   BF16 else FP32, rows of 2304), nq queries FP32 [nq][2304] (a5); out FP32 a6[q][tok][2304] (query q's rows form one
+//   [M][2304] matrix). k_s = unweighted RMSNorm(state s); score = mul(reduce_dot<256>(q, k_s), fp32(1/48)); sequential
+//   max / exp / sum / div over s; out[i] = fma chain over s of p_s * k_s[i] from 0.
+// MODE 1 / 6 loop message gate (msg_ref.h msg_gate_row) in two dispatches (each row's arithmetic unchanged; only which
+//   workgroup computes it moved): h a0, msg a1 (FP32 rows), down a2 BF16 [64][4608], forget a3 / gain a4 BF16
+//   [2304][64], d a6 FP32 [M][64] (scratch); out FP32 a5. MODE 1: workgroup (x, token y) computes d rows
+//   x * 4 .. x * 4 + 3 (each workgroup recomputes the two RMSNorms). MODE 6: lane x * 256 + t of token y one column.
+// MODE 7 / 8 the same two dispatches tiled over tokens (D-I-EPB (a2), prefill; same bits, same lane structure): MODE 7
+//   workgroup x computes tokens x * TT7 .. + TT7 - 1 (< M = n2): their two RMSNorms once, then all 64 d rows, each
+//   down weight loaded once for the TT7 tokens; the halving trees of 16 (row, token) values run as one batched tree.
+//   MODE 8 workgroup (x, y): columns x * 256 + t of tokens y * TT8 .. + TT8 - 1, the column's forget / gain rows loaded
+//   once (as uvec4; the host checks 16-byte alignment). MUT (fail-first, ki_test only): MODE 7's chains run backwards.
+// MODE 2 logit softcap (softcap_ref.h): out FP32 a1[i] = mul(tanh(div(x, 30)), 30), x = a0 (BF16 if n3 & 1, else FP32).
+// MODE 3 normed embedding (embed_ref.h): table a0 BF16 [V][2304], ids a1 int32 [M], w a2 BF16 [2304]; out BF16 a3.
+// MODE 4 attention residual (depth_ref.h attn_residual): out FP32 a2 = n3 != 0 (boundary) ? o : add(h, o); h a0, o a1
+//   BF16.
+// MODE 5 layer output (depth_ref.h layer_out): out BF16 a2 = add(r, d); r a0 FP32, d a1 BF16.
+// Elementwise modes (2, 4, 5): n0 elements, index = (group y * groups x + group x) * 256 + lane.
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t a0, a1, a2, a3, a4, a5, a6, a7;
+    uint n0, n1, n2, n3;
+    float f0, f1;
+} p;
+
+#define HID 2304u
+#define PER 9u  // HID / WG elements per lane: lane t holds t + 256 j
+
+uint64_t state_addr(uint s) { return s == 0u ? p.a0 : s == 1u ? p.a1 : s == 2u ? p.a2 : s == 3u ? p.a3 : p.a4; }
+
+// RMSNorm inverse of one row held as v[j] = row[t + 256 j] (norm_ref.h rms_inv<256>).
+float rms_inv(float v[PER], float eps) {
+    float acc = 0.0;
+    [[unroll]] for (uint j = 0u; j < PER; ++j) acc = ki_fma(v[j], v[j], acc);
+    const float ss = ki_tree_sum(acc, WG);
+    return ki_rsqrt(ki_add(ki_div(ss, float(HID)), eps));
+}
+
+#if MODE == 0 || MODE == 6 || MODE == 3
+shared float sh_d[64];
+#endif
+
+#if MODE == 7
+#define TT7 4u  // tokens per workgroup
+shared float sh_b[16u * WG];
+// ki_tree_sum(v[k], WG) for k < K at once: per k the same halving tree (lane t += lane t + o, o = WG / 2 .. 1); every
+// lane gets every k's lane-0 value.
+void tree_batch(inout float v[16], uint K) {
+    const uint t = gl_LocalInvocationID.x;
+    [[unroll]] for (uint k = 0u; k < 16u; ++k)
+        if (k < K) sh_b[k * WG + t] = v[k];
+    barrier();
+    for (uint o = WG >> 1; o > 0u; o >>= 1) {
+        if (t < o)
+            [[unroll]] for (uint k = 0u; k < 16u; ++k)
+                if (k < K) sh_b[k * WG + t] = ki_add(sh_b[k * WG + t], sh_b[k * WG + t + o]);
+        barrier();
+    }
+    [[unroll]] for (uint k = 0u; k < 16u; ++k)
+        if (k < K) v[k] = sh_b[k * WG];
+    barrier();
+}
+#endif
+#if MODE == 8
+#define TT8 16u  // tokens per workgroup
+shared float sh_dt[TT8 * 64u];
+#endif
+
+void main() {
+    const uint t = gl_LocalInvocationID.x;
+#if MODE == 0
+    const uint tok = gl_WorkGroupID.x, S = p.n0, nq = p.n1, M = p.n2;
+    float k[5][PER];
+    for (uint s = 0u; s < 5u; ++s) {
+        if (s >= S) break;
+        const uint64_t a = state_addr(s);
+        const bool bf = ((p.n3 >> s) & 1u) != 0u;
+        float v[PER];
+        [[unroll]] for (uint j = 0u; j < PER; ++j) v[j] = bf ? ldbf(a, tok * HID + t + WG * j) : ldf(a, tok * HID + t + WG * j);
+        const float r = rms_inv(v, p.f0);
+        [[unroll]] for (uint j = 0u; j < PER; ++j) k[s][j] = ki_mul(v[j], r);
+    }
+    for (uint q = 0u; q < nq; ++q) {
+        float score[5], m = uintBitsToFloat(0xff800000u);
+        for (uint s = 0u; s < 5u; ++s) {
+            if (s >= S) break;
+            float acc = 0.0;
+            [[unroll]] for (uint j = 0u; j < PER; ++j) acc = ki_fma(ldf(p.a5, q * HID + t + WG * j), k[s][j], acc);
+            score[s] = ki_mul(ki_tree_sum(acc, WG), uintBitsToFloat(0x3caaaaabu));
+            m = ki_max(m, score[s]);
+        }
+        float e[5], sum = 0.0;
+        for (uint s = 0u; s < S; ++s) { e[s] = ki_exp(ki_sub(score[s], m)); sum = ki_add(sum, e[s]); }
+        float pr[5];
+        for (uint s = 0u; s < S; ++s) pr[s] = ki_div(e[s], sum);
+        [[unroll]] for (uint j = 0u; j < PER; ++j) {
+            float acc = 0.0;
+            for (uint s = 0u; s < S; ++s) acc = ki_fma(pr[s], k[s][j], acc);
+            stf(p.a6, (q * M + tok) * HID + t + WG * j, acc);
+        }
+    }
+#elif MODE == 1
+    const uint tok = gl_WorkGroupID.y, r0 = gl_WorkGroupID.x * 4u;
+    float g[2u * PER];
+    {
+        float h[PER], m[PER];
+        [[unroll]] for (uint j = 0u; j < PER; ++j) { h[j] = ldf(p.a0, tok * HID + t + WG * j); m[j] = ldf(p.a1, tok * HID + t + WG * j); }
+        const float rh = rms_inv(h, p.f0), rm = rms_inv(m, p.f0);
+        [[unroll]] for (uint j = 0u; j < PER; ++j) { g[j] = round_bf(ki_mul(h[j], rh)); g[PER + j] = round_bf(ki_mul(m[j], rm)); }
+    }
+    for (uint r = r0; r < r0 + 4u; ++r) {  // lane t: the terms i = t + 256 jj, jj = 0..17 (the h half, then the msg half)
+        float acc = 0.0;
+        [[unroll]] for (uint jj = 0u; jj < 2u * PER; ++jj) acc = ki_fma(ldbf(p.a2, r * 2u * HID + t + WG * jj), g[jj], acc);
+        const float d = ki_tree_sum(acc, WG);
+        if (t == 0u) stf(p.a6, tok * 64u + r, round_bf(d));
+    }
+#elif MODE == 6
+    const uint tok = gl_WorkGroupID.y, c = gl_WorkGroupID.x * WG + t;
+    if (t < 64u) sh_d[t] = ldf(p.a6, tok * 64u + t);
+    barrier();
+    float f, m;
+    for (uint which = 0u; which < 2u; ++which) {  // reduce_dot<64>: lane jj = fma(w[jj], d[jj], 0), halving tree
+        const uint64_t w = which == 0u ? p.a3 : p.a4;
+        float v[64];
+        [[unroll]] for (uint jj = 0u; jj < 64u; ++jj) v[jj] = ki_fma(ldbf(w, c * 64u + jj), sh_d[jj], 0.0);
+        [[unroll]] for (uint o = 32u; o > 0u; o >>= 1)
+            [[unroll]] for (uint i = 0u; i < o; ++i) v[i] = ki_add(v[i], v[i + o]);
+        if (which == 0u) f = ki_tanh(v[0]); else m = ki_tanh(v[0]);
+    }
+    stf(p.a5, tok * HID + c, ki_add(ki_mul(ki_sub(1.0, f), ldf(p.a0, tok * HID + c)), ki_mul(m, ldf(p.a1, tok * HID + c))));
+#elif MODE == 7
+    const uint tok0 = gl_WorkGroupID.x * TT7, M = p.n2;
+    float g[TT7][2u * PER];  // token u's normed h (j < PER), then msg: MODE 1's g
+    {
+        float ss[16];
+        [[unroll]] for (uint k = 0u; k < 16u; ++k) ss[k] = 0.0;
+        [[unroll]] for (uint u = 0u; u < TT7; ++u) {
+            const uint tok = tok0 + u < M ? tok0 + u : tok0;  // past M: a copy of the first token, never stored
+            [[unroll]] for (uint j = 0u; j < PER; ++j) {
+                g[u][j] = ldf(p.a0, tok * HID + t + WG * j);
+                g[u][PER + j] = ldf(p.a1, tok * HID + t + WG * j);
+            }
+            float ah = 0.0, am = 0.0;  // rms_inv's chains
+            [[unroll]] for (uint j = 0u; j < PER; ++j) {
+                ah = ki_fma(g[u][j], g[u][j], ah);
+                am = ki_fma(g[u][PER + j], g[u][PER + j], am);
+            }
+            ss[2u * u] = ah;
+            ss[2u * u + 1u] = am;
+        }
+        tree_batch(ss, 2u * TT7);
+        [[unroll]] for (uint u = 0u; u < TT7; ++u) {
+            const float rh = ki_rsqrt(ki_add(ki_div(ss[2u * u], float(HID)), p.f0));
+            const float rm = ki_rsqrt(ki_add(ki_div(ss[2u * u + 1u], float(HID)), p.f0));
+            [[unroll]] for (uint j = 0u; j < PER; ++j) {
+                g[u][j] = round_bf(ki_mul(g[u][j], rh));
+                g[u][PER + j] = round_bf(ki_mul(g[u][PER + j], rm));
+            }
+        }
+    }
+    for (uint r0 = 0u; r0 < 64u; r0 += 4u) {  // d rows r0 .. r0 + 3 of the TT7 tokens: 16 chains, one batched tree
+        float acc[16];
+        [[unroll]] for (uint k = 0u; k < 16u; ++k) acc[k] = 0.0;
+        [[unroll]] for (uint rr = 0u; rr < 4u; ++rr) {
+            float w[2u * PER];
+            [[unroll]] for (uint jj = 0u; jj < 2u * PER; ++jj) w[jj] = ldbf(p.a2, (r0 + rr) * 2u * HID + t + WG * jj);
+#ifndef MUT
+            [[unroll]] for (uint jj = 0u; jj < 2u * PER; ++jj)
+#else
+            [[unroll]] for (int jj = int(2u * PER) - 1; jj >= 0; --jj)
+#endif
+                [[unroll]] for (uint u = 0u; u < TT7; ++u) acc[rr * TT7 + u] = ki_fma(w[jj], g[u][jj], acc[rr * TT7 + u]);
+        }
+        tree_batch(acc, 16u);
+        if (t == 0u)
+            [[unroll]] for (uint k = 0u; k < 16u; ++k)
+                if (tok0 + k % TT7 < M) stf(p.a6, (tok0 + k % TT7) * 64u + r0 + k / TT7, round_bf(acc[k]));
+    }
+#elif MODE == 8
+    const uint tok0 = gl_WorkGroupID.y * TT8, M = p.n2, c = gl_WorkGroupID.x * WG + t;
+    for (uint i = t; i < TT8 * 64u; i += WG) sh_dt[i] = tok0 + i / 64u < M ? ldf(p.a6, tok0 * 64u + i) : 0.0;
+    barrier();
+    uvec4 wf[8], wn[8];  // row c of forget / gain: BF16 element jj in word (jj % 8) / 2 of uvec4 jj / 8, odd = high half
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+        wf[i] = ldu4(p.a3, c * 8u + i);
+        wn[i] = ldu4(p.a4, c * 8u + i);
+    }
+    for (uint u = 0u; u < TT8; ++u) {
+        const uint tok = tok0 + u;
+        if (tok >= M) break;  // workgroup-uniform
+        float f, m;
+        [[unroll]] for (uint which = 0u; which < 2u; ++which) {  // MODE 6's reduce_dot<64>
+            float v[64];
+            [[unroll]] for (uint jj = 0u; jj < 64u; ++jj) {
+                const uint w = which == 0u ? wf[jj / 8u][(jj % 8u) / 2u] : wn[jj / 8u][(jj % 8u) / 2u];
+                v[jj] = ki_fma(bf2f((jj & 1u) != 0u ? w >> 16 : w), sh_dt[u * 64u + jj], 0.0);
+            }
+            [[unroll]] for (uint o = 32u; o > 0u; o >>= 1)
+                [[unroll]] for (uint i = 0u; i < o; ++i) v[i] = ki_add(v[i], v[i + o]);
+            if (which == 0u) f = ki_tanh(v[0]); else m = ki_tanh(v[0]);
+        }
+        stf(p.a5, tok * HID + c, ki_add(ki_mul(ki_sub(1.0, f), ldf(p.a0, tok * HID + c)), ki_mul(m, ldf(p.a1, tok * HID + c))));
+    }
+#elif MODE == 3
+    const uint tok = gl_WorkGroupID.x;
+    const uint id = ldu(p.a1, tok);
+    float x[PER];
+    [[unroll]] for (uint j = 0u; j < PER; ++j) x[j] = ldbf(p.a0, id * HID + t + WG * j);
+    const float r = rms_inv(x, p.f0);
+    [[unroll]] for (uint j = 0u; j < PER; ++j) stbf(p.a3, tok * HID + t + WG * j, ki_mul(ldbf(p.a2, t + WG * j), ki_mul(x[j], r)));
+#else
+    const uint i = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * WG + t;
+    if (i >= p.n0) return;
+#if MODE == 2
+    const float x = (p.n3 & 1u) != 0u ? ldbf(p.a0, i) : ldf(p.a0, i);
+    stf(p.a1, i, ki_mul(ki_tanh(ki_div(x, 30.0)), 30.0));
+#elif MODE == 4
+    const float o = ldbf(p.a1, i);
+    stf(p.a2, i, p.n3 != 0u ? o : ki_add(ldbf(p.a0, i), o));
+#else
+    stbf(p.a2, i, ki_add(ldf(p.a0, i), ldbf(p.a1, i)));
+#endif
+#endif
+}

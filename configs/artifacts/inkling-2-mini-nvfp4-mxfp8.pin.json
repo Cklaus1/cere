@@ -1,0 +1,13 @@
+{
+  "artifact_id": "inkling-2-mini-nvfp4-mxfp8-6e585d30f49d24da",
+  "created_utc": "2026-11-23T06:30:01Z",
+  "lock_id": "inkling-2-mini-native-lock-v1",
+  "manifest_sha256": "6e585d30f49d24da39b8e81ccabca5a59e65e89e0fd28a22ca4022df907ac6d8",
+  "model_hash": "4bcd2a3721352d465aba40466092b203fec7f0a6d8278cc2a93df4136c99ce5b",
+  "path": "/var/lib/cere/artifacts/inkling-2-mini-nvfp4-mxfp8-6e585d30f49d24da",
+  "profile_id": "rtxpro6000bw-inkling-text-v1",
+  "schema_version": "1",
+  "source_revision": "b85c3cfa615fc413cc9af3379f491b963f3b586a",
+  "template_hash": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
+  "tokenizer_hash": "8e7689dd177a7cff55a88522c91264b746fd59c69d744f886f56b1cdd0b307a0"
+}

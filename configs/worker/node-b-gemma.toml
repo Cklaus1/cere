@@ -1,0 +1,36 @@
+# N3 attached node agent profile (n3 design note D5, D10): `cere-worker` for `worker-a` on node-b, serving the
+# loopback Gemma SGLang server `cere-sglang-a` (same pod network namespace) to the coordinator over mTLS gRPC. Equal to
+# `node-b-mock.toml` except the backend. The PEM paths are placeholders that the live harness patches with its per-run
+# PKI directory; `cere-worker --check-config` checks their shape only. The agent needs no repository checkout.
+cluster_id = "lab-cere"
+worker_id = "worker-a"
+listen = "100.71.1.1:7443"
+principal = "cere-worker-a"
+ca_file = "/tmp/cere-fed-PLACEHOLDER/pki/ca.pem"
+cert_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a.pem"
+key_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a-key.pem"
+state_dir = "/var/lib/cere-worker/worker-a"
+
+[coordinator]
+endpoint = "https://100.72.2.2:7443"
+principal = "cere-coordinator"
+coordinator_id = "cere-coordinator"
+
+[backend]
+base_url = "http://127.0.0.1:18328"
+load_endpoint = "/get_load"
+served_model_name = "gemma-4-e4b-it"
+
+# Q12: retained operations and the tombstone horizon (at least the 600 s work cap).
+[journal]
+max_operations = 4096
+retry_horizon_ms = 600000
+
+# Q14; output_stall_ms defaults to rpc_timeout_ms and must not exceed lost_after_ms.
+[limits]
+heartbeat_interval_ms = 1000
+lost_after_ms = 15000
+rpc_timeout_ms = 5000
+control_quota = 64
+output_buffer_bytes = 1048576
+output_stall_ms = 5000

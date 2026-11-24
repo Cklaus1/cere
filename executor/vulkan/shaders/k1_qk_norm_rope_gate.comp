@@ -1,0 +1,98 @@
+#version 460
+// VulkanAmd P2 K1: qk_norm_rope_gate (k1_primitives.h; SGLang fused_qk_gemma_rmsnorm_rope_gate), text path only.
+// One workgroup per (token, head), head < q_heads: Q head of q_gate [T, q_heads * 2 * hd] (per head q then gate); else a K head of k [T, kv_heads * hd].
+// Gemma RMSNorm (the k1_rmsnorm.comp arithmetic and summation order: WG = ceil32(hd / 8) threads, per-thread ascending chunk chain,
+// xor tree over 32 lanes, ascending warp partials), rounded to BF16, then partial NeoX RoPE in FP32 (k1_rope.comp) with cos/sin from the
+// table row of positions[t] (int64) or pos0 + t, rounded to BF16. The gate half of a Q head is copied to gate_out (contiguous).
+// So the result is bit-equal to rmsnorm (gemma) followed by rope, the sequence the CUDA kernel fuses. Subgroup size 32 required.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+layout(local_size_x_id = 0) in;
+layout(constant_id = 0) const uint WG = 32;
+layout(push_constant, std430) uniform PC {
+    uint64_t q_gate, k, qw, kw, cos_sin, positions, q_out, k_out, gate_out;
+    uint64_t pos0;
+    uint qg_stride, k_stride, q_heads, kv_heads, head_dim, rd;
+    float eps;
+} pc;
+shared float partial[8];
+shared float normed[1024];
+
+void main() {
+    const uint64_t t = uint64_t(gl_WorkGroupID.x);
+    const uint head = gl_WorkGroupID.y;
+    const bool is_k = head >= pc.q_heads;
+    const uint h = is_k ? head - pc.q_heads : head;
+    const uint hd = pc.head_dim;
+    const uint64_t in_ = is_k ? pc.k + (t * uint64_t(pc.k_stride) + uint64_t(h) * hd) * 2ul
+                              : pc.q_gate + (t * uint64_t(pc.qg_stride) + uint64_t(h) * 2ul * hd) * 2ul;
+    const uint64_t w = is_k ? pc.kw : pc.qw;
+    const uint64_t out_ = is_k ? pc.k_out + (t * uint64_t(pc.kv_heads) * hd + uint64_t(h) * hd) * 2ul
+                               : pc.q_out + (t * uint64_t(pc.q_heads) * hd + uint64_t(h) * hd) * 2ul;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint c = tid * 8u;
+    const bool live = c < hd;
+    float v[8] = float[8](0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    precise float ss = 0.0;
+    if (live) {
+        const uvec4 q = V4(in_ + uint64_t(c * 2u)).v;
+        v = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+        [[unroll]] for (int i = 0; i < 8; ++i) { precise float sq = v[i] * v[i]; ss = ss + sq; }
+    }
+    precise float s = ss;
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) { precise float s2 = s + subgroupShuffleXor(s, o); s = s2; }
+    barrier();
+    if ((tid & 31u) == 0u) partial[tid >> 5] = s;
+    barrier();
+    precise float total = 0.0;
+    for (uint i = 0u; i < (WG >> 5); ++i) { precise float t2 = total + partial[i]; total = t2; }
+    const float rstd = inversesqrt(total / float(hd) + pc.eps);
+    if (live) {
+        const uvec4 wq = V4(w + uint64_t(c * 2u)).v;
+        const float w8[8] = float[8](lo(wq.x), hi(wq.x), lo(wq.y), hi(wq.y), lo(wq.z), hi(wq.z), lo(wq.w), hi(wq.w));
+        [[unroll]] for (int i = 0; i < 8; ++i) normed[c + uint(i)] = uintBitsToFloat(bf16_rne(v[i] * rstd * (w8[i] + 1.0)) << 16);
+        if (!is_k) V4(pc.gate_out + (t * uint64_t(pc.q_heads) * hd + uint64_t(h) * hd + uint64_t(c)) * 2ul).v = V4(in_ + uint64_t((hd + c) * 2u)).v;
+    }
+    barrier();
+    const uint half_ = pc.rd / 2u;
+    const int64_t p = pc.positions != 0ul ? I64(pc.positions + t * 8ul).v : int64_t(pc.pos0 + t);
+    const uint64_t row = pc.cos_sin + uint64_t(p) * uint64_t(pc.rd) * 4ul;
+    for (uint d = tid; d < hd; d += WG) {
+        float r;
+        if (d < pc.rd) {
+            const uint i = d < half_ ? d : d - half_;
+            const float cs = F1(row + uint64_t(i * 4u)).v;
+            const float sn = F1(row + uint64_t((half_ + i) * 4u)).v;
+            const float x1 = normed[i], x2 = normed[i + half_];
+            r = d < half_ ? x1 * cs - x2 * sn : x2 * cs + x1 * sn;
+        } else {
+            r = normed[d];
+        }
+        H1(out_ + uint64_t(d * 2u)).v = uint16_t(bf16_rne(r));
+    }
+}

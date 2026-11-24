@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/execution_artifact.schema.json",
+  "title": "CERE execution_artifact manifest v2 (M2.1 Q4)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tensor_layout_abi",
+    "quality_mode",
+    "source",
+    "profile_id",
+    "profile",
+    "family_rules",
+    "model_hash",
+    "tokenizer_hash",
+    "template_hash",
+    "transforms",
+    "files",
+    "families",
+    "totals"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "tensor_layout_abi": {
+      "const": 1
+    },
+    "quality_mode": {
+      "const": "layout_only"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "tree_sha256"
+      ],
+      "properties": {
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+        },
+        "tree_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        }
+      }
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "profile": {
+      "type": "object"
+    },
+    "family_rules": {
+      "type": "object"
+    },
+    "model_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "tokenizer_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "template_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "transforms": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "output",
+          "source_sha256",
+          "source_bytes"
+        ],
+        "properties": {
+          "name": {
+            "const": "pickle_int_list_to_u32le:v1"
+          },
+          "output": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "source_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16384,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "bytes",
+          "sha256",
+          "role"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "role": {
+            "enum": [
+              "weights",
+              "weight_index",
+              "config",
+              "quant_config",
+              "generation_config",
+              "tokenizer",
+              "template",
+              "preprocessor",
+              "draft_token_map"
+            ]
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "lfs_sha256"
+                ],
+                "properties": {
+                  "lfs_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "size",
+                  "blob_id",
+                  "local_modification"
+                ],
+                "properties": {
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 18446744073709551615
+                  },
+                  "blob_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+                  },
+                  "local_modification": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          },
+          "safetensors": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "header_bytes",
+              "header_sha256",
+              "tensors"
+            ],
+            "properties": {
+              "header_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              },
+              "header_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "tensors": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              }
+            }
+          }
+        }
+      }
+    },
+    "families": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "family",
+          "component",
+          "role",
+          "dtype",
+          "placement",
+          "count",
+          "bytes",
+          "misaligned"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "component": {
+            "enum": [
+              "target",
+              "draft",
+              "vision"
+            ]
+          },
+          "role": {
+            "enum": [
+              "nvfp4_weight",
+              "nvfp4_block_scale",
+              "nvfp4_global_scale",
+              "nvfp4_input_scale",
+              "dense",
+              "ple_module",
+              "ple_table",
+              "ple_scale",
+              "ple_index",
+              "draft",
+              "vision"
+            ]
+          },
+          "dtype": {
+            "enum": [
+              "BF16",
+              "F16",
+              "F32",
+              "F64",
+              "I8",
+              "I16",
+              "I32",
+              "I64",
+              "U8",
+              "U16",
+              "U32",
+              "U64",
+              "F8_E4M3",
+              "F8_E5M2",
+              "BOOL"
+            ]
+          },
+          "placement": {
+            "enum": [
+              "device",
+              "host_pinned",
+              "unused"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "misaligned": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "by_dtype",
+        "by_placement"
+      ],
+      "properties": {
+        "by_dtype": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "BF16",
+              "F16",
+              "F32",
+              "F64",
+              "I8",
+              "I16",
+              "I32",
+              "I64",
+              "U8",
+              "U16",
+              "U32",
+              "U64",
+              "F8_E4M3",
+              "F8_E5M2",
+              "BOOL"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "count",
+              "bytes"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              }
+            }
+          }
+        },
+        "by_placement": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "device",
+              "host_pinned",
+              "unused"
+            ]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "count",
+              "bytes"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

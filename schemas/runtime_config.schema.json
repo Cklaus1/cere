@@ -1,0 +1,1513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/runtime_config.schema.json",
+  "title": "CERE runtime_config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "planning_only",
+    "server",
+    "deployments",
+    "model_management",
+    "scheduler",
+    "state",
+    "telemetry",
+    "safety",
+    "api",
+    "admission",
+    "auth",
+    "ledger"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "planning_only": {
+      "type": "boolean"
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bind"
+      ],
+      "properties": {
+        "bind": {
+          "type": "string",
+          "pattern": "^127\\.0\\.0\\.1:[0-9]{1,5}(?![\\s\\S])"
+        },
+        "tier": {
+          "description": "This install's trust tier for its owner (tasks/net-teleport-spec.md 4.1); absent -> own.",
+          "type": "string",
+          "enum": ["own", "team", "provider"]
+        }
+      }
+    },
+    "deployments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "kind",
+          "profile_id",
+          "shared_backend_tenancy",
+          "allow_cross_scope_prefix_cache"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "backend_managed",
+              "native"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "unconfigured",
+              "cpu_reference",
+              "sglang_http",
+              "native_cuda"
+            ]
+          },
+          "profile_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "base_url": {
+            "type": "string",
+            "pattern": "^http://(127\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|\\[::1\\]):[1-9][0-9]{0,4}(?![\\s\\S])"
+          },
+          "served_model_name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}(?![\\s\\S])"
+          },
+          "deployment": {
+            "type": "string",
+            "pattern": "^configs/deployments/[a-z0-9][a-z0-9_-]{0,127}(?![\\s\\S])"
+          },
+          "shared_backend_tenancy": {
+            "type": "string",
+            "enum": [
+              "exclusive",
+              "shared_acknowledged"
+            ]
+          },
+          "allow_cross_scope_prefix_cache": {
+            "type": "boolean"
+          },
+          "prefix_cache_isolation": {
+            "type": "string",
+            "enum": [
+              "none",
+              "cache_salt"
+            ]
+          },
+          "api_compat_anthropic": {
+            "type": "boolean"
+          },
+          "api_compat_responses": {
+            "type": "boolean"
+          },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "model_path",
+              "tokenizer_path",
+              "kv_cache_dtype",
+              "reasoning_parser",
+              "tool_call_parser",
+              "allow_auto_truncate",
+              "enable_cache_report",
+              "context_length",
+              "max_running_requests",
+              "image_digest"
+            ],
+            "dependentRequired": {
+              "speculative_algorithm": [
+                "speculative_num_steps",
+                "speculative_eagle_topk",
+                "speculative_num_draft_tokens"
+              ],
+              "speculative_num_steps": [
+                "speculative_algorithm",
+                "speculative_eagle_topk",
+                "speculative_num_draft_tokens"
+              ],
+              "speculative_eagle_topk": [
+                "speculative_algorithm",
+                "speculative_num_steps",
+                "speculative_num_draft_tokens"
+              ],
+              "speculative_num_draft_tokens": [
+                "speculative_algorithm",
+                "speculative_num_steps",
+                "speculative_eagle_topk"
+              ]
+            },
+            "properties": {
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}(?![\\s\\S])"
+              },
+              "model_path": {
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+              },
+              "tokenizer_path": {
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+              },
+              "chat_template": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "quantization": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+              },
+              "kv_cache_dtype": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+              },
+              "speculative_algorithm": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+              },
+              "speculative_num_steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "speculative_eagle_topk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "speculative_num_draft_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "reasoning_parser": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+              },
+              "tool_call_parser": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+              },
+              "allow_auto_truncate": {
+                "const": false
+              },
+              "enable_cache_report": {
+                "type": "boolean"
+              },
+              "context_length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16777216
+              },
+              "max_running_requests": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "image_digest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}(?![\\s\\S])"
+              }
+            }
+          },
+          "load_endpoint": {
+            "type": "string",
+            "pattern": "^/[A-Za-z0-9_./-]{0,127}(?![\\s\\S])"
+          },
+          "replicas": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "device",
+                "base_url"
+              ],
+              "properties": {
+                "device": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+                },
+                "base_url": {
+                  "type": "string",
+                  "pattern": "^http://(127\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|\\[::1\\]):[1-9][0-9]{0,4}(?![\\s\\S])"
+                },
+                "load_endpoint": {
+                  "type": "string",
+                  "pattern": "^/[A-Za-z0-9_./-]{0,127}(?![\\s\\S])"
+                }
+              }
+            }
+          },
+          "native": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "library",
+              "library_sha256",
+              "artifact_dir",
+              "expected_manifest_sha256",
+              "max_context_tokens",
+              "sidecar",
+              "image_digest"
+            ],
+            "properties": {
+              "library": {
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+              },
+              "library_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "artifact_dir": {
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+              },
+              "expected_manifest_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "device_uuid": {
+                "type": "string",
+                "pattern": "^(GPU-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}|hip:(0|[1-9][0-9]{0,2})|vk:(0|[1-9][0-9]{0,2}))(?![\\s\\S])"
+              },
+              "replicas": {
+                "description": "tasks/m32n-spec.md D2: one in-process native replica per GPU; exactly one of device_uuid and replicas, exactly two replicas with unique devices and device_uuids that together are scheduler.devices (semantic rules).",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "device",
+                    "device_uuid"
+                  ],
+                  "properties": {
+                    "device": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+                    },
+                    "device_uuid": {
+                      "type": "string",
+                      "pattern": "^GPU-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+                    }
+                  }
+                }
+              },
+              "max_context_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16777216
+              },
+              "kv_pool_tokens": {
+                "description": "tasks/m25-spec.md D4: absent or 0 = derived pool; otherwise a multiple of 64 and >= max_context_tokens (semantic rule); the executor bounds it above.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              },
+              "prefix_state_slots": {
+                "description": "tasks/m210-spec.md D6 (cere_model_desc.prefix_state_slots): device state slots of the native prefix cache; absent or 0 = cache off; at most CERE_MAX_PREFIX_STATE_SLOTS.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1024
+              },
+              "prefix_end_state": {
+                "description": "tasks/m210-spec.md D15''''' stage 2a (cere_model_set_prefix_end_state): drafting PREFILLs also capture their end state (class-pinned resume); requires prefix_state_slots > 0; absent or false = off (skipped, so config_hash is unchanged).",
+                "type": "boolean"
+              },
+              "prefix_alt_edges": {
+                "description": "tasks/m210-spec.md D17 (cere_model_set_prefix_alt_edges): a session whose path runs through another session's edge over other KV pages stores its states on an alternative edge over its own pages instead of being refused (M210S-39); requires prefix_state_slots > 0; absent or false = off (skipped, so config_hash is unchanged).",
+                "type": "boolean"
+              },
+              "sidecar": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9._/=:+-]{1,1024}(?![\\s\\S])"
+                }
+              },
+              "sidecar_deadline_ms": {
+                "description": "Audit N1: the longest one tokenizer sidecar call (request write plus reply) may take before the child is killed, in milliseconds; absent or 0 = 120000 (skipped, so config_hash is unchanged).",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3600000
+              },
+              "image_digest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}(?![\\s\\S])"
+              },
+              "snapshot_host_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "preempt": {
+                "type": "boolean"
+              },
+              "preempt_min_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 16777216
+              },
+              "max_parked_sessions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "preempt_every": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              },
+              "reserve_output_tokens": {
+                "description": "tasks/sessions-spec.md SE-09: output tokens a generation's first session reserves (64-token multiple; 0 = its whole budget); needs preempt.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "host_share_dir": {
+                "description": "O47 (tasks/build-loop-ple.md): absent = private HOST_PINNED block; an absolute host tmpfs directory without commas where the executor shares the artifact's HOST_PINNED region across native processes.",
+                "type": "string",
+                "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+              },
+              "keep_host_share": {
+                "description": "tasks/m216-spec.md L4: true = the last detach of this process never unlinks the published O47 segment, so the next start attaches; requires host_share_dir.",
+                "type": "boolean"
+              },
+              "speculative_draft_tokens": {
+                "description": "tasks/m29-spec.md D11: MTP draft tokens per speculate round (the verify window: the unfed token plus window - 1 drafts); absent or 0 = off, 4 = on (non-zero exactly when the profile declares native_speculative_batch). Family inkling2_loop takes a window of 2..8 instead of 4 (tasks/inkling-spec.md D-I-S9B: 1..7 drafts of the MTP drafter's block); scripts/cere_contracts.py checks the value per family.",
+                "enum": [0, 2, 3, 4, 5, 6, 7, 8]
+              },
+              "levers": {
+                "description": "tasks/m23-spec.md PI-02: the deployment's lever selection, lever name -> implementation id; absent levers keep the registry default. Names, ids and their rules come from the lever registry (crates/cere-runtime/src/levers.rs, tests/fixtures/lever_registry.json; scripts/cere_contracts.py checks them). drafter replaces the former spec_drafts key.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "lever_hot_swap": {
+                "description": "tasks/m23-spec.md PI-04: dev/bench only; true admits POST /v1/cere/levers (hot levers between requests). No committed profile sets it.",
+                "type": "boolean"
+              },
+              "family": {
+                "description": "SelfTune ST4 S3a: the model family the executor library is built for (its descriptor's model_type). Absent = qwen4_exp (not serialized, so configs keep their config_hash); sdar (DICE-8B) runs every lever at its default and refuses speculation, decode rows > 1, the prefix cache, snapshots, preemption, LoRA, research, the lever hot swap and a hip device by name. inkling2_loop (Inkling 2 Mini, tasks/inkling-spec.md D-I5) refuses the same keys except decode rows > 1 and a Vulkan device.",
+                "enum": ["qwen4_exp", "sdar", "inkling2_loop"]
+              },
+              "ab": {
+                "description": "tasks/ab-split-spec.md AB-01: live A/B split of the runtime-layer levers (dev/experiments; absent in every shipped profile). A request's arm is a salted HMAC-SHA256 of its session key mapped onto the weights; each arm's levers go over the active set for that request only. Arm levers must be registered runtime-layer levers at bit_identical implementations (scripts/cere_contracts.py checks them against the lever registry); arm ids are unique and the weights sum above 0.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["salt", "arms"],
+                "properties": {
+                  "salt": {
+                    "description": "Keys the session hash (a label, not a secret); a new salt reshuffles every session.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+                  },
+                  "arms": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "weight"],
+                      "properties": {
+                        "id": {
+                          "description": "The arm id, the only name GET /v1/cere/stats reports.",
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+                        },
+                        "weight": {
+                          "description": "The arm's share of new sessions; 0 takes none.",
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1000000
+                        },
+                        "levers": {
+                          "description": "Runtime-layer lever name -> bit_identical implementation id; absent levers keep the request's active set.",
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "loop_guard": {
+                "description": "tasks/loop-guard-spec.md: the native repetition guard (absent in every shipped profile = off). LG-D1: a running output whose text ends with at least min_repeats exact copies of a min_period_bytes..max_period_bytes unit covering min_span_bytes finishes with finish_reason \"repetition\". LG-D2: a conversation ending in tool_repeat_run identical assistant tool call -> tool result pairs is refused 400 loop_detected. Absent keys take their defaults; 0 turns a detector off and a table with both off is refused; with LG-D1 on, min_period_bytes <= max_period_bytes and min_repeats x max_period_bytes <= 65536 (checked in config.rs and scripts/cere_contracts.py).",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min_period_bytes": {
+                    "description": "LG-D1: the shortest repeating unit in output bytes; shorter periods (=====, 0, 0, 0) are never flagged. Default 16.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4096
+                  },
+                  "max_period_bytes": {
+                    "description": "LG-D1: the longest repeating unit checked. Default 1024.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4096
+                  },
+                  "min_repeats": {
+                    "description": "LG-D1: consecutive copies ending the output; 0 = LG-D1 off. Default 4.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 64,
+                    "not": {"const": 1}
+                  },
+                  "min_span_bytes": {
+                    "description": "LG-D1: bytes the copies cover together. Default 512.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65536
+                  },
+                  "tool_repeat_run": {
+                    "description": "LG-D2: identical tool call -> result pairs ending the conversation that refuse the request; 0 = LG-D2 off. Default 10.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10000,
+                    "not": {"const": 1}
+                  },
+                  "ignore_arg_keys": {
+                    "description": "LG-D2: top-level argument keys left out of the call comparison. Default [\"description\"].",
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  }
+                }
+              },
+              "executor_memory_limit_bytes": {
+                "description": "tasks/m29-spec.md M29S2-02 (ledger M1): the executor device-byte limit; absent = 80 GiB. A whole MiB, at least 80 GiB and at most 86,432 MiB (tasks/m23-spec.md P8: GPU0 total - desktop baseline - the 10,240 MiB free floor).",
+                "type": "integer",
+                "minimum": 85899345920,
+                "maximum": 90630520832,
+                "multipleOf": 1048576
+              },
+              "decode_rounds_per_prefill_chunk": {
+                "description": "O79 (tasks/m210-spec.md PF1, cere_executor_set_decode_rounds): decode rounds after each prefill chunk while decode rows are ready; absent = 1 (the kinds alternate).",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "lora": {
+                "description": "Track LoRA (-v50): PEFT LoRA adapters on the base model, loaded and unloaded at runtime through POST /v1/load_lora_adapter and POST /v1/unload_lora_adapter (docs/API.md). The single form only (refused with replicas and with a federation worker of the entry). Absent in every other profile.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["max_adapters", "max_rank", "adapter_root"],
+                "properties": {
+                  "max_adapters": {
+                    "description": "Adapters resident at once (CERE_LORA_MAX_ADAPTERS = 64); the executor reserves the pool at load.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "max_rank": {
+                    "description": "The largest adapter rank (CERE_LORA_MAX_RANK = 256).",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 256
+                  },
+                  "adapter_root": {
+                    "description": "Absolute directory every adapter path must resolve inside (symlinks resolved).",
+                    "type": "string",
+                    "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+                  },
+                  "preload": {
+                    "description": "Adapters loaded before the backend reports ready; at most max_adapters, unique names.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["name", "path"],
+                      "properties": {
+                        "name": {
+                          "description": "The served name: the request's model and a /v1/models id.",
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+                        },
+                        "path": {
+                          "description": "The PEFT directory (adapter_config.json, adapter_model.safetensors) inside adapter_root.",
+                          "type": "string",
+                          "pattern": "^/[A-Za-z0-9._/-]{0,1023}(?![\\s\\S])"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "research": {
+                "description": "WeightLab (-v57, tasks/weightlab-spec.md WL-01): opt-in capture and intervention plans bound to client scopes through the operator routes /v1/cere/research/* (docs/API.md \"Research (WeightLab)\"). cered also refuses max_capture_bytes_per_request above host_buffer_bytes, the bind port 18080, a device_uuid equal to the GPU1 production marker's and an unset [auth] operator_token_env. Dev only; absent in every other profile.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["device_staging_bytes", "host_buffer_bytes", "max_capture_bytes_per_request", "max_plans", "max_vectors"],
+                "properties": {
+                  "device_staging_bytes": {
+                    "description": "Device capture staging, reserved at model create and counted in fits() against the memory budget (1 MiB..1 GiB).",
+                    "type": "integer",
+                    "minimum": 1048576,
+                    "maximum": 1073741824
+                  },
+                  "host_buffer_bytes": {
+                    "description": "The pinned host capture ring shared by every request (1 MiB..16 GiB); a request that cannot reserve its bound is 503 research_buffer_full.",
+                    "type": "integer",
+                    "minimum": 1048576,
+                    "maximum": 17179869184
+                  },
+                  "max_capture_bytes_per_request": {
+                    "description": "A plan whose capture bound exceeds this is refused at registration (400 research_budget_exceeded); at least 4096, at most host_buffer_bytes.",
+                    "type": "integer",
+                    "minimum": 4096,
+                    "maximum": 17179869184
+                  },
+                  "max_plans": {
+                    "description": "Registered plans at once (CERE_RESEARCH_MAX_PLANS = 64); past it 507 research_plans_full.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "max_vectors": {
+                    "description": "Uploaded vectors at once; past it 507 research_vectors_full.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1024
+                  }
+                }
+              },
+              "prefill_slice_ms": {
+                "description": "MixedPD (tasks/mixed-pd-spec.md, cere_executor_set_prefill_slice): layer-sliced prefill, a prefill call pauses at a layer boundary after about this many ms while decode rows are ready; absent = every call runs whole.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              "decode_share_pct": {
+                "description": "S1 G4 (tasks/beat-sglang-spec.md, cere_executor_set_decode_share): decode share, while two or more prompts wait they prefill back to back; with one left, decode rows get this percent of its prefill wall time; absent = the decode rounds per chunk stay.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "prefill_age_calls": {
+                "description": "BC4 (b) (tasks/batch-concurrency-spec.md, cere_executor_set_prefill_age): the aging cap of the fewest-tokens-left prefill order; a prompt overtaken this many times by younger prompts' prefill calls runs next; absent = the executor default 8.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1024
+              }
+            }
+          }
+        },
+        "dependentSchemas": {
+          "replicas": {
+            "not": {
+              "required": [
+                "load_endpoint"
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "sglang_http"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "served_model_name",
+                "deployment",
+                "expect"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "backend_managed"
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "native"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "base_url",
+                      "replicas"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "native_cuda"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "served_model_name",
+                "deployment",
+                "native"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "native"
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "base_url"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "replicas"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "expect"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "load_endpoint"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "sglang_http",
+                    "native_cuda"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "else": {
+              "properties": {
+                "mode": {
+                  "const": "backend_managed"
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "base_url"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "replicas"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "served_model_name"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "deployment"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "expect"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "load_endpoint"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "native"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "devices"
+      ],
+      "properties": {
+        "mode": {
+          "const": "replica"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "maxItems": 10000
+        },
+        "worker_lost_after_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_spill_enabled",
+        "nvme_spill_enabled",
+        "allow_cross_device_resume"
+      ],
+      "properties": {
+        "host_spill_enabled": {
+          "type": "boolean"
+        },
+        "nvme_spill_enabled": {
+          "type": "boolean"
+        },
+        "allow_cross_device_resume": {
+          "type": "boolean"
+        },
+        "max_blob_bytes": {
+          "description": "NetTeleport S1: the largest state image /v1/cere/state/export and /import move (tasks/net-teleport-spec.md 4.3); absent -> 4294967296.",
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 68719476736
+        },
+        "busy_wait_ms": {
+          "description": "NetTeleport S1: how long a state export or import waits for an idle executor before it refuses state_busy (D-T1); absent -> 30000.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "park_on_stop": {
+          "description": "NetTeleport S3 (L1 warm restart): park the recent sessions' prefix states sealed under <ledger.state_dir>/parked/ at a graceful stop and import them at the next start; native_cuda single form only; absent -> false.",
+          "type": "boolean"
+        },
+        "park_max_sessions": {
+          "description": "NetTeleport S3: how many recent distinct prompts the recorder keeps and a stop parks at most; absent -> 8.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "park_max_bytes": {
+          "description": "NetTeleport S3: the image bytes one stop parks at most; absent -> 17179869184.",
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1099511627776
+        },
+        "park_deadline_ms": {
+          "description": "NetTeleport S3: how long a stop parks after the drain, most recent session first; absent -> 10000.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 120000
+        }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "raw_content"
+      ],
+      "properties": {
+        "level": {
+          "const": "metadata"
+        },
+        "raw_content": {
+          "const": false
+        },
+        "clients": {
+          "description": "Roadmap v0.7 A2: the rules that label each chat request with a client and a workload in its log lines and GET /metrics; first match wins, none -> `other` (crates/cere-runtime/src/labels.rs).",
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "client",
+              "workload"
+            ],
+            "properties": {
+              "client": {
+                "type": "string",
+                "pattern": "^(?!other(?![\\s\\S]))[a-z0-9][a-z0-9._-]{0,31}(?![\\s\\S])"
+              },
+              "workload": {
+                "type": "string",
+                "pattern": "^(?!other(?![\\s\\S]))[a-z0-9][a-z0-9._-]{0,31}(?![\\s\\S])"
+              },
+              "scope": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}(?![\\s\\S])"
+              },
+              "priority_header": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fail_on_unknown_capability",
+        "allow_tool_execution",
+        "allow_power_changes",
+        "allow_cloud_fallback"
+      ],
+      "properties": {
+        "fail_on_unknown_capability": {
+          "const": true
+        },
+        "allow_tool_execution": {
+          "const": false
+        },
+        "allow_power_changes": {
+          "const": false
+        },
+        "allow_cloud_fallback": {
+          "const": false
+        }
+      }
+    },
+    "model_management": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "load_on_demand",
+        "single_flight_loads",
+        "unload_idle",
+        "idle_unload_seconds",
+        "min_resident_seconds",
+        "max_loaded_models_per_device",
+        "max_concurrent_loads",
+        "eviction_policy",
+        "drain_timeout_ms",
+        "preload_recipe_ids"
+      ],
+      "properties": {
+        "load_on_demand": {
+          "type": "boolean"
+        },
+        "single_flight_loads": {
+          "const": true
+        },
+        "unload_idle": {
+          "type": "boolean"
+        },
+        "idle_unload_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
+        },
+        "min_resident_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
+        },
+        "max_loaded_models_per_device": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "max_concurrent_loads": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "eviction_policy": {
+          "type": "string",
+          "enum": [
+            "lru_priority",
+            "manual_only"
+          ]
+        },
+        "drain_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "preload_recipe_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "maxItems": 10000
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_request_body_bytes",
+        "max_messages",
+        "default_max_output_tokens",
+        "max_output_tokens",
+        "default_deadline_ms",
+        "max_deadline_ms",
+        "stream_buffer_events",
+        "stall_timeout_ms",
+        "shutdown_drain_ms"
+      ],
+      "properties": {
+        "max_request_body_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 67108864
+        },
+        "max_messages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "default_max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 131072
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 131072
+        },
+        "default_deadline_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        "max_deadline_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        "stream_buffer_events": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "stall_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000
+        },
+        "shutdown_drain_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        },
+        "resume_buffer_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 268435456
+        },
+        "resume_buffer_total_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 4294967296
+        },
+        "resume_retention_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        }
+      }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_backend_inflight",
+        "per_scope_inflight",
+        "queue_depth"
+      ],
+      "properties": {
+        "max_backend_inflight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "per_scope_inflight": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "queue_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "aging_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 3600000
+        },
+        "batch_floor": {
+          "description": "Team pools (tasks/net-teleport-spec.md 4.4, C17): the share of grants batch keeps while both classes wait; absent -> 0.1.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.5
+        },
+        "owner_wait_cap_ms": {
+          "description": "Team pools (Q-T6, Q-T8): a non-owner job on an owned worker ends within this long of its grant; absent -> 120000.",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 600000
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scopes"
+      ],
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope_id",
+              "token_env"
+            ],
+            "properties": {
+              "scope_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}(?![\\s\\S])"
+              },
+              "token_env": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]{0,63}(?![\\s\\S])"
+              },
+              "weight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "allowed_tiers": {
+                "description": "Tiers this person's state and work may go to (tasks/net-teleport-spec.md 4.1, Q-T5); absent -> [\"own\"].",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": ["own", "team", "provider"]
+                }
+              },
+              "token_envs": {
+                "description": "Team pools (C14): env vars of this person's further device tokens; each authenticates as this scope. Absent -> token_env only.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9_]{0,63}(?![\\s\\S])"
+                }
+              },
+              "class": {
+                "description": "Team pools (C17): the class of this scope's requests without X-Cere-Class; absent -> interactive.",
+                "type": "string",
+                "enum": ["interactive", "batch"]
+              },
+              "per_scope_inflight": {
+                "description": "Team pools (C18): this scope's in-flight cap instead of admission.per_scope_inflight; at most admission.max_backend_inflight.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "max_sessions_per_scope": {
+                "description": "Team pools (C18): this scope's live-session cap instead of ledger.max_sessions_per_scope.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000000
+              },
+              "max_batch_inflight": {
+                "description": "Team pools (C18, Q-T7): this person's cap on in-flight batch requests; absent -> only the scope cap.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              }
+            }
+          }
+        },
+        "operator_token_env": {
+          "description": "Name of the env var holding the operator bearer token (M3.5 Q13); absent -> operator routes disabled. Must differ from every scope token_env.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}(?![\\s\\S])"
+        },
+        "keyless_scope": {
+          "description": "The configured scope a client request without an Authorization header belongs to (tasks/g9-prod-spec.md F2); a present header must still name a token; operator routes unchanged. Absent -> every client request needs a bearer.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}(?![\\s\\S])"
+        }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_dir",
+        "max_records",
+        "terminal_retention_ms",
+        "max_sessions_per_scope",
+        "session_ttl_ms",
+        "max_revisions_per_session"
+      ],
+      "properties": {
+        "state_dir": {
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "terminal_retention_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 604800000
+        },
+        "max_sessions_per_scope": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "session_ttl_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 2592000000
+        },
+        "max_revisions_per_session": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "orphan_load_poll_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 600000
+        },
+        "evict_terminal_when_full": {
+          "description": "OH-03: a full ledger evicts its oldest terminal record instead of rejecting ledger_full; absent = false.",
+          "type": "boolean"
+        }
+      }
+    },
+    "usage": {
+      "description": "tasks/net-teleport-spec.md 4.4 (S7): the usage journal in <ledger.state_dir>/usage/. Every key optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Write one usage row per request terminal; absent -> true.",
+          "type": "boolean"
+        },
+        "retention_days": {
+          "description": "Days of usage day files kept, today included (Q-T9); absent -> 90.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      }
+    },
+    "federation": {
+      "description": "M3.5 federation (tasks/m35-spec.md Q16). Timings default to configs/cluster/dev-tailnet.yaml control_plane.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cluster_id",
+        "coordinator_id",
+        "listen",
+        "principal",
+        "ca_file",
+        "cert_file",
+        "key_file",
+        "workers"
+      ],
+      "properties": {
+        "cluster_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        },
+        "coordinator_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        },
+        "listen": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "<ip>:<port>; host a literal in 100.64.0.0/10 or a loopback literal, never a wildcard; checked by the semantic rules."
+        },
+        "principal": {
+          "type": "string",
+          "pattern": "^(?=[\\s\\S]{1,253}(?![\\s\\S]))[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+        },
+        "ca_file": {
+          "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+        },
+        "cert_file": {
+          "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+        },
+        "key_file": {
+          "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+          "type": "string",
+          "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+        },
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "suspect_after_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "lost_after_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "admission_lease_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "rpc_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "rpc_quota_per_principal": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "workers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "worker_id",
+              "endpoint",
+              "principal",
+              "max_inflight",
+              "expect"
+            ],
+            "properties": {
+              "worker_id": {
+                "description": "Not a scheduler.devices id; unique.",
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+              },
+              "endpoint": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "description": "https://<literal 100.64.0.0/10, 127.0.0.0/8 or [::1] address>:<port 1..65535>; checked by the semantic rules."
+              },
+              "principal": {
+                "description": "The worker's mTLS principal; unique and not the coordinator's.",
+                "type": "string",
+                "pattern": "^(?=[\\s\\S]{1,253}(?![\\s\\S]))[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+              },
+              "max_inflight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "owner": {
+                "description": "Team pools (tasks/net-teleport-spec.md 4.4, C15): the auth scope owning this worker; absent -> unowned.",
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}(?![\\s\\S])"
+              },
+              "tier": {
+                "description": "This worker's trust tier for everyone but its owner (4.1, C13; own for the owner); absent -> own.",
+                "type": "string",
+                "enum": ["own", "team", "provider"]
+              },
+              "owner_only": {
+                "description": "Team pools (C19): owner-only windows \"<days> <HH:MM>-<HH:MM> <zone>\", e.g. \"Mon-Fri 09:00-17:00 Europe/Berlin\" (days Mon..Sun, ranges or comma lists; start before end; zone UTC or an IANA name in the system database); needs owner.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "expect": {
+                "description": "Inventory pins checked before Ready (M3.5 Q10).",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "served_model_name",
+                  "tp_size",
+                  "kv_cache_dtype"
+                ],
+                "properties": {
+                  "served_model_name": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}(?![\\s\\S])"
+                  },
+                  "tp_size": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "kv_cache_dtype": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(?![\\s\\S])"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deployments": {
+            "items": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "sglang_http",
+                    "native_cuda"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          }
+        },
+        "required": [
+          "deployments"
+        ]
+      },
+      "then": {
+        "properties": {
+          "planning_only": {
+            "const": false
+          },
+          "model_management": {
+            "properties": {
+              "load_on_demand": {
+                "const": false
+              },
+              "unload_idle": {
+                "const": false
+              },
+              "eviction_policy": {
+                "const": "manual_only"
+              },
+              "preload_recipe_ids": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "planning_only": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

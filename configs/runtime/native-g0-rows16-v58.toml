@@ -1,0 +1,181 @@
+# BatchConc BC2 (batch-concurrency design note BC2, build/bc2-rows; dev-only, GPU0): production's composition
+# (configs/runtime/prod-t4.toml: the Sessions deployment -v53 with prefix_state_slots 48, prefill_slice_ms 200,
+# grammar_drafts "on", [deployments.native.loop_guard], the 8 GiB host arena, api_compat_anthropic and its [api],
+# [admission] aging and [ledger] keys) at 16 decode rows, kernels unchanged: profile native-g0-qwen38-flash-next-v58 on
+# the deployment qwen38-flash-next-native-rows16-v58 (the -v53 one with decode_batch_max 16, owner Q1 (b)),
+# max_backend_inflight 16, per_scope_inflight 16 (Q8), queue_depth 16 (Q1), and the KV pool shrunk to fit R16's plan
+# (Q2 (a)). Lane fields are GPU0's (bind 127.0.0.1:18309, device_uuid and scheduler.devices GPU0, ledger.state_dir
+# /var/lib/cere/native-g0) and the scopes are native_backend's native-a (keyless, production's DRR weight 4) and
+# native-b, as qe1_tickets.retarget serves prod-t4.toml on GPU0. Production stays the maintainer's and owner's (BC7).
+# scripts/native/lock_native.py pins its library with this config.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18309"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-g0-qwen38-flash-next-v58"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next-native-rows16-v58"
+shared_backend_tenancy = "exclusive"
+# The executor's prefix cache (m210 design note D2) namespaces each scope's sessions by its cache_salt, so nothing
+# is shared across scopes.
+allow_cross_scope_prefix_cache = false
+prefix_cache_isolation = "cache_salt"
+# M2.14 D3: POST /v1/messages and /v1/messages/count_tokens (restart class; RUNBOOK "Production T4" window 1).
+api_compat_anthropic = true
+
+# library_sha256 equals the deployment lock's backend_build_sha256; scripts/native/lock_native.py updates both.
+[deployments.native]
+library = "/opt/cere/libcere_executor.so"
+library_sha256 = "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453"
+artifact_dir = "/var/lib/cere/artifacts/qwen38-flash-next-fp4local-cere-s3-draft-r2m-968222f4504e4fe3"
+expected_manifest_sha256 = "968222f4504e4fe34920340295afbbd548925308cf8b1659f541e7d646b17838"
+device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"
+max_context_tokens = 262144
+# One KV pool shared by the 16 rows (Q2 (a)): each session reserves min(context, ceil64(prompt + max_tokens)) pages at
+# create; a request that does not fit waits in cered's queue. R16 grows the plan by 3,413.3 MiB over R4 at 48 prefix
+# slots (cere_ktest_plan_layout_slots: 15,013.6 vs 11,600.3 MiB device at prod's 524,288 pool), 13,056 B per pool
+# token, so the pool goes to the context, the smallest pool a 262,144-token session fits (plan 11,749.6 MiB). 0 or
+# absent would derive rows x context = 4,194,304.
+kv_pool_tokens = 262144
+# The prefix cache's device state pool (m210 design note D6, OQ3 (b)): 48 x 59,031,808 B; 0 = cache off. PT0b
+# (an internal benchmark report) recommends 48, at the 10,240 MiB free floor on GPU0; window 5 keeps 48
+# when GPU1's free at peak measures >= 10,240 MiB, else it installs the parent commit (40, ~450 MiB less).
+prefix_state_slots = 48
+# m210 design note D15''''' stage 2a + O112: a drafting PREFILL also captures its end state (two slots); end states
+# take free slots or other end states only, so they never evict another session's draft state.
+prefix_end_state = true
+# m210 design note D17: alternative edges, one per conversation over its own pages beside another's edge over the
+# same tokens; LRU evicts them like any leaf. Needs prefix_state_slots > 0 and a library exporting
+# cere_model_set_prefix_alt_edges.
+prefix_alt_edges = true
+sidecar = ["python3", "/src/scripts/native/tokenizer_sidecar.py", "--artifact", "/var/lib/cere/artifacts/qwen38-flash-next-fp4local-cere-s3-draft-r2m-968222f4504e4fe3"]
+# m29 design note D11: the MTP draft (4 tokens per round) on DEVICE with the artifact's draft token map.
+speculative_draft_tokens = 4
+# m29 design note M29S2-02 (ledger M1): the drafts' ~6.3 GiB raise the executor limit above the 80 GiB default.
+# Projection (D10'): executor ~85,200 MiB -> 86,016 MiB; the maintainer replaces it with the R3-measured peak + 512 MiB.
+# The GPU0 free floor (10,240 MiB) is unchanged.
+executor_memory_limit_bytes = 90194313216
+# MixedPD (mixed-pd design note, -v47): a prefill call pauses at a layer boundary after about 200 ms while decode
+# rows are ready (cere_executor_set_prefill_slice, set before the model is created). Bit-identical.
+prefill_slice_ms = 200
+# The M2.10 host tier's pinned arena (sessions design note SE-07 (b)): 8 GiB, reserved at ALLOCATE (mlocked: the
+# unit's --ulimit memlock) and counted in the host floor; spilled prefix edges keep their MTP rows. With
+# prefix_state_slots > 0 it is passed only with [state] host_spill_enabled (config.rs desc_snapshot_host_bytes).
+snapshot_host_bytes = 8589934592
+# Recorded evidence only: the image that provides CUDA user space and the tokenizer libraries.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+# The profile's kernel and drafter selections (crates/cere-runtime/src/levers.rs): decode_step, verify_attention and
+# draft_policy are bit-identical to the registry default; k2_gemm small_m changes numerics (plain twin: -v14), so
+# spec == plain holds against native-g0-k2s.toml; drafter mtp+lookup is lossless (the target verifies every draft).
+[deployments.native.levers]
+decode_step = "spec_graph"
+verify_attention = "batched"
+draft_policy = "adaptive"
+k2_gemm = "small_m"
+drafter = "mtp+lookup"
+# grammar-spec design note GS-04 (-v49, B1' PASS): constrained requests speculate with grammar-checked drafts.
+# Changing for sampled constrained tickets only (their seeded draws move with the rounds); greedy and unconstrained
+# output are unchanged (GdFix: also with the prefix cache on). Needs the MTP drafts above (4 per round) and the
+# sidecar's feature grammar_drafts.
+grammar_drafts = "on"
+
+# loop-guard design note: the native repetition guard, every key at its default (LoopGuardConfig::default; written
+# out so config_hash stays the digest of this document). LG-D1 in-response repetition, LG-D2 repeated tool calls.
+# frontend's proxy LoopGuard is unchanged. An output that trips neither detector is unchanged.
+[deployments.native.loop_guard]
+min_period_bytes = 16
+max_period_bytes = 1024
+min_repeats = 4
+min_span_bytes = 512
+tool_repeat_run = 10
+ignore_arg_keys = ["description"]
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+# Evicted prefix edges spill to the 8 GiB host arena (snapshot_host_bytes) instead of being dropped (SE-07 (b)).
+host_spill_enabled = true
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt plus max_tokens must fit the 262,144-token context (ctx262 design note CX-07). The output cap is 32,768
+# and the deadline for requests without one is 900 s (ApiFit AF-10; frontend's max_tokens_cap follows,
+# api-fit design note).
+[api]
+max_request_body_bytes = 8388608
+max_messages = 4096
+default_max_output_tokens = 1024
+max_output_tokens = 32768
+default_deadline_ms = 900000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# Sixteen executor rows (the profile's decode_batch_max, owner Q1 (b)); one scope may fill the card (Q8), 16 more wait
+# (Q1). A request with n choices costs n.
+[admission]
+max_backend_inflight = 16
+per_scope_inflight = 16
+queue_depth = 16
+# frontend sends X-Cere-Priority (route key admission_priority): main sessions high, subagents and tool-less helpers
+# low. A low waiter queued longer than aging_ms is served as high, its starvation bound (priority design note).
+aging_ms = 30000
+
+[auth]
+# The operator routes, incl. POST /v1/cere/workers/{worker_id}/flush_cache (m210 design note D11, N2 (a)); the
+# flush empties this profile's prefix cache (its prefix_state_slots states and their pages).
+operator_token_env = "CERE_OPERATOR_TOKEN"
+# production's keyless frontend scope, served as native_backend's native-a (qe1_tickets.RETARGET); bind is loopback.
+keyless_scope = "native-a"
+
+[[auth.scopes]]
+# production's frontend weight (4 of every 5 contended grants against a weight-1 scope).
+weight = 4
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[[auth.scopes]]
+scope_id = "native-b"
+token_env = "CERE_TOKEN_NATIVE_B"
+
+[ledger]
+state_dir = "/var/lib/cere/native-g0"
+# One record per accepted request, rejected ones included, kept for terminal_retention_ms: 10,000 filled at ~167
+# requests/min (production held ~6,000 at ~99/min) and a full ledger answers every scope 503 `overloaded`. 100,000
+# is ~1,670/min for an hour; about 0.7 KiB of RSS per record (config.rs allows up to 1,000,000).
+max_records = 100000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

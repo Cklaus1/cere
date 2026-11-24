@@ -1,0 +1,10 @@
+{
+  "do_sample": true,
+  "eos_token_id": [
+    7,
+    6
+  ],
+  "temperature": 1.0,
+  "top_k": 20,
+  "top_p": 0.95
+}

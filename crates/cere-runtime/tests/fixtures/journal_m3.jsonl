@@ -1,0 +1,8 @@
+{"type":"epoch","epoch":1,"at_ms":1000}
+{"type":"worker_epoch","worker":"gpu0","epoch":1,"at_ms":1000}
+{"type":"worker_epoch","worker":"gpu1","epoch":1,"at_ms":1000}
+{"type":"admitted","scope":"a","rid":"cere-00000000000000000001-00000000000000000001-0123456789abcdef","key":null,"digest":"cba4ec2e35bbf67334bae56fc497d840f7df6b6b201bf749ddce6495618bcc52","epoch":1,"stream":true,"session":null,"at_ms":1001,"dispatch_journaled":true}
+{"type":"dispatched","rid":"cere-00000000000000000001-00000000000000000001-0123456789abcdef","worker":"gpu0","worker_epoch":1,"base_url":"http://127.0.0.1:30000","at_ms":1001}
+{"type":"admitted","scope":"a","rid":"cere-00000000000000000001-00000000000000000002-0123456789abcdef","key":null,"digest":"cba4ec2e35bbf67334bae56fc497d840f7df6b6b201bf749ddce6495618bcc52","epoch":1,"stream":true,"session":null,"at_ms":1002,"dispatch_journaled":true}
+{"type":"dispatched","rid":"cere-00000000000000000001-00000000000000000002-0123456789abcdef","worker":"gpu1","worker_epoch":1,"base_url":"http://127.0.0.1:30001","at_ms":1002}
+{"type":"terminal","rid":"cere-00000000000000000001-00000000000000000001-0123456789abcdef","state":"completed","reason":null,"timings":{"queue_wait_ms":0,"first_generated_ms":null,"first_visible_ms":null,"total_ms":4,"client_backpressure_ms":0},"session":null,"at_ms":1005,"usage":{"prompt_tokens":null,"completion_tokens":null,"cached_tokens":null,"cache_report":"unavailable"}}

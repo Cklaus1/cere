@@ -1,0 +1,25 @@
+{
+  "compute_capability": "12.0",
+  "compute_capability_source": "inferred",
+  "device_memory_mib": 97887,
+  "device_model": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "modalities": [
+    "text"
+  ],
+  "placement": {
+    "dense": "device",
+    "draft": "device",
+    "nvfp4_block_scale": "device",
+    "nvfp4_global_scale": "device",
+    "nvfp4_input_scale": "device",
+    "nvfp4_weight": "device",
+    "ple_index": "host_pinned",
+    "ple_module": "device",
+    "ple_scale": "host_pinned",
+    "ple_table": "host_pinned",
+    "vision": "unused"
+  },
+  "profile_id": "rtxpro6000bw-plehost-nvfp4-text-v1",
+  "schema_version": "1",
+  "speculative": "nextn"
+}

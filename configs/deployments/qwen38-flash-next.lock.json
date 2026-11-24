@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "qwen38-flash-next-lock-v1",
+  "recipe_sha256": "02743aacaff6a78f4aa12e90bb59e195d7680ce62e9d65ed41f9897849376d11",
+  "artifact_sha256": "66aebc98b653415fff9e4e4104ba1047f76d5e19455266f45c110ca7c130dcca",
+  "model_content_sha256": "6be3034c56ff1acf2559a52556236d15be0b809d015815d177d37b5047aa461d",
+  "tokenizer_sha256": "5cba89bb97f70720773d6148b3e86aa3f22e914acbad16930f559d107996405b",
+  "template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "backend_build_sha256": "6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69",
+  "backend_profile_id": "sglang-t4-qwen38-flash-next-v1",
+  "effective_context_tokens": 200000,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

@@ -1,0 +1,22 @@
+{
+  "buckets": {
+    "32": {
+      "sources": [
+        [
+          "unavailable",
+          "unavailable"
+        ],
+        [
+          "unavailable",
+          "unavailable"
+        ]
+      ],
+      "tactics": [
+        "unavailable",
+        "unavailable"
+      ]
+    }
+  },
+  "launches": 2,
+  "source": "native-tactics-20261010T085711Z.json"
+}

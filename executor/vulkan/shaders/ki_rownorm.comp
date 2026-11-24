@@ -1,0 +1,63 @@
+#version 460
+// Inkling S11: row norms (ref: executor/ref/inkling norm refs; spec section 5). One segment of LN lanes per row (LN = 256
+// for 2304-wide rows, 32 for head_dim 128, 16 for d_rel 16: the refs' fixed reduce lengths), WG / LN rows per workgroup.
+// MODE 0, RMSNorm (Inkling2LoopRMSNorm / UnweightedRMSNorm, REF:67-76, REF:731-745):
+//   ss = reduce_dot<LN>(x, x); ms = ss / n; r = 1 / sqrt(ms + eps); y = x * r; weighted (w != 0): y = w * y.
+// MODE 1, L2 clip (Inkling2LoopL2Clip / ScaledL2Clip / LogScaledL2Clip, REF:176-236):
+//   y = x (* scale[head] when w != 0); nrm = sqrt(reduce_dot<LN>(y, y)); f = min(thr / (nrm + 1e-6), 1); y = y * f;
+//   with tau != 0 (log scaling): y = bf16(y) * tau[token] (token = row / heads).
+// Input / output / weight dtype bits in `flags`: 1 x is BF16, 2 out is BF16, 4 w is BF16 (else FP32 each).
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t x, w, o, tau;
+    uint n, rows, heads, flags;
+    float eps, thr;
+} p;
+
+float ld_x(uint i) { return (p.flags & 1u) != 0u ? ldbf(p.x, i) : ldf(p.x, i); }
+float ld_w(uint i) { return (p.flags & 4u) != 0u ? ldbf(p.w, i) : ldf(p.w, i); }
+void st_o(uint i, float v) { if ((p.flags & 2u) != 0u) stbf(p.o, i, v); else stf(p.o, i, v); }
+
+void main() {
+    const uint t = gl_LocalInvocationID.x, j = t & (LN - 1u);
+    const uint row = gl_WorkGroupID.x * (WG / LN) + t / LN;
+    const bool live = row < p.rows;
+    const uint base = row * p.n;
+    const uint wbase = MODE == 1 ? (row % p.heads) * p.n : 0u;
+    float acc = 0.0;
+    if (live)
+        for (uint i = j; i < p.n; i += LN) {
+            float v = ld_x(base + i);
+#if MODE == 1
+            if (p.w != 0ul) { precise float s = v * ld_w(wbase + i); v = s; }
+#endif
+            acc = ki_fma(v, v, acc);
+        }
+    const float ss = ki_tree_sum(acc, LN);
+    if (!live) return;
+#if MODE == 0
+    precise float ms = ki_div(ss, float(p.n));
+    precise float me = ms + p.eps;
+    const float r = ki_rsqrt(me);
+    for (uint i = j; i < p.n; i += LN) {
+        precise float y = ld_x(base + i) * r;
+        if (p.w != 0ul) { precise float wy = ld_w(i) * y; y = wy; }
+        st_o(base + i, y);
+    }
+#else
+    precise float den = ki_sqrt(ss) + 1.0e-6;
+    const float q = ki_div(p.thr, den);
+    const float f = q > 1.0 ? 1.0 : q;  // clamp(max=1)
+    const float tau = p.tau != 0ul ? ldf(p.tau, row / p.heads) : 1.0;
+    for (uint i = j; i < p.n; i += LN) {
+        float v = ld_x(base + i);
+        if (p.w != 0ul) { precise float s = v * ld_w(wbase + i); v = s; }
+        precise float y = v * f;
+        if (p.tau != 0ul) { precise float yt = round_bf(y) * tau; y = yt; }
+        st_o(base + i, y);
+    }
+#endif
+}

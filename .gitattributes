@@ -1,0 +1,3 @@
+# tasks/id-registry.toml is append-only, one entry per line (scripts/alloc_id.py): two branches' appends at the end
+# of the same array merge as the union of both instead of conflicting; `make validate` catches a duplicated id.
+tasks/id-registry.toml merge=union

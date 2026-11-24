@@ -1,0 +1,131 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-cuda",
+  "profile_id": "native-g0-qwen38-flash-next-v6",
+  "artifact_sha256": "7d8860431751e88843683049587e1892574f0ebc5cb368d3e0b46ede572727d0",
+  "execution_mode": "native",
+  "evidence": "measured",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 1,
+  "max_context_tokens": 2048,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text",
+    "tool_calls"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text",
+    "image"
+  ],
+  "max_top_logprobs": 20,
+  "sampling_params": [
+    "top_k",
+    "min_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "logit_bias"
+  ],
+  "thinking_toggle": true,
+  "token_controls": [
+    "stop_token_ids",
+    "ignore_eos"
+  ],
+  "vocab_size": 248320,
+  "notes": "MoE backend P3b (tasks/m23-spec.md M23-D7, shipped default): the CERE_MOE_BACKEND=p3b library, routed experts on the vendored FlashInfer 0.6.17 SM120 CUTLASS fused MoE with per-m-bucket pinned deterministic GEMM1/GEMM2 tactic pairs (M23-D6), each bit-equal to the K7 reference at block level; promoted by the identity gate (native_hashes identical to K7's on the D9 parity set). Deterministic at rows = 1 without cache (K8/X11 repeat evidence); NVFP4 W4A4 and fp8_e4m3 KV; MoE scales as flashinfer_cutlass (Q14), N experts with up != gate scale. The in-process CERE executor (libcere_executor.so, ABI v4) on GPU0: one row, text in and out (tool calls parsed by CERE as SGLang's qwen3_coder detector; stop strings matched by CERE), no prefix cache. Greedy decoding (temperature < 1e-6 or top_k 1 with neutral processors) runs the unchanged greedy path; sampled text decoding (temperature, top_p, top_k, min_p, seed, frequency/presence/repetition penalties, logit_bias) and logprobs with top_logprobs up to 20 run the M2.7 device sampler, which the library must report (native_sampler 1, checked at start); it is checked against its own logits and its CPU reference only, not an SGLang parity claim (G1 has not passed). Vision profile (tasks/m213-spec.md D5, D9, Q2 b): the native-g0 capability set at one row, on the artifact relabelled to rtxpro6000bw-plehost-vision-v1 (the 333 model.visual.* BF16 tensors on the device) and a 2,048-token context (image sessions stay within the indexer budget until K9 takes three-axis positions); images (data:image/png or data:image/jpeg, at most 4 per request and 2,048 image tokens) are encoded by the native vision tower in the prefill, greedy decoding only, one row, without speculation. The image combination is declared for the vision_live R3/R6 rows, which measure it. Sampled decoding with images, n > 1, tool_choice required/named, json_schema, verify, snapshot/restore, video and prompts over the context limit are absent and therefore refused. Not a throughput or capacity claim.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    },
+    {
+      "operation": "decode",
+      "modality": "image",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 2048
+    }
+  ]
+}

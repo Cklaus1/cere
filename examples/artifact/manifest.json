@@ -1,0 +1,485 @@
+{
+  "families": [
+    {
+      "bytes": 1536,
+      "component": "target",
+      "count": 6,
+      "dtype": "U8",
+      "family": "target_nvfp4_weight",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_weight"
+    },
+    {
+      "bytes": 192,
+      "component": "target",
+      "count": 6,
+      "dtype": "F8_E4M3",
+      "family": "target_nvfp4_block_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_block_scale"
+    },
+    {
+      "bytes": 24,
+      "component": "target",
+      "count": 6,
+      "dtype": "F32",
+      "family": "target_nvfp4_global_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_global_scale"
+    },
+    {
+      "bytes": 24,
+      "component": "target",
+      "count": 6,
+      "dtype": "F32",
+      "family": "target_nvfp4_input_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_input_scale"
+    },
+    {
+      "bytes": 3736,
+      "component": "target",
+      "count": 13,
+      "dtype": "BF16",
+      "family": "target_dense",
+      "misaligned": 13,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 3296,
+      "component": "target",
+      "count": 6,
+      "dtype": "BF16",
+      "family": "target_ple_module",
+      "misaligned": 6,
+      "placement": "device",
+      "role": "ple_module"
+    },
+    {
+      "bytes": 160,
+      "component": "target",
+      "count": 4,
+      "dtype": "F8_E4M3",
+      "family": "target_ple_table",
+      "misaligned": 0,
+      "placement": "host_pinned",
+      "role": "ple_table"
+    },
+    {
+      "bytes": 2,
+      "component": "target",
+      "count": 1,
+      "dtype": "BF16",
+      "family": "target_ple_scale",
+      "misaligned": 1,
+      "placement": "host_pinned",
+      "role": "ple_scale"
+    },
+    {
+      "bytes": 88,
+      "component": "target",
+      "count": 3,
+      "dtype": "I64",
+      "family": "target_ple_index",
+      "misaligned": 3,
+      "placement": "host_pinned",
+      "role": "ple_index"
+    },
+    {
+      "bytes": 165952,
+      "component": "draft",
+      "count": 3,
+      "dtype": "BF16",
+      "family": "draft_mtp",
+      "misaligned": 3,
+      "placement": "device",
+      "role": "draft"
+    },
+    {
+      "bytes": 216,
+      "component": "vision",
+      "count": 2,
+      "dtype": "BF16",
+      "family": "vision",
+      "misaligned": 2,
+      "placement": "unused",
+      "role": "vision"
+    }
+  ],
+  "family_rules": {
+    "groups": {
+      "nvfp4_group_size": 16,
+      "ple_index_members": [
+        "layer_multipliers",
+        "ngram_heads_offsets",
+        "ngram_heads_vocab_sizes"
+      ],
+      "ple_module_members": [
+        "conv1d.weight",
+        "key_proj.weight",
+        "norm_conv.weight",
+        "norm_key.weight",
+        "norm_query.weight",
+        "value_proj.weight"
+      ],
+      "ple_table_shards": 4
+    },
+    "rules": [
+      {
+        "component": "target",
+        "dtype": "U8",
+        "family": "target_nvfp4_weight",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight",
+        "placement": "device",
+        "role": "nvfp4_weight",
+        "shape_rule": "rank:2"
+      },
+      {
+        "component": "target",
+        "dtype": "F8_E4M3",
+        "family": "target_nvfp4_block_scale",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight_scale",
+        "placement": "device",
+        "role": "nvfp4_block_scale",
+        "shape_rule": "rank:2"
+      },
+      {
+        "component": "target",
+        "dtype": "F32",
+        "family": "target_nvfp4_global_scale",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight_scale_2",
+        "placement": "device",
+        "role": "nvfp4_global_scale",
+        "shape_rule": "rank:0"
+      },
+      {
+        "component": "target",
+        "dtype": "F32",
+        "family": "target_nvfp4_input_scale",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.input_scale",
+        "placement": "device",
+        "role": "nvfp4_input_scale",
+        "shape_rule": "rank:0"
+      },
+      {
+        "component": "target",
+        "dtype": "BF16",
+        "family": "target_dense",
+        "pattern": "lm_head\\.weight|model\\.language_model\\.(embed_tokens\\.weight|hyper_connection_mixer\\.[a-z_]+\\.weight|layers\\.[0-9]+\\.((attn|mlp)_hyper_connection\\.[a-z_]+\\.weight|linear_attn\\.[A-Za-z0-9_.]+|self_attn\\.[a-z_.]+\\.weight|mlp\\.(gate|shared_expert_gate|shared_expert\\.(gate|up|down)_proj)\\.weight))",
+        "placement": "device",
+        "role": "dense",
+        "shape_rule": "any"
+      },
+      {
+        "component": "target",
+        "dtype": "BF16",
+        "family": "target_ple_module",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.(key_proj|value_proj|conv1d|norm_conv|norm_key|norm_query)\\.weight",
+        "placement": "device",
+        "role": "ple_module",
+        "shape_rule": "any"
+      },
+      {
+        "component": "target",
+        "dtype": "F8_E4M3",
+        "family": "target_ple_table",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.ngram_embedding\\.shard_[0-9]+\\.weight",
+        "placement": "host_pinned",
+        "role": "ple_table",
+        "shape_rule": "rank:2"
+      },
+      {
+        "component": "target",
+        "dtype": "BF16",
+        "family": "target_ple_scale",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.ngram_embedding\\.weight_scale",
+        "placement": "host_pinned",
+        "role": "ple_scale",
+        "shape_rule": "rank:1"
+      },
+      {
+        "component": "target",
+        "dtype": "I64",
+        "family": "target_ple_index",
+        "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.(layer_multipliers|ngram_heads_offsets|ngram_heads_vocab_sizes)",
+        "placement": "host_pinned",
+        "role": "ple_index",
+        "shape_rule": "rank:1"
+      },
+      {
+        "component": "draft",
+        "dtype": "BF16",
+        "family": "draft_mtp",
+        "pattern": "mtp\\..+",
+        "placement": "device",
+        "role": "draft",
+        "shape_rule": "any"
+      },
+      {
+        "component": "vision",
+        "dtype": "BF16",
+        "family": "vision",
+        "pattern": "model\\.visual\\..+",
+        "placement": "unused",
+        "role": "vision",
+        "shape_rule": "any"
+      }
+    ],
+    "rules_id": "fixture-qwen4_exp-nvfp4-v1",
+    "schema_version": "1"
+  },
+  "files": [
+    {
+      "bytes": 92,
+      "path": "chat_template.jinja",
+      "role": "template",
+      "sha256": "5ef87e01e7fd51bd30269f9657444128afcdffe4a23fadd75499c52274167f0f",
+      "upstream": {
+        "blob_id": "b7a3fb9048b236eab4d3ade293da8b893e4a05ac",
+        "local_modification": false,
+        "size": 92
+      }
+    },
+    {
+      "bytes": 945,
+      "path": "config.json",
+      "role": "config",
+      "sha256": "2bfcddf21a3f354434380ea7ee489c58c407c8f5df350236f354dbef070e55e1",
+      "upstream": {
+        "blob_id": "5690296eec915ff8397d35c18952e2b1a89f3461",
+        "local_modification": true,
+        "size": 806
+      }
+    },
+    {
+      "bytes": 8004,
+      "path": "draft/token_map.u32le",
+      "role": "draft_token_map",
+      "sha256": "b5bda9ea9ad96d5a096aa23cf95e90d36b6f383ab5a3e101233f45c3ca00da33"
+    },
+    {
+      "bytes": 116,
+      "path": "generation_config.json",
+      "role": "generation_config",
+      "sha256": "29ddb214e67cd108f5221893ebed87266d407fe4215863b26f7ea3c61146880a",
+      "upstream": {
+        "blob_id": "122033432723db03e023d566983bc315ba78215c",
+        "local_modification": false,
+        "size": 116
+      }
+    },
+    {
+      "bytes": 225,
+      "path": "hf_quant_config.json",
+      "role": "quant_config",
+      "sha256": "38f12646917aa0bb33cdb35f8be907f3777877c76b1e1841c7587d191a2b96b2",
+      "upstream": {
+        "blob_id": "176819b96998cfe87d0be3c835cb8358228f0aa4",
+        "local_modification": false,
+        "size": 225
+      }
+    },
+    {
+      "bytes": 4776,
+      "path": "layer-00000-experts-0000-0001.safetensors",
+      "role": "weights",
+      "safetensors": {
+        "header_bytes": 3000,
+        "header_sha256": "08eacc67cf51895f8f13aaebb92e4d7cbf3488ba5a8004657cb83b0fe619e129",
+        "tensors": 24
+      },
+      "sha256": "0b43fb7ee9a835062c7a2c090b51bb873d4fef74be66ac2fd626800128ffe7fe",
+      "upstream": {
+        "lfs_sha256": "0b43fb7ee9a835062c7a2c090b51bb873d4fef74be66ac2fd626800128ffe7fe"
+      }
+    },
+    {
+      "bytes": 18,
+      "path": "merges.txt",
+      "role": "tokenizer",
+      "sha256": "45943e2370ccbc1bbf4f34860ef8f9b82740bdcf32115a28f48828c1b71d40b7",
+      "upstream": {
+        "blob_id": "6aa0211f65a637a22e61f231e199ee89ce0ecb78",
+        "local_modification": false,
+        "size": 18
+      }
+    },
+    {
+      "bytes": 176443,
+      "path": "model-bf16-00001.safetensors",
+      "role": "weights",
+      "safetensors": {
+        "header_bytes": 3153,
+        "header_sha256": "010b651837d3581ecb9c336dee9a33ccfbe18ccc65b148b05614e34abfb48f89",
+        "tensors": 28
+      },
+      "sha256": "5e0cb1dfb02a33266de3c32109246b4f2c0e7e8736ed07a220fb20923326ade1",
+      "upstream": {
+        "lfs_sha256": "5e0cb1dfb02a33266de3c32109246b4f2c0e7e8736ed07a220fb20923326ade1"
+      }
+    },
+    {
+      "bytes": 723,
+      "path": "model-plefp8-00000.safetensors",
+      "role": "weights",
+      "safetensors": {
+        "header_bytes": 563,
+        "header_sha256": "0aa16ec3690e0cdce15084d99541e15629d3b48da1979d2600b159e7d384310c",
+        "tensors": 4
+      },
+      "sha256": "7187e9cc350980dff5d590b299ee7b376a558aa982d585004e06bee019a2f8ea",
+      "upstream": {
+        "lfs_sha256": "7187e9cc350980dff5d590b299ee7b376a558aa982d585004e06bee019a2f8ea"
+      }
+    },
+    {
+      "bytes": 5918,
+      "path": "model.safetensors.index.json",
+      "role": "weight_index",
+      "sha256": "66eb0606903c0bf0f7a2e1404dd66ba0f4e3a46caebd8ded45e45ee238556e93",
+      "upstream": {
+        "lfs_sha256": "66eb0606903c0bf0f7a2e1404dd66ba0f4e3a46caebd8ded45e45ee238556e93"
+      }
+    },
+    {
+      "bytes": 73,
+      "path": "preprocessor_config.json",
+      "role": "preprocessor",
+      "sha256": "45d747ffc90696873c3e7794e9e668cf3321660f2c5d71bbf0fc2f11a67ec2e1",
+      "upstream": {
+        "blob_id": "c8921c5f41e13821f51735de0f4c61e25061d3b0",
+        "local_modification": false,
+        "size": 73
+      }
+    },
+    {
+      "bytes": 123,
+      "path": "tokenizer.json",
+      "role": "tokenizer",
+      "sha256": "61156c5337d16945d446602a91f6aae6cd9e46ba2d21cc3ca459e0f31070f4f6",
+      "upstream": {
+        "lfs_sha256": "61156c5337d16945d446602a91f6aae6cd9e46ba2d21cc3ca459e0f31070f4f6"
+      }
+    },
+    {
+      "bytes": 72,
+      "path": "tokenizer_config.json",
+      "role": "tokenizer",
+      "sha256": "2f5d9a725ba89ddce48e46888fefff0935099289eafd19fadd4bfd5f8058a150",
+      "upstream": {
+        "blob_id": "269cbd790f0a0363177293a431f5693e78eeadd6",
+        "local_modification": false,
+        "size": 72
+      }
+    },
+    {
+      "bytes": 73,
+      "path": "video_preprocessor_config.json",
+      "role": "preprocessor",
+      "sha256": "f3fcfb61ff5cde69d6c2317188d5db9d7b1ca1ab3cffd1700b2bdbfec68ca396",
+      "upstream": {
+        "blob_id": "7c86cc4ead4dbb62f401ceca893915b5b68ae5c2",
+        "local_modification": false,
+        "size": 73
+      }
+    },
+    {
+      "bytes": 34,
+      "path": "vocab.json",
+      "role": "tokenizer",
+      "sha256": "f6c4e23d72f391da422bd6667f9b3f37d41dfdc5cf9daca560308b8332c44165",
+      "upstream": {
+        "blob_id": "6a4568cdbdb36282b3786126955f377ec575bffb",
+        "local_modification": false,
+        "size": 34
+      }
+    }
+  ],
+  "model_hash": "7709f7c8f54806a0a34e82d8ae5815d8b0af81490626a34309f0856f4361d08d",
+  "profile": {
+    "compute_capability": "0.0",
+    "compute_capability_source": "inferred",
+    "device_memory_mib": 1024,
+    "device_model": "fixture-cpu",
+    "modalities": [
+      "text"
+    ],
+    "placement": {
+      "dense": "device",
+      "draft": "device",
+      "nvfp4_block_scale": "device",
+      "nvfp4_global_scale": "device",
+      "nvfp4_input_scale": "device",
+      "nvfp4_weight": "device",
+      "ple_index": "host_pinned",
+      "ple_module": "device",
+      "ple_scale": "host_pinned",
+      "ple_table": "host_pinned",
+      "vision": "unused"
+    },
+    "profile_id": "fixture-plehost-text-v1",
+    "schema_version": "1",
+    "speculative": "nextn"
+  },
+  "profile_id": "fixture-plehost-text-v1",
+  "quality_mode": "layout_only",
+  "schema_version": "2",
+  "source": {
+    "revision": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "tree_sha256": "2027b0fa5a768ddb8c53b7f0ad7b44e894b616d68519120e9ccbc085b030a789"
+  },
+  "template_hash": "5ef87e01e7fd51bd30269f9657444128afcdffe4a23fadd75499c52274167f0f",
+  "tensor_layout_abi": 1,
+  "tokenizer_hash": "31fb9829422ff269582da1f012eb332d06f2d825dad670c7ec94b8ced7d8a3fb",
+  "totals": {
+    "by_dtype": {
+      "BF16": {
+        "bytes": 173202,
+        "count": 25
+      },
+      "F32": {
+        "bytes": 48,
+        "count": 12
+      },
+      "F8_E4M3": {
+        "bytes": 352,
+        "count": 10
+      },
+      "I64": {
+        "bytes": 88,
+        "count": 3
+      },
+      "U8": {
+        "bytes": 1536,
+        "count": 6
+      }
+    },
+    "by_placement": {
+      "device": {
+        "bytes": 174760,
+        "count": 46
+      },
+      "host_pinned": {
+        "bytes": 250,
+        "count": 8
+      },
+      "unused": {
+        "bytes": 216,
+        "count": 2
+      }
+    }
+  },
+  "transforms": [
+    {
+      "name": "pickle_int_list_to_u32le:v1",
+      "output": "draft/token_map.u32le",
+      "source_bytes": 8185,
+      "source_sha256": "13c074b3d27549361c947fb4b59b61db13cd415d16cc07d0def79fd8766e8d66"
+    }
+  ]
+}

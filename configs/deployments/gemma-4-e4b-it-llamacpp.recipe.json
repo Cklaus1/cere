@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "recipe_id": "gemma-4-e4b-it-llamacpp",
+  "model_ref": "local://models/gemma-4-e4b-it-gguf/gemma-4-e4b-it-bf16.gguf",
+  "backend_profile_id": "llamacpp-gemma-4-e4b-it-v1",
+  "context_tokens": 32768,
+  "required_operations": [
+    "chat"
+  ],
+  "adapters": [],
+  "residency": {
+    "priority": 1000,
+    "keep_warm_seconds": 0,
+    "pinned": true
+  },
+  "sampling_defaults": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  }
+}

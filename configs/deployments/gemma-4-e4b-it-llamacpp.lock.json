@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "gemma-4-e4b-it-llamacpp-lock-v1",
+  "recipe_sha256": "c7236738b70309e0628845f6e89c63219c4bc03aeefc0fe75c97e769d410186c",
+  "artifact_sha256": "55c7e52880c6e3f9614d45365057c266650e714f42a063dd3997d520cf7ce414",
+  "model_content_sha256": "55c7e52880c6e3f9614d45365057c266650e714f42a063dd3997d520cf7ce414",
+  "tokenizer_sha256": "f2b7feb72dc2b3698b0a38982866db5d63a0be59303f6229e923ad50bb918d9a",
+  "template_sha256": "2f1b4d75d067bae3fe44e676721c7f077d243bc007156cb9c2f8b5836613d082",
+  "backend_build_sha256": "96b67ba1535d558ef204e25e0dcfb8c930db7f3cd4ac0cc57db1d4c12fa5de1c",
+  "backend_profile_id": "llamacpp-gemma-4-e4b-it-v1",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

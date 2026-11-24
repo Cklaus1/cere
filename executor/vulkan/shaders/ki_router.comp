@@ -1,0 +1,106 @@
+#version 460
+// Inkling S11: the MoE router (Inkling2LoopTopKRouter, REF:1152-1172; order: InkS4's router_ref.h contract), one
+// workgroup per token. logit_e = reduce_dot<256>(x, w_e) over H = 2304 (x BF16, w BF16 [E][H], E <= 128, FP32 math);
+// score_e = ref::sigmoid(logit_e); key_e = add(score_e, bias_e); top-8 by key (router_ref.h router_before: ties the lower
+// expert id; a NaN key ranks below every number, NaNs among themselves by id), the 8 winners listed by ascending expert
+// id; sum = sequential add of their scores in that order from 0;
+// w_k = mul(div(score_k, add(sum, 1e-20)), scaling). Outputs ids int32 [m][8], weights FP32 [m][8].
+// STAGE 0 (logits): workgroup (expert group, token), EC experts per group, lane t holds the partials of EC experts, one
+// halving tree per expert; writes lg [m][E] FP32. STAGE 1 (select): one workgroup per token reads lg. The tree per
+// expert depends on neither EC nor the split (S12: the logits run on E / EC workgroups per token, not one).
+// mutant 1 (fail-first G3 only, CUDA moe.h kSoftmaxRouting): w_k = mul(div(exp(sub(logit_k, mx)), sum_exp), scaling)
+// over the 8 winners' logits (mx = fmaxf chain, sum_exp sequential from 0), instead of sigmoid / sum.
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t x, w, bias, ids, wts, lg;
+    uint m, E, H, mutant;
+    float scaling;
+} p;
+
+#if STAGE == 0
+#define EC 4u
+#else
+#define EC 1u
+#endif
+#define TOPK 8u
+shared float red[EC][WG];
+shared float key[128];
+shared float score[128];
+shared float logit[128];
+
+// router_ref.h router_before: expert a (key va) ranks before expert b (key vb).
+bool before(float va, uint a, float vb, uint b) {
+    const bool na = isnan(va), nb = isnan(vb);
+    if (na != nb) return nb;
+    if (!na && va != vb) return va > vb;
+    return a < b;
+}
+
+void main() {
+    const uint t = gl_LocalInvocationID.x;
+    const uint E = p.E, H = p.H;
+#if STAGE == 0
+    const uint tok = gl_WorkGroupID.y, e0 = gl_WorkGroupID.x * EC;
+    [[unroll]] for (uint c = 0u; c < EC; ++c) {
+        float acc = 0.0;
+        if (e0 + c < E)
+            for (uint i = t; i < H; i += WG) acc = ki_fma(ldbf(p.x, tok * H + i), ldbf(p.w, (e0 + c) * H + i), acc);
+        red[c][t] = acc;
+    }
+    barrier();
+    for (uint o = WG >> 1; o > 0u; o >>= 1) {
+        if (t < o)
+            [[unroll]] for (uint c = 0u; c < EC; ++c) { precise float s = red[c][t] + red[c][t + o]; red[c][t] = s; }
+        barrier();
+    }
+    if (t < EC && e0 + t < E) stf(p.lg, tok * E + e0 + t, red[t][0]);
+#else
+    const uint tok = gl_WorkGroupID.x;
+    if (t < E) {
+        const float lgt = ldf(p.lg, tok * E + t);
+        const float sc = ki_sigmoid(lgt);
+        score[t] = sc;
+        logit[t] = lgt;
+        precise float k = sc + ldf(p.bias, t);
+        key[t] = k;
+    }
+    barrier();
+    // Rank of expert e = #(experts ranking before it); winners: rank < 8 (the same set as router_ref.h's repeated pick).
+    if (t < E) {
+        const float kt = key[t];
+        uint rank = 0u;
+        for (uint f = 0u; f < E; ++f) rank += before(key[f], f, kt, t) ? 1u : 0u;
+        red[0][t] = rank < TOPK ? 1.0 : 0.0;
+    }
+    barrier();
+    if (t == 0u) {
+        uint slot = 0u;
+        uint sel[TOPK];
+        for (uint e = 0u; e < E && slot < TOPK; ++e)
+            if (red[0][e] != 0.0) sel[slot++] = e;
+        if (p.mutant == 1u) {
+            float mx = logit[sel[0]];
+            for (uint k = 1u; k < TOPK; ++k) mx = max(mx, logit[sel[k]]);
+            float ex[TOPK];
+            float se = 0.0;
+            for (uint k = 0u; k < TOPK; ++k) { ex[k] = ki_exp(ki_sub(logit[sel[k]], mx)); se = ki_add(se, ex[k]); }
+            for (uint k = 0u; k < TOPK; ++k) {
+                stu(p.ids, tok * TOPK + k, sel[k]);
+                stf(p.wts, tok * TOPK + k, ki_mul(ki_div(ex[k], se), p.scaling));
+            }
+            return;
+        }
+        precise float sum = 0.0;
+        for (uint k = 0u; k < TOPK; ++k) sum = sum + score[sel[k]];
+        precise float den = sum + uintBitsToFloat(0x1e3ce508u);  // 1e-20f
+        for (uint k = 0u; k < TOPK; ++k) {
+            stu(p.ids, tok * TOPK + k, sel[k]);
+            precise float wk = ki_div(score[sel[k]], den) * p.scaling;
+            stf(p.wts, tok * TOPK + k, wk);
+        }
+    }
+#endif
+}

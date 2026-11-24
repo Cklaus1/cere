@@ -1,0 +1,1145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/model_descriptor.schema.json",
+  "title": "CERE native model descriptor (tasks/selftune-spec.md D1, E1; draft of SelfTune ST0)",
+  "description": "One model's dimensions, layer kinds per layer index, weight layout, graph segmentation, draft head, vision tower and decode policy, each value with its sources. A source is `config.json:<dotted key>` (the checkpoint's config.json holds the key with this value), `config.json!<dotted key>` (the checkpoint's config.json has no such key; the value is the field's documented absent value) or `executor:<repo path>#<constant>` (a constexpr of the native executor: a decimal literal, or `gen::kName` of the constants header the build generates from executor/models/qwen38-flash-next.json with executor/tools/gen_model_header.py, SelfTune ST1a). Every source of a value must agree with it; scripts/cere_contracts.py `model_descriptor_rules` and `descriptor_config_errors` check that. A field the model's layer kinds, slots or weights do not use is absent, and the allOf rules require each field where it applies (SelfTune ST0b, owner 2026-11-11: one schema for Qwen3.8-Flash-Next and DICE-8B).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "model_id",
+    "architecture",
+    "model_type",
+    "checkpoint",
+    "dimensions",
+    "layers",
+    "slots",
+    "weights",
+    "graph",
+    "draft_head",
+    "vision"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "model_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{0,63}(?![\\s\\S])"
+    },
+    "architecture": {
+      "$ref": "#/$defs/string_list_fact"
+    },
+    "model_type": {
+      "$ref": "#/$defs/string_fact"
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "config_json_sha256"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "reference_path"
+          ]
+        },
+        {
+          "required": [
+            "config_json_fixture",
+            "hub"
+          ]
+        }
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}(?![\\s\\S])"
+        },
+        "config_json_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "hf_quant_config_sha256": {
+          "description": "The checkpoint's hf_quant_config.json (per-tensor quantization groups; tasks/inkling-spec.md D-I6), committed next to the config.json fixture; required when a source names hf_quant_config.json. A file with another sha256 is refused.",
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "reference_path": {
+          "description": "Where the checkpoint's config.json lives on the dev host; read-only, checked when readable.",
+          "type": "string",
+          "pattern": "^/[^\\x00]{1,4095}/config\\.json(?![\\s\\S])"
+        },
+        "config_json_fixture": {
+          "description": "The checkpoint's config.json committed in the repo (no weights), next to a source.json naming its hub repo, revision and sha256; always checked, so the descriptor validates offline.",
+          "type": "string",
+          "pattern": "^tests/fixtures/model_configs/[a-z0-9][a-z0-9_.-]{0,63}/config\\.json(?![\\s\\S])"
+        },
+        "hub": {
+          "description": "Where config_json_fixture was fetched from: a Hugging Face model repo at a pinned commit.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repo",
+            "revision"
+          ],
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}(?![\\s\\S])"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+            }
+          }
+        }
+      }
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "partial_rotary_factor absent: rotary_dim == head_dim; mrope_section absent: plain 1-D RoPE positions (model_descriptor_rules). rotary_dim and rope_theta are required unless the descriptor has `relative_position` (a model with no RoPE). The other optional dimensions are required by the allOf rules where the layer kinds or slots use them.",
+      "required": [
+        "vocab_size",
+        "hidden_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "head_dim",
+        "rms_norm_eps",
+        "max_position_embeddings",
+        "eos_token_id"
+      ],
+      "properties": {
+        "intermediate_size": {
+          "description": "The dense FFN width (required when a layer's ffn is dense).",
+          "$ref": "#/$defs/int_fact"
+        },
+        "vocab_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "hidden_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_hidden_layers": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_attention_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_key_value_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "head_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "rotary_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "partial_rotary_factor": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "rope_theta": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "mrope_section": {
+          "$ref": "#/$defs/int_list_fact"
+        },
+        "rms_norm_eps": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "full_attention_interval": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "max_position_embeddings": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "hc_count": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "hc_lowrank": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "linear_num_key_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "linear_num_value_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "linear_key_head_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "linear_value_head_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "linear_conv_kernel_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_experts": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_experts_per_tok": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "moe_intermediate_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "shared_expert_intermediate_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "indexer_n_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "indexer_head_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "indexer_kv_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "indexer_compress_ratio": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "indexer_budget": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "ple_layer_ids": {
+          "description": "1-based, as config.json writes them; layers[].ple marks the same layers 0-based.",
+          "$ref": "#/$defs/int_list_fact"
+        },
+        "ple_embed_dim": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "ple_conv_kernel_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "heads_per_ngram": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "ngram_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "split_ngram_parts": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "eos_token_id": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "unpadded_vocab_size": {
+          "description": "Rows of the unembedding that are real tokens (the rest of vocab_size is padding).",
+          "$ref": "#/$defs/int_fact"
+        },
+        "sliding_window_size": {
+          "description": "Keys a sliding_attention layer's query sees (itself included).",
+          "$ref": "#/$defs/int_fact"
+        },
+        "conv_kernel_size": {
+          "description": "Taps of the short causal depthwise convolutions on the residual stream and on K/V.",
+          "$ref": "#/$defs/int_fact"
+        },
+        "n_layers_per_attn_res_block": {
+          "description": "Layers per block of the block attention residual (depth softmax over block states).",
+          "$ref": "#/$defs/int_fact"
+        },
+        "final_logit_softcapping": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "mlp_gate_softcap": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "mlp_up_softcap": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "route_scale": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "qk_l2_clip_threshold": {
+          "$ref": "#/$defs/number_fact"
+        }
+      }
+    },
+    "loop": {
+      "description": "A looped decoder (Inkling 2 Mini, tasks/inkling-spec.md D-I2): layers core_start .. core_end - 1 run num_passes times with shared weights, every other layer once; absent: every layer once. model_descriptor_rules: 0 < core_start < core_end <= num_hidden_layers, num_passes >= 1.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "core_start",
+        "core_end",
+        "num_passes",
+        "gate_rank",
+        "is_varloop"
+      ],
+      "properties": {
+        "core_start": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "core_end": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_passes": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "gate_rank": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "is_varloop": {
+          "$ref": "#/$defs/bool_fact"
+        }
+      }
+    },
+    "relative_position": {
+      "description": "Position by a hidden-conditioned relative bias instead of RoPE (Inkling 2 Mini): per token and head d_rel features times a learned [d_rel, rel_extent] bank give one additive logit per backward distance below rel_extent; full-attention layers also scale q by a log position factor (log_scaling_n_floor, log_scaling_alpha).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "d_rel",
+        "rel_extent",
+        "rel_l2_clip_threshold",
+        "log_scaling_n_floor",
+        "log_scaling_alpha"
+      ],
+      "properties": {
+        "d_rel": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "rel_extent": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "rel_l2_clip_threshold": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "log_scaling_n_floor": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "log_scaling_alpha": {
+          "$ref": "#/$defs/number_fact"
+        }
+      }
+    },
+    "layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "kinds"
+      ],
+      "properties": {
+        "sources": {
+          "description": "Where the per-layer kinds come from (config layer_types, ple_layer_ids, local_layer_ids (the sliding_attention layers, the rest full attention), use_sliding_window: false with every layer full attention; hf_quant_config.json:model.parameter_groups for each layer's expert format).",
+          "$ref": "#/$defs/sources"
+        },
+        "kinds": {
+          "description": "One entry per layer index, 0-based; its length is dimensions.num_hidden_layers.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mixer",
+              "ffn",
+              "ple"
+            ],
+            "properties": {
+              "mixer": {
+                "enum": [
+                  "linear_attention",
+                  "full_attention",
+                  "sliding_attention"
+                ]
+              },
+              "ffn": {
+                "enum": [
+                  "moe",
+                  "dense"
+                ]
+              },
+              "ple": {
+                "type": "boolean"
+              },
+              "experts": {
+                "description": "The stored format of a moe layer's routed experts (absent from every entry: the weights section's quant_algo for all): nvfp4 (E2M1 codes, E4M3 scales per 16, F32 amax, outer scale denominator) or mxfp8 (E4M3 values, UE8M0 scales per 32).",
+                "enum": [
+                  "nvfp4",
+                  "mxfp8"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "slots": {
+      "description": "D2 operation slots each layer kind runs, in order; the plan builder (ST1) walks layers.kinds through these.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "linear_attention": {
+          "$ref": "#/$defs/slot_list"
+        },
+        "full_attention": {
+          "$ref": "#/$defs/slot_list"
+        },
+        "sliding_attention": {
+          "$ref": "#/$defs/slot_list"
+        },
+        "model": {
+          "$ref": "#/$defs/slot_list"
+        }
+      }
+    },
+    "weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quant_algo",
+        "dense_dtype",
+        "tie_word_embeddings"
+      ],
+      "properties": {
+        "quant_algo": {
+          "description": "\"none\" for an unquantized checkpoint (sourced `config.json!quantization_config`); otherwise group_size and unquantized_modules are required.",
+          "$ref": "#/$defs/string_fact"
+        },
+        "group_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "dense_dtype": {
+          "$ref": "#/$defs/string_fact"
+        },
+        "ple_embedding_dtype": {
+          "$ref": "#/$defs/string_fact"
+        },
+        "linear_state_dtype": {
+          "$ref": "#/$defs/string_fact"
+        },
+        "unquantized_modules": {
+          "$ref": "#/$defs/string_list_fact"
+        },
+        "tie_word_embeddings": {
+          "$ref": "#/$defs/bool_fact"
+        }
+      }
+    },
+    "graph": {
+      "description": "The native executor's graph segmentation (null: the model has no native executor plan yet; SelfTune ST4 adds DICE-8B's).",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "verify_segment_layers",
+        "max_chunk_tokens"
+      ],
+      "properties": {
+        "verify_segment_layers": {
+          "description": "Layers per captured verify graph segment; kGraphSegments = num_hidden_layers / this + 1 (model.h).",
+          "$ref": "#/$defs/int_fact"
+        },
+        "max_chunk_tokens": {
+          "$ref": "#/$defs/int_fact"
+        }
+      }
+    },
+    "draft_head": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mtp"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "num_hidden_layers",
+          "layer_types",
+          "rope_theta",
+          "use_dedicated_embeddings"
+        ]
+      },
+      "properties": {
+        "kind": {
+          "enum": [
+            "mtp",
+            "none"
+          ]
+        },
+        "num_hidden_layers": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "layer_types": {
+          "$ref": "#/$defs/string_list_fact"
+        },
+        "rope_theta": {
+          "$ref": "#/$defs/number_fact"
+        },
+        "use_dedicated_embeddings": {
+          "$ref": "#/$defs/bool_fact"
+        }
+      }
+    },
+    "vision": {
+      "description": "The vision tower (null for a text-only model).",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "depth",
+        "hidden_size",
+        "intermediate_size",
+        "num_heads",
+        "patch_size",
+        "temporal_patch_size",
+        "spatial_merge_size",
+        "in_channels",
+        "out_hidden_size",
+        "num_position_embeddings"
+      ],
+      "properties": {
+        "depth": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "hidden_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "intermediate_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_heads": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "patch_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "temporal_patch_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "spatial_merge_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "in_channels": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "out_hidden_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "num_position_embeddings": {
+          "$ref": "#/$defs/int_fact"
+        }
+      }
+    },
+    "decode": {
+      "description": "The decode policy. Absent: autoregressive (one token per step, causal attention, each token's KV written to the cache when it is computed). block_diffusion (SDAR; DICE-8B, arXiv 2602.11715): the output grows by blocks of block_size positions, each starting as mask_token_id and unmasked over denoising steps of one forward each at m = block_size; attention is causal across blocks and bidirectional within a block; a block's KV is written to the cache once the block is complete (modeling_sdar.py `store_kv`), and denoising steps read the cache without writing it. The unmasking parameters (confidence threshold, steps per block) are not in config.json: open item ST0b-O1 of tasks/selftune-spec.md; model_descriptor_rules refuses a block_diffusion descriptor whose draft head is not none.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "block_size",
+        "mask_token_id",
+        "attention_within_block",
+        "attention_across_blocks",
+        "cache_write",
+        "unmasking"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "block_diffusion"
+          ]
+        },
+        "block_size": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "mask_token_id": {
+          "$ref": "#/$defs/int_fact"
+        },
+        "attention_within_block": {
+          "enum": [
+            "bidirectional"
+          ]
+        },
+        "attention_across_blocks": {
+          "enum": [
+            "causal"
+          ]
+        },
+        "cache_write": {
+          "enum": [
+            "per_block"
+          ]
+        },
+        "unmasking": {
+          "enum": [
+            "confidence_threshold"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "not": {
+          "required": [
+            "relative_position"
+          ]
+        }
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "rotary_dim",
+              "rope_theta"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_sliding_attention"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "sliding_window_size"
+            ]
+          },
+          "slots": {
+            "required": [
+              "sliding_attention"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_linear_attention"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "full_attention_interval",
+              "linear_num_key_heads",
+              "linear_num_value_heads",
+              "linear_key_head_dim",
+              "linear_value_head_dim",
+              "linear_conv_kernel_dim"
+            ]
+          },
+          "slots": {
+            "required": [
+              "linear_attention"
+            ]
+          },
+          "weights": {
+            "required": [
+              "linear_state_dtype"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_full_attention"
+      },
+      "then": {
+        "properties": {
+          "slots": {
+            "required": [
+              "full_attention"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_moe"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "num_experts",
+              "num_experts_per_tok",
+              "moe_intermediate_size",
+              "shared_expert_intermediate_size"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_dense_ffn"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "intermediate_size"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_ple"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "ple_layer_ids",
+              "ple_embed_dim",
+              "ple_conv_kernel_size",
+              "heads_per_ngram",
+              "ngram_size",
+              "split_ngram_parts"
+            ]
+          },
+          "weights": {
+            "required": [
+              "ple_embedding_dtype"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_sparse_qsa"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "indexer_n_heads",
+              "indexer_head_dim",
+              "indexer_kv_heads",
+              "indexer_compress_ratio",
+              "indexer_budget"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "$ref": "#/$defs/has_hyper_connections"
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "hc_count",
+              "hc_lowrank"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "vision"
+        ],
+        "properties": {
+          "vision": {
+            "type": "object"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "required": [
+              "mrope_section"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "weights"
+        ],
+        "properties": {
+          "weights": {
+            "required": [
+              "quant_algo"
+            ],
+            "properties": {
+              "quant_algo": {
+                "properties": {
+                  "value": {
+                    "const": "none"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "weights": {
+            "required": [
+              "group_size",
+              "unquantized_modules"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "source": {
+      "type": "string",
+      "pattern": "^(config\\.json[:!][A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*|hf_quant_config\\.json:[A-Za-z_][A-Za-z0-9_]*(\\.([A-Za-z_][A-Za-z0-9_]*|0|[1-9][0-9]{0,3}))*|executor:executor/[A-Za-z0-9_./-]{1,200}#k[A-Za-z0-9_]{1,63})(?![\\s\\S])"
+    },
+    "has_linear_attention": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "mixer"
+                ],
+                "properties": {
+                  "mixer": {
+                    "const": "linear_attention"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_sliding_attention": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "mixer"
+                ],
+                "properties": {
+                  "mixer": {
+                    "const": "sliding_attention"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_full_attention": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "mixer"
+                ],
+                "properties": {
+                  "mixer": {
+                    "const": "full_attention"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_moe": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "ffn"
+                ],
+                "properties": {
+                  "ffn": {
+                    "const": "moe"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_dense_ffn": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "ffn"
+                ],
+                "properties": {
+                  "ffn": {
+                    "const": "dense"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_ple": {
+      "$ref": "#/$defs/layer_kind_present",
+      "properties": {
+        "layers": {
+          "properties": {
+            "kinds": {
+              "contains": {
+                "required": [
+                  "ple"
+                ],
+                "properties": {
+                  "ple": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "layer_kind_present": {
+      "required": [
+        "layers"
+      ],
+      "properties": {
+        "layers": {
+          "required": [
+            "kinds"
+          ]
+        }
+      }
+    },
+    "has_sparse_qsa": {
+      "required": [
+        "slots"
+      ],
+      "properties": {
+        "slots": {
+          "required": [
+            "full_attention"
+          ],
+          "properties": {
+            "full_attention": {
+              "contains": {
+                "const": "attention.sparse_qsa"
+              }
+            }
+          }
+        }
+      }
+    },
+    "has_hyper_connections": {
+      "required": [
+        "slots"
+      ],
+      "properties": {
+        "slots": {
+          "required": [
+            "model"
+          ],
+          "properties": {
+            "model": {
+              "contains": {
+                "const": "mix.hc"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "int_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "number_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "string_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,128}(?![\\s\\S])"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "bool_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "boolean"
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "int_list_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "string_list_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "sources"
+      ],
+      "properties": {
+        "value": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.*-]{1,128}(?![\\s\\S])"
+          }
+        },
+        "sources": {
+          "$ref": "#/$defs/sources"
+        }
+      }
+    },
+    "slot_list": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "enum": [
+          "embed.token",
+          "embed.ple",
+          "mix.hc",
+          "norm",
+          "attention.full",
+          "attention.linear_gdn",
+          "attention.sparse_qsa",
+          "ffn.dense",
+          "ffn.moe",
+          "lm_head",
+          "sample",
+          "draft.mtp",
+          "decode.block_diffusion",
+          "vision"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+ "schema": "dice8b-derived-files-v1",
+ "about": "SelfTune ST4 S3d (D-m): files of the DICE-8B artifact that the hub source lacks, derived inside the reference image by scripts/native/dice_reference.py tokenizer.",
+ "files": {
+  "tokenizer.json": {
+   "sha256": "0dbef892a2c52e7074ca85c5294c1c48293a93b646903f03f46282d0ddc86d46",
+   "bytes": 11422833,
+   "role": "tokenizer"
+  }
+ },
+ "how": "transformers Qwen2TokenizerFast.from_pretrained(/model, trust_remote_code=False).save_pretrained",
+ "image_id": "sha256:37e8cf2aa1baaaf0900247899eabeebc31c6c1a0b3f841ef3888d3ae719bed37",
+ "versions": {
+  "python": "3.11.13",
+  "transformers": "4.52.4",
+  "tokenizers": "0.21.4"
+ },
+ "source_json_sha256": "fedf80c5702a1af505327c93254cf27b5b8de06fb1cd65fd204520c6fda17886",
+ "prompts_sha256": "ba255b01b4d193d559b0db3424144b12a40600b9d6859c08ae3025f982fd972a",
+ "prompts_equal": 64
+}

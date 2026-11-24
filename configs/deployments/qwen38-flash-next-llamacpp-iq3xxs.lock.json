@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "qwen38-flash-next-llamacpp-iq3xxs-lock-v1",
+  "recipe_sha256": "59b3ab9a5fdcffbde7ff51397224d61ec6f3072a9a2131ca0d67c5707ce7221e",
+  "artifact_sha256": "39ad4b0b345954470eb9c644b4898aea98f7c92e2e0c59c9bcb0e5b77bb0b42e",
+  "model_content_sha256": "39ad4b0b345954470eb9c644b4898aea98f7c92e2e0c59c9bcb0e5b77bb0b42e",
+  "tokenizer_sha256": "c4f14798e03b8d2fadcb06bc42f1d0fce3cc2c9bcc743b6bdec16bb03b59f4fd",
+  "template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+  "backend_build_sha256": "96b67ba1535d558ef204e25e0dcfb8c930db7f3cd4ac0cc57db1d4c12fa5de1c",
+  "backend_profile_id": "llamacpp-qwen38-flash-next-iq3xxs-v1",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

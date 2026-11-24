@@ -1,0 +1,55 @@
+schema_version: '1'
+name: rtx_pro_6000_x2
+evidence: unmeasured
+nodes:
+- id: gpu0
+  kind: gpu
+  capacity_bytes: null
+  attributes:
+    family: blackwell
+    marketing_memory: 96 GB
+    memory_technology: gddr7
+- id: gpu1
+  kind: gpu
+  capacity_bytes: null
+  attributes:
+    family: blackwell
+    marketing_memory: 96 GB
+    memory_technology: gddr7
+- id: host_ram
+  kind: host_memory
+  capacity_bytes: null
+  attributes: {}
+- id: nvme0
+  kind: nvme
+  capacity_bytes: null
+  attributes: {}
+links:
+- from: host_ram
+  to: gpu0
+  kind: pcie
+  bandwidth_bytes_s: null
+  latency_ns: null
+  peer_access: null
+  contention_domain: root0
+- from: nvme0
+  to: host_ram
+  kind: storage
+  bandwidth_bytes_s: null
+  latency_ns: null
+  peer_access: null
+  contention_domain: storage0
+- from: host_ram
+  to: gpu1
+  kind: pcie
+  bandwidth_bytes_s: null
+  latency_ns: null
+  peer_access: null
+  contention_domain: root0
+- from: gpu0
+  to: gpu1
+  kind: peer
+  bandwidth_bytes_s: null
+  latency_ns: null
+  peer_access: null
+  contention_domain: root0

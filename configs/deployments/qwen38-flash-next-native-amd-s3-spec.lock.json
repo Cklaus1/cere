@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "qwen38-flash-next-native-amd-s3-spec-lock-v1",
+  "recipe_sha256": "f77edc4851fc7ae9cd9c10c08d42e6309eaa9909a41f478b7232c03c3b1640d1",
+  "artifact_sha256": "dedc7dba9bc84493aa0c7a6e29edcd34c2636fe662af86f5d23cb7564bdde058",
+  "model_content_sha256": "5bbe34a0b1d863dcb11081a95d9218cc73ec4d9f1dfbc896f8c861bc4a347704",
+  "tokenizer_sha256": "5cba89bb97f70720773d6148b3e86aa3f22e914acbad16930f559d107996405b",
+  "template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "backend_build_sha256": "7deab21a9488737095a41d5177d977312f8d24070719aa1598e7a07c8bc278c1",
+  "backend_profile_id": "native-amd-qwen38-flash-next-spec-v61",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

@@ -1,0 +1,62 @@
+#version 460
+// Inkling S11: the portable dense projection y[r][j] = sum_i x[r][i] w[j][i] (x BF16 [m][k], w BF16 [n][k], k even;
+// y BF16 (RNE) or FP32 [m][n]), one fma chain per output in ascending i: acc = 0; acc = fma(x[i], w[i], acc). Used
+// where K2's GEMM / GEMV cannot run (no cooperative matrices or required subgroup size, e.g. lavapipe) and as the
+// forward's deterministic baseline; row-independent (a row's bits do not depend on m or the chunking).
+// One invocation per (column j, block of R rows): the weight row is read once per R rows. The workgroup's 64 weight
+// rows are staged through shared memory in tiles of KT words (coalesced: 32 lanes read one row's 128 bytes); the
+// arithmetic (each output's fma chain in ascending i) is unchanged by the tiling.
+// flags: 1 = y FP32 (else BF16).
+#extension GL_GOOGLE_include_directive : require
+#define WG 64
+#include "ki_common.comp"
+#define R 8
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t x, w, y;
+    uint m, n, k, flags;
+} p;
+
+#define KT 32u
+shared uint wt[WG][KT + 1u];
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x;
+    const uint j0 = gl_WorkGroupID.x * WG;
+    const uint j = j0 + lid;
+    const uint r0 = gl_WorkGroupID.y * R;
+    const uint rows = min(p.m - r0, uint(R));
+    float acc[R];
+    [[unroll]] for (uint r = 0u; r < R; ++r) acc[r] = 0.0;
+    const uint half_k = p.k >> 1;
+    for (uint i0 = 0u; i0 < half_k; i0 += KT) {
+        const uint kt = min(KT, half_k - i0);
+        [[unroll]] for (uint t = 0u; t < (WG * KT) / WG; ++t) {
+            const uint idx = t * WG + lid;
+            const uint row = idx / KT, col = idx % KT;
+            if (j0 + row < p.n && col < kt) wt[row][col] = ldu(p.w, (j0 + row) * half_k + i0 + col);
+        }
+        barrier();
+        if (j < p.n) {
+            for (uint c = 0u; c < kt; ++c) {
+                const uint wv = wt[lid][c];
+                const float w0 = bf2f(wv), w1 = bf2f(wv >> 16);
+                [[unroll]] for (uint r = 0u; r < R; ++r) {
+                    if (r < rows) {
+                        const uint xv = ldu(p.x, (r0 + r) * half_k + i0 + c);
+                        acc[r] = ki_fma(bf2f(xv), w0, acc[r]);
+                        acc[r] = ki_fma(bf2f(xv >> 16), w1, acc[r]);
+                    }
+                }
+            }
+        }
+        barrier();
+    }
+    if (j >= p.n) return;
+    [[unroll]] for (uint r = 0u; r < R; ++r) {
+        if (r < rows) {
+            const uint o = (r0 + r) * p.n + j;
+            if ((p.flags & 1u) != 0u) stf(p.y, o, acc[r]); else stbf(p.y, o, acc[r]);
+        }
+    }
+}

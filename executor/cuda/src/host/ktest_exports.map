@@ -1,0 +1,8 @@
+/* Dynamic symbol list of libcere_ktest.so: the kernel-test entry points `cere_ktest_*` (device pointers + stream)
+ * only; the kernels' C++ internals and the static NVIDIA libraries stay local. */
+{
+  global:
+    cere_ktest_*;
+  local:
+    *;
+};

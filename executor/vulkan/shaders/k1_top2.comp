@@ -1,0 +1,107 @@
+#version 460
+// VulkanAmd P2 K1: device top-2 (k1_primitives.h top2_split), one 1024-thread workgroup per row (the HIP build also uses one
+// block per row; the CUDA 8-CTA cluster has no counterpart and the result is a function of the candidate set only).
+// torch.argmax order: NaN beats everything (first NaN wins), then the larger value, then the lower index: one 64-bit key per
+// candidate (order-preserving 16-bit key of the BF16 logit << 32 | ~index; -0 keyed as +0, every NaN 0xffff), top-2 of the
+// keys, merged by a xor tree over the 32-lane subgroup (subgroup size 32 required) then over the 32 warps. Exact (integer).
+// ids int32 [rows, 2] = (best, runner-up) (kNone = 0xffffffff when missing), scores f32 [rows, 2] (the winners' logits, -Inf when missing).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+layout(local_size_x = 1024) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t logits, ids, scores;
+    uint64_t stride;    // elements between rows
+    uint64_t vocab;
+    uint aligned16;     // row base 16-byte aligned: scan 8-logit words
+    uint out_stride;    // 4-byte words between rows of ids / scores: 2 for [rows, 2] arrays, 4 for cere_token_score (ids = &id, scores = &logit)
+} pc;
+shared uint64_t sb[32], ss[32];
+
+uint64_t key_of(uint bits, uint i) {
+    uint k;
+    if ((bits & 0x7FFFu) > 0x7F80u) k = 0xFFFFu;
+    else if (bits == 0x8000u) k = 0x8000u;
+    else k = (bits & 0x8000u) != 0u ? (~bits & 0xFFFFu) : (bits | 0x8000u);
+    return (uint64_t(k) << 32) | uint64_t(~i);
+}
+void push(inout uint64_t best, inout uint64_t second, uint64_t p) {
+    if (p > second) {
+        if (p > best) { second = best; best = p; } else { second = p; }
+    }
+}
+void merge(inout uint64_t best, inout uint64_t second, uint64_t ob, uint64_t os) {
+    const uint64_t lo_ = min(best, ob);
+    const uint64_t hs = max(second, os);
+    best = max(best, ob);
+    second = max(lo_, hs);
+}
+uint64_t shfl(uint64_t v, uint o) {
+    const uvec2 u = unpackUint2x32(v);
+    return packUint2x32(uvec2(subgroupShuffleXor(u.x, o), subgroupShuffleXor(u.y, o)));
+}
+void warp_merge(inout uint64_t best, inout uint64_t second) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) merge(best, second, shfl(best, o), shfl(second, o));
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint64_t row = pc.logits + uint64_t(gl_WorkGroupID.x) * pc.stride * 2ul;
+    uint64_t best = 0ul, second = 0ul;
+    uint scalar_from = 0u;
+    const uint vocab = uint(pc.vocab);
+    if (pc.aligned16 != 0u) {
+        const uint words = vocab / 8u;
+        for (uint c = tid; c < words; c += 1024u) {
+            const uvec4 h = V4(row + uint64_t(c * 16u)).v;
+            const uint hv[4] = uint[4](h.x, h.y, h.z, h.w);
+            [[unroll]] for (int e = 0; e < 4; ++e) {
+                const uint i = c * 8u + 2u * uint(e);
+                push(best, second, key_of(hv[e] & 0xFFFFu, i));
+                push(best, second, key_of(hv[e] >> 16, i + 1u));
+            }
+        }
+        scalar_from = words * 8u;
+    }
+    for (uint j = scalar_from + tid; j < vocab; j += 1024u)
+        push(best, second, key_of(uint(H1(row + uint64_t(j * 2u)).v), j));
+    warp_merge(best, second);
+    const uint warp = tid >> 5, lane = tid & 31u;
+    if (lane == 0u) { sb[warp] = best; ss[warp] = second; }
+    barrier();
+    if (warp == 0u) {
+        best = sb[lane]; second = ss[lane];
+        warp_merge(best, second);
+        if (lane < 2u) {
+            const uint64_t p = lane == 0u ? best : second;
+            const uint i = p == 0ul ? 0xFFFFFFFFu : ~uint(p);
+            const uint64_t o = uint64_t(gl_WorkGroupID.x) * uint64_t(pc.out_stride) + uint64_t(lane);
+            U1(pc.ids + o * 4ul).v = i;
+            F1(pc.scores + o * 4ul).v = p == 0ul ? uintBitsToFloat(0xFF800000u) : lo(uint(H1(row + uint64_t(i * 2u)).v));
+        }
+    }
+}

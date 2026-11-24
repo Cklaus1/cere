@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "recipe_id": "inkling-2-mini-native",
+  "model_ref": "local://models/Inkling-2-Mini@b85c3cfa",
+  "backend_profile_id": "native-g0-inkling-2-mini-v1",
+  "context_tokens": 1048576,
+  "required_operations": [
+    "chat"
+  ],
+  "adapters": [],
+  "residency": {
+    "priority": 1000,
+    "keep_warm_seconds": 0,
+    "pinned": true
+  },
+  "sampling_defaults": {
+    "temperature": 0.0,
+    "top_p": 1.0
+  }
+}

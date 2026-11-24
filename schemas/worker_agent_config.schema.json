@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/worker_agent_config.schema.json",
+  "title": "CERE worker_agent_config",
+  "description": "cere-worker node agent config (tasks/m35-spec.md Q16, Q12, Q14; harness revision H1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cluster_id",
+    "worker_id",
+    "listen",
+    "principal",
+    "ca_file",
+    "cert_file",
+    "key_file",
+    "state_dir",
+    "coordinator",
+    "backend"
+  ],
+  "properties": {
+    "cluster_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "listen": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "<ip>:<port>; host a loopback, 100.64.0.0/10 or RFC1918 literal, never a wildcard or public address; checked by the semantic rules."
+    },
+    "principal": {
+      "type": "string",
+      "pattern": "^(?=[\\s\\S]{1,253}(?![\\s\\S]))[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+    },
+    "ca_file": {
+      "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+      "type": "string",
+      "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+    },
+    "cert_file": {
+      "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+      "type": "string",
+      "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+    },
+    "key_file": {
+      "description": "Absolute PEM path outside any repository checkout and not under the state dir; --check-config checks the shape only.",
+      "type": "string",
+      "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+    },
+    "state_dir": {
+      "description": "Outside the repository checkout when the config lives in one.",
+      "type": "string",
+      "pattern": "^(/[A-Za-z0-9_][A-Za-z0-9._-]{0,254}){1,64}(?![\\s\\S])"
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpoint",
+        "principal",
+        "coordinator_id"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "https://<literal 100.64.0.0/10, 127.0.0.0/8 or [::1] address>:<port 1..65535>; checked by the semantic rules."
+        },
+        "principal": {
+          "type": "string",
+          "pattern": "^(?=[\\s\\S]{1,253}(?![\\s\\S]))[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(?![\\s\\S])"
+        },
+        "coordinator_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_url",
+        "served_model_name"
+      ],
+      "dependentRequired": {
+        "lock_sha256": [
+          "launch"
+        ],
+        "launch": [
+          "lock_sha256"
+        ]
+      },
+      "properties": {
+        "base_url": {
+          "type": "string",
+          "pattern": "^http://(127\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])|\\[::1\\]):[1-9][0-9]{0,4}(?![\\s\\S])"
+        },
+        "load_endpoint": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9_./-]{0,127}(?![\\s\\S])"
+        },
+        "served_model_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}(?![\\s\\S])"
+        },
+        "lock_sha256": {
+          "description": "The approved deployment lock (tasks/m36-spec.md Q3, Q7); set exactly when [backend.launch] is (attached mode has no lock).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+        },
+        "launch": {
+          "description": "Managed mode (tasks/m36-spec.md Q3): the backend the agent spawns and supervises. --check-config checks the shape only; argv[0] must exist at start. Argv entries and env values are bounded to 4096 UTF-8 bytes by the semantic rules.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "argv"
+          ],
+          "dependentRequired": {
+            "uid": [
+              "gid"
+            ],
+            "gid": [
+              "uid"
+            ]
+          },
+          "properties": {
+            "argv": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^/[^\\u0000]*(?![\\s\\S])"
+                }
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*(?![\\s\\S])"
+              }
+            },
+            "env": {
+              "description": "Extra child environment; the child's PATH is fixed (Q3).",
+              "type": "object",
+              "maxProperties": 64,
+              "propertyNames": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])",
+                "not": {
+                  "const": "PATH"
+                }
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*(?![\\s\\S])"
+              }
+            },
+            "startup_timeout_ms": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 3600000,
+              "default": 600000
+            },
+            "stop_timeout_ms": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 600000,
+              "default": 30000
+            },
+            "uid": {
+              "description": "Credentials of the child; required when the agent runs as root (checked at start, Q3). 0 (root) and 4294967295 (the setresuid sentinel) are refused.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967294
+            },
+            "gid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967294
+            }
+          }
+        }
+      }
+    },
+    "owner": {
+      "description": "Team pools (tasks/net-teleport-spec.md 4.4, C19): the person scope owning this worker (a coordinator auth scope, never cere-smoke); absent -> unowned, never owner-only.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}(?![\\s\\S])"
+    },
+    "owner_only": {
+      "description": "Team pools (C19): owner-only windows \"<days> <HH:MM>-<HH:MM> <zone>\", e.g. \"Mon-Fri 09:00-17:00 Europe/Berlin\"; inside one the agent refuses other scopes' new SubmitWork. Needs owner.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "journal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "max_operations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "retry_horizon_ms": {
+          "description": "At least the 600000 ms work cap (Q12).",
+          "type": "integer",
+          "minimum": 600000,
+          "maximum": 86400000
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "lost_after_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "rpc_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "control_quota": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "output_buffer_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "output_stall_ms": {
+          "description": "Defaults to rpc_timeout_ms; at most lost_after_ms.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        }
+      }
+    }
+  }
+}

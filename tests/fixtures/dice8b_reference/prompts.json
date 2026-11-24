@@ -1,0 +1,390 @@
+{
+ "schema": "dice8b-reference-prompts-v1",
+ "about": "SelfTune ST4 S2 (tasks/selftune-spec.md ST4): the 64 DICE-8B reference prompts. Written for this repo (license: the repo's own); the cuda prompts are KernelBench-style kernel-writing tasks, not copied from KernelBench. Each is one user turn, rendered with the model's chat template (add_generation_prompt=True) and encoded with add_special_tokens=False; sha256 is over the UTF-8 text.",
+ "prompts": [
+  {
+   "id": "cuda-00",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that adds two float32 vectors of length N elementwise, plus the host code that launches it with 256 threads per block. Handle N that is not a multiple of the block size.",
+   "sha256": "33a128b7665f29d5ba0ebf9b45b8459931529b0dcdcca0496c7edc0cc1473f81"
+  },
+  {
+   "id": "cuda-01",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel for ReLU over a float32 tensor of N elements, using a grid-stride loop. Show the launch configuration.",
+   "sha256": "3284abd5e4f3a85d2188c0937836177fee7f8a20e56b087eb8cc50047ba6b25c"
+  },
+  {
+   "id": "cuda-02",
+   "kind": "cuda",
+   "text": "Implement a CUDA kernel that computes the sum of a float32 array of N elements using shared-memory tree reduction within each block, then a second launch to combine the block partial sums.",
+   "sha256": "6a6f76c56c789c96c2cb85c1190ea66a0f5518b9dad5943f4cbaddfa937c8211"
+  },
+  {
+   "id": "cuda-03",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel for a naive single-precision matrix multiply C = A * B, where A is M x K, B is K x N and all matrices are row-major. One thread computes one element of C.",
+   "sha256": "debc18ee0469f5414da4c1904cbf29d081ed8595730b00acd15090715e4b72fc"
+  },
+  {
+   "id": "cuda-04",
+   "kind": "cuda",
+   "text": "Write a tiled CUDA matrix multiplication kernel using 16 x 16 shared-memory tiles for row-major float32 matrices whose dimensions are multiples of 16. Explain why tiling reduces global memory traffic.",
+   "sha256": "088484ff8b39889a1b1e6baa5384caeab559f15915bd96711f596f372acdcea6"
+  },
+  {
+   "id": "cuda-05",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that applies softmax to each row of a float32 matrix with R rows and C columns, one block per row. Make it numerically stable by subtracting the row maximum.",
+   "sha256": "4ebcce52c25891bbf890f1a660602c0ff24d610b681f260236b5de63cf000180"
+  },
+  {
+   "id": "cuda-06",
+   "kind": "cuda",
+   "text": "Implement LayerNorm over the last dimension of a float32 tensor of shape [rows, hidden] in CUDA, with learnable gamma and beta and epsilon 1e-5. Use one block per row and warp shuffles for the reductions.",
+   "sha256": "7180592a40b9f4a1ee72bc36fbf0f78d5dc6850adf425c43781e771fb56fcf4a"
+  },
+  {
+   "id": "cuda-07",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel computing RMSNorm: y = x / sqrt(mean(x^2) + eps) * weight, for half-precision input of shape [tokens, 4096], accumulating in float32.",
+   "sha256": "1d2cf0ccc9ba9fa5a6b459e8ed853de4e909450f5eca281c08f125eb802cd7e2"
+  },
+  {
+   "id": "cuda-08",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that transposes a 2D float32 matrix using shared memory with padding to avoid bank conflicts. The matrix is rows x cols with arbitrary sizes.",
+   "sha256": "7aba69c71d6e388f20674c65fe4207d64724ec53465e680812987accfed348c1"
+  },
+  {
+   "id": "cuda-09",
+   "kind": "cuda",
+   "text": "Implement a CUDA kernel for a 1D convolution: output[i] = sum over k of input[i + k] * filter[k], with a filter of length 7 stored in constant memory. Handle the boundary by treating out-of-range input as zero.",
+   "sha256": "683b39022327736de26f1b5889608849d303b66cae7a06656a92364097e687b5"
+  },
+  {
+   "id": "cuda-10",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel computing the elementwise GELU activation (tanh approximation) for a bfloat16 tensor, doing the math in float32.",
+   "sha256": "f2a16859d84ca068671339bf966108530b88a1f5ca0391594c8914d2f5bb32f7"
+  },
+  {
+   "id": "cuda-11",
+   "kind": "cuda",
+   "text": "Write a fused CUDA kernel that computes out = silu(gate) * up for two float16 tensors of the same shape, as used in the SwiGLU feed-forward layer.",
+   "sha256": "0ba0b58b1d3b890ed8fb2823b35c77dd44e1402092fd05b78ad892f18a686614"
+  },
+  {
+   "id": "cuda-12",
+   "kind": "cuda",
+   "text": "Implement an exclusive prefix sum (scan) over an array of 1024 int32 values in a single CUDA block, using the Blelloch up-sweep and down-sweep algorithm in shared memory.",
+   "sha256": "06c499e1641cdd9b5e94f081c1d158adec374c754b2fdc4265b55a5905c32a88"
+  },
+  {
+   "id": "cuda-13",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that computes a 256-bin histogram of an array of unsigned 8-bit values, using per-block shared-memory histograms and atomicAdd to merge them into global memory.",
+   "sha256": "26b28b6e8c9de5f1f90454212ecc6a0a8e19c776c4152f66a4b8d5c171d9b895"
+  },
+  {
+   "id": "cuda-14",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that applies rotary position embeddings to a query tensor of shape [tokens, heads, 128] in float16, given precomputed cos and sin tables of shape [tokens, 64]. Use the rotate-half convention.",
+   "sha256": "26ecaabfb1d82154cf1d289527d6051e707a66674f530409202744247a47d400"
+  },
+  {
+   "id": "cuda-15",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that finds the argmax of each row of a float32 matrix of shape [batch, vocab] with vocab up to 152000, one block per row.",
+   "sha256": "ac6a0996a470ac8a3c7f8a6209771a643d82adbc879c8d1cd812410715ea3d85"
+  },
+  {
+   "id": "cuda-16",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel computing the cross-entropy loss for each row of a float32 logits matrix [batch, classes], given an int64 label per row. Use a numerically stable log-sum-exp.",
+   "sha256": "2de6affc1446512ecdfccbed1fdc6b72fd7bbe72914b94ae507bcf58b6abb036"
+  },
+  {
+   "id": "cuda-17",
+   "kind": "cuda",
+   "text": "Implement a CUDA kernel for 2D max pooling with a 2 x 2 window and stride 2 over a float32 tensor in NCHW layout.",
+   "sha256": "ed65de7232893aa0b7fa0ea025892f79ba23efd15925e54532a45a5f13874258"
+  },
+  {
+   "id": "cuda-18",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that dequantizes int8 weights with one float32 scale per row into float16, for a weight matrix of shape [out_features, in_features].",
+   "sha256": "27fb1125903aa14c23f65a8ad68884d06daf650070f31e791b6734cd45612c12"
+  },
+  {
+   "id": "cuda-19",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel computing scaled dot-product attention scores S = Q * K^T / sqrt(d) for one head, with Q of shape [q_len, 64] and K of shape [k_len, 64] in float32, followed by a causal mask that sets S[i][j] to -infinity when j > i.",
+   "sha256": "31092b61991a2058dae4bbed05f7cb6425e5340cb7b18725d9efeff05ce0a36b"
+  },
+  {
+   "id": "cuda-20",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that computes the L2 norm of each column of a row-major float32 matrix of shape [rows, cols], with coalesced memory access.",
+   "sha256": "4f47b9e13c304bacfc2470a2b2024997224932000dd952a83b61b4ea93eaba95"
+  },
+  {
+   "id": "cuda-21",
+   "kind": "cuda",
+   "text": "Implement a CUDA kernel performing an elementwise fused multiply-add out = a * b + c over float4 vectors to use 128-bit loads, with a scalar tail loop for the remainder.",
+   "sha256": "3264828b70868bf580362c67e5674be18a548b4dd162be76180542c0b8b99a03"
+  },
+  {
+   "id": "cuda-22",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel that gathers rows of an embedding table of shape [vocab, 2560] in bfloat16 for a list of int32 token ids, writing a [tokens, 2560] output.",
+   "sha256": "6d80c0bf5845aee5dc6ea446918c7481576e0ab2b6f29cf98c0631ad6c11c6b1"
+  },
+  {
+   "id": "cuda-23",
+   "kind": "cuda",
+   "text": "Write a CUDA kernel computing the cumulative sum along the last dimension of a float32 tensor [rows, 512], one warp per row, using warp shuffle instructions.",
+   "sha256": "80bedf87a87361b4d055f886cf64428790b3eda247791fe2bffe03697158887d"
+  },
+  {
+   "id": "chat-00",
+   "kind": "chat",
+   "text": "Explain in three paragraphs how a hash table handles collisions, comparing separate chaining with open addressing.",
+   "sha256": "ebd172128f300ec74846980374822df2702cebce91169c67be158f1aa6a299a8"
+  },
+  {
+   "id": "chat-01",
+   "kind": "chat",
+   "text": "Write a Python function that returns the n-th Fibonacci number using an iterative loop, and explain its time complexity.",
+   "sha256": "6dc0baaf160d39e9f289336c2c70d0261f150424dffd5eb0d6e4d26a939eebff"
+  },
+  {
+   "id": "chat-02",
+   "kind": "chat",
+   "text": "What is the difference between a process and a thread in an operating system? Give two examples of when you would prefer each.",
+   "sha256": "cbd1539bd69b992ffd039e1f9d2031055b127d9d024d19f44131a4883fe13e37"
+  },
+  {
+   "id": "chat-03",
+   "kind": "chat",
+   "text": "Solve step by step: a train travels 180 km in 2 hours and then 120 km in 1.5 hours. What is its average speed for the whole trip?",
+   "sha256": "fa2d9cd27e1452d4b41316474ad02caf2e10018ca2491bb8e8b3e1ae9d762c43"
+  },
+  {
+   "id": "chat-04",
+   "kind": "chat",
+   "text": "Write a short poem of eight lines about a lighthouse keeper watching a storm.",
+   "sha256": "9dc804864f4a5731a0d9030d1469bea90f91a62f430ac67b346dbfc95c486516"
+  },
+  {
+   "id": "chat-05",
+   "kind": "chat",
+   "text": "Summarize the main causes of the French Revolution in five bullet points.",
+   "sha256": "249ca22479d5c1197d0562582612de2d6bf004f39fcdee7357f615bdb997a27e"
+  },
+  {
+   "id": "chat-06",
+   "kind": "chat",
+   "text": "Write a SQL query that returns the five customers with the highest total order amount, given tables customers(id, name) and orders(id, customer_id, amount).",
+   "sha256": "1b102227b7b1117cd5e105194a83e219b9d34c79b80d00eeb20cb52bb0abda30"
+  },
+  {
+   "id": "chat-07",
+   "kind": "chat",
+   "text": "Explain what a closure is in JavaScript and give a small example that uses one to implement a counter.",
+   "sha256": "250b207d623d32420732984db8482c5bb27aadf723f667f6eaa18f6363bc4914"
+  },
+  {
+   "id": "chat-08",
+   "kind": "chat",
+   "text": "A rectangle has a perimeter of 36 cm and its length is twice its width. Find its area, showing your work.",
+   "sha256": "67faaf6b3fca45dc21d70dfc38eb88bbfa011426e2c4fb58821ece0af0a2766c"
+  },
+  {
+   "id": "chat-09",
+   "kind": "chat",
+   "text": "Write a Rust function that reverses the words in a sentence, keeping the words themselves unchanged.",
+   "sha256": "7482744f8a486e70ab3060e92d60614f87a666272459a1ae9f3674b2863d13fa"
+  },
+  {
+   "id": "chat-10",
+   "kind": "chat",
+   "text": "Describe the water cycle to a ten-year-old in simple language.",
+   "sha256": "c0aa6f694c7291ca9c7647bfc143ff60d380b99d42e13f84f41c57d1668ba8df"
+  },
+  {
+   "id": "chat-11",
+   "kind": "chat",
+   "text": "What are the trade-offs between using a relational database and a document database for an online store?",
+   "sha256": "ded4af09635d3cd743a2644b917d26981f494ba82da89f8aa20e63056cbb22d2"
+  },
+  {
+   "id": "chat-12",
+   "kind": "chat",
+   "text": "Write a C function that checks whether a string is a palindrome, ignoring case and non-alphanumeric characters.",
+   "sha256": "beb7be93e1e16c8c60ef6774bf68b12e08e7afdc137be1a53b9cfc216c52ae11"
+  },
+  {
+   "id": "chat-13",
+   "kind": "chat",
+   "text": "Explain the difference between supervised and unsupervised learning, with one example of each.",
+   "sha256": "e00fb04156bf855eb81822ce3ad9bed70da584cde266566f942abbc546b56244"
+  },
+  {
+   "id": "chat-14",
+   "kind": "chat",
+   "text": "Translate the following sentence into French and Spanish: The library opens at nine in the morning and closes at six in the evening.",
+   "sha256": "fea331e9981dd82ab49300959f51621a39b816cb60e7132bda0e216f5c407847"
+  },
+  {
+   "id": "chat-15",
+   "kind": "chat",
+   "text": "Write a bash script that counts the lines in every .txt file in the current directory and prints the total.",
+   "sha256": "989f2619a823ded8d756643e26ade3885294d4228bab7555e69eaa380d48b3b9"
+  },
+  {
+   "id": "chat-16",
+   "kind": "chat",
+   "text": "How does public-key cryptography allow two people to communicate securely without sharing a secret in advance?",
+   "sha256": "e9605cd6d76a5c2592e9e1d110208faaf082096c098d0df42c0e7ff9f5ca7ce4"
+  },
+  {
+   "id": "chat-17",
+   "kind": "chat",
+   "text": "Prove that the sum of the first n odd numbers equals n squared.",
+   "sha256": "368f941963e033ee95a01f0e4d9cbcbd1d7953ee7ad756ececaa613463a36c2f"
+  },
+  {
+   "id": "chat-18",
+   "kind": "chat",
+   "text": "Write a Python class for a stack with push, pop, peek and is_empty methods, and include a short usage example.",
+   "sha256": "f80590ceec5fe8b7864c84bd329f1055264f5d7efe6914e9d8b553edd0e0269e"
+  },
+  {
+   "id": "chat-19",
+   "kind": "chat",
+   "text": "Give a recipe for a simple vegetable soup, listing ingredients and steps.",
+   "sha256": "5cc12f9f5521624ad5531d19ae99bed15ecbe7ec8f06777bae28ad6261a7a991"
+  },
+  {
+   "id": "chat-20",
+   "kind": "chat",
+   "text": "Explain Big-O notation and compare O(n log n) with O(n^2) for n equal to one million.",
+   "sha256": "0302ac1d5dce57debf5e72f8f7213170f3e0f4c38af3c0af48580b30e8f87a68"
+  },
+  {
+   "id": "chat-21",
+   "kind": "chat",
+   "text": "Write a Go function that reads a file line by line and returns the number of lines that contain the word error.",
+   "sha256": "2edcc959d2453a79603c0e3d4487c4f00cd88c455b7012a72f8de12bde5f836d"
+  },
+  {
+   "id": "chat-22",
+   "kind": "chat",
+   "text": "What is the greenhouse effect, and why does carbon dioxide contribute to it?",
+   "sha256": "efddfe972b9c8b31d5267e49365c790da83c352c1e999491bc352e7823ed2937"
+  },
+  {
+   "id": "chat-23",
+   "kind": "chat",
+   "text": "Write a binary search in Python over a sorted list, returning the index of the target or -1 if it is absent.",
+   "sha256": "ada8240cda192750fc5a9772a4689dadcff3fdc505faebb9c4bef568ac041a62"
+  },
+  {
+   "id": "chat-24",
+   "kind": "chat",
+   "text": "Draft a polite email to a colleague asking to move a meeting from Tuesday to Thursday afternoon.",
+   "sha256": "d42318343d80d99936c5ae0353c715388d735c0c8eaf94e6f40546c032517646"
+  },
+  {
+   "id": "chat-25",
+   "kind": "chat",
+   "text": "Explain how garbage collection by reference counting works and why it cannot free reference cycles on its own.",
+   "sha256": "d61eec0f1c52adf481128fbeafb318497ecaa4455f4a03239f3b731a921fd963"
+  },
+  {
+   "id": "chat-26",
+   "kind": "chat",
+   "text": "If a fair six-sided die is rolled twice, what is the probability that the sum is 8? Show the reasoning.",
+   "sha256": "f89401b78c8ab8ecfdf06f1d9d950e956e8310e01784ff6152f25575895d605a"
+  },
+  {
+   "id": "chat-27",
+   "kind": "chat",
+   "text": "Write a TypeScript interface for a blog post with a title, a body, an author, tags and a publication date, and a function that filters posts by tag.",
+   "sha256": "2c88a4ac2a178493da0181066a4e30a5ca647f7dc31c31d6af2f655da6435811"
+  },
+  {
+   "id": "chat-28",
+   "kind": "chat",
+   "text": "Explain the purpose of an index in a database and when adding one can slow a system down.",
+   "sha256": "e802fe6db077ded0810b75df92987d449f90648261f0cce0f5243cbd628d5adf"
+  },
+  {
+   "id": "chat-29",
+   "kind": "chat",
+   "text": "Write a short story of about 150 words about a robot that learns to paint.",
+   "sha256": "016ba62a945dd3a9b5d8d6a71237fb1dc62f9db91a14ed74249a6052629e5a34"
+  },
+  {
+   "id": "chat-30",
+   "kind": "chat",
+   "text": "What does the CAP theorem state about distributed systems? Explain each of the three properties.",
+   "sha256": "0b5082a7e8153aa9a25e1eb31e988b00e8ae8c3ad03f90ff5ef69981435e79f2"
+  },
+  {
+   "id": "chat-31",
+   "kind": "chat",
+   "text": "Write a Python function that merges two sorted lists into one sorted list in linear time.",
+   "sha256": "eea621038b00aa27d48feba525f25107737c466f71cd5799da08533de622e183"
+  },
+  {
+   "id": "chat-32",
+   "kind": "chat",
+   "text": "Explain how a CPU cache works and why accessing memory sequentially is faster than accessing it randomly.",
+   "sha256": "2fc84c3d327d1537eea7c0003e42267cb7e5090fecac34ae10de29b983fb6c35"
+  },
+  {
+   "id": "chat-33",
+   "kind": "chat",
+   "text": "Convert 98.6 degrees Fahrenheit to Celsius and explain the formula.",
+   "sha256": "0be9242c236d01c6a8b97ad3746ab54a4a54d6637a2c9e5480613f77dbbcb5c5"
+  },
+  {
+   "id": "chat-34",
+   "kind": "chat",
+   "text": "Write a regular expression that matches dates in the format YYYY-MM-DD and explain each part.",
+   "sha256": "548678c9a6a210f3e82d7aebaf729ab370325a5549759890490cd0e1bbafee57"
+  },
+  {
+   "id": "chat-35",
+   "kind": "chat",
+   "text": "List the planets of the solar system in order from the Sun, with one interesting fact about each.",
+   "sha256": "e02b639eb4f09b8ee8af429e46ba4a28d5f3f035945f0649ee63abdfd443c933"
+  },
+  {
+   "id": "chat-36",
+   "kind": "chat",
+   "text": "Explain the difference between TCP and UDP and name an application suited to each.",
+   "sha256": "1c38ebaa2c4849a477d2db73a985cc11b9358acec9022c9ac99a6923b110c062"
+  },
+  {
+   "id": "chat-37",
+   "kind": "chat",
+   "text": "Write a C++ function template that returns the maximum element of a std::vector, and handle the empty case.",
+   "sha256": "2a88e4478074c361c818dd445a0c5e7ec1af0620f9742be1c10739c7ccdbd06f"
+  },
+  {
+   "id": "chat-38",
+   "kind": "chat",
+   "text": "What is gradient descent? Describe how the learning rate affects convergence.",
+   "sha256": "d6fe51f39fd3441874e1f96cea18dcdbde37fe351daf445b7c8aabd5f530ae1e"
+  },
+  {
+   "id": "chat-39",
+   "kind": "chat",
+   "text": "Write a Python generator that yields the prime numbers below a given limit using the sieve of Eratosthenes.",
+   "sha256": "15db0e95756351e16399b73b5c1cb3950e1adc954842720346e349b997c97093"
+  }
+ ]
+}

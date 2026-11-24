@@ -1,0 +1,112 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: block logits (contract executor/cuda/src/kernels/k9_qsa.h qsa_logits), per device:
+//   logits[t, b] = (sum_h relu(dot(q_idx[t, h], keys[slot(b)]))) / kScoreDivisor   for b < floor((p_t + 1) / 4),
+//   -inf for floor((p_t + 1) / 4) <= b < ld.
+// Arithmetic of every logit (whatever R): dot = fp32 FMA chain over d ascending from 0 (q, k exact BF16 -> FP32; the
+// products are exact), r_h = dot > 0 ? dot : +0, s = r_0; s = s + r_1; s = s + r_2; s = s + r_3, then the correctly rounded
+// division fdiv_rn32(s, 11.313708498984761). So every row tiling (R rows per workgroup: the decode R 1, the block R 8)
+// writes the same bytes; qsa_logits' impl choice only picks R.
+// Workgroup = (KB keys, R rows): thread = (key b_begin + tid % KB, rows (tid / KB) * RPT ..). Keys at or past every row's
+// visible blocks are not read (-inf). SKIP 1 (qsa_select_step's grid at the context's ld): a workgroup whose keys are
+// all past its rows' visible blocks exits before any store.
+// Row t's logical position: pos ? pos[row0 + t] clamped to 0 .. seq_len - 1 (fault word: Bounds' rule) : seq_len -
+// rows_total + row0 + t.
+#include "k9_common.comp"
+
+#ifndef R
+#define R 1
+#endif
+#define NT 256
+#define DI 128
+#if R == 1
+#define KB 256
+#else
+#define KB 64
+#endif
+#define RG (NT / KB)
+#define RPT (R / RG)
+#if (R % RG) != 0
+#error "R must be a multiple of NT / KB"
+#endif
+
+layout(local_size_x = NT) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, keys, slots, pos, logits, fault;
+    uint row0, tile_rows, rows_total, seq_len, ld, skip;
+} pc;
+
+shared float QS[R * 4 * DI];
+shared uint NV[R];
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint r0 = gl_WorkGroupID.y * R;            // first row of this workgroup within the tile
+    const uint b_begin = gl_WorkGroupID.x * KB;
+    if (tid < R) {
+        const uint r = r0 + tid;
+        uint nv = 0u;
+        if (r < pc.tile_rows) {
+            int64_t p;
+            if (pc.pos != 0ul) {
+                p = L1(pc.pos + uint64_t((pc.row0 + r) * 8u)).v;
+                if (p < 0l || p >= int64_t(pc.seq_len)) {
+                    if (pc.fault != 0ul) U1(pc.fault).v = 1u;
+                    p = p < 0l ? 0l : int64_t(pc.seq_len) - 1l;
+                }
+            } else {
+                p = int64_t(pc.seq_len) - int64_t(pc.rows_total) + int64_t(pc.row0 + r);
+            }
+            nv = uint((p + 1l) / 4l);
+        }
+        NV[tid] = nv;
+    }
+    for (uint e = tid; e < R * 4u * DI / 8u; e += NT) {
+        const uint v = e / (DI / 8u), c = (e % (DI / 8u)) * 8u;
+        const uint r = r0 + v / 4u;
+        uvec4 x = uvec4(0u);
+        if (r < pc.tile_rows) x = V4(pc.q + uint64_t((r * 4u * DI + (v % 4u) * DI + c) * 2u)).v;
+        const uint o = v * DI + c;
+        QS[o + 0] = bflo(x.x); QS[o + 1] = bfhi(x.x); QS[o + 2] = bflo(x.y); QS[o + 3] = bfhi(x.y);
+        QS[o + 4] = bflo(x.z); QS[o + 5] = bfhi(x.z); QS[o + 6] = bflo(x.w); QS[o + 7] = bfhi(x.w);
+    }
+    memoryBarrierShared();
+    barrier();
+    uint max_visible = 0u;
+    [[unroll]] for (uint i = 0; i < R; ++i) max_visible = max(max_visible, NV[i]);
+    if (pc.skip != 0u && b_begin >= max_visible) return;  // uniform, before any store
+
+    const uint kj = tid % KB, rg = tid / KB;
+    const uint b = b_begin + kj;
+    if (b >= pc.ld) return;
+    float dot[RPT][4];
+    [[unroll]] for (uint i = 0; i < RPT; ++i) [[unroll]] for (uint h = 0; h < 4u; ++h) dot[i][h] = 0.0;
+    if (b < max_visible) {
+        const uint slot = pc.slots != 0ul ? uint(L1(pc.slots + uint64_t(b * 32u)).v / 4l) : b;
+        const uint64_t kbase = pc.keys + uint64_t(slot * DI * 2u);
+        [[unroll]] for (uint c = 0; c < DI / 8u; ++c) {
+            const uvec4 x = V4(kbase + uint64_t(c * 16u)).v;
+            const float kf[8] = float[8](bflo(x.x), bfhi(x.x), bflo(x.y), bfhi(x.y), bflo(x.z), bfhi(x.z), bflo(x.w), bfhi(x.w));
+            [[unroll]] for (uint i = 0; i < RPT; ++i) {
+                [[unroll]] for (uint h = 0; h < 4u; ++h) {
+                    const uint qo = ((rg * RPT + i) * 4u + h) * DI + c * 8u;
+                    precise float a = dot[i][h];
+                    [[unroll]] for (uint e = 0; e < 8u; ++e) a = fma(QS[qo + e], kf[e], a);
+                    dot[i][h] = a;
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint i = 0; i < RPT; ++i) {
+        const uint rr = rg * RPT + i, r = r0 + rr;
+        if (r >= pc.tile_rows) continue;
+        float val = f_ninf();
+        if (b < NV[rr]) {
+            precise float s = dot[i][0] > 0.0 ? dot[i][0] : 0.0;  // relu: +0 for -0 and negatives
+            [[unroll]] for (uint h = 1; h < 4u; ++h) s = s + (dot[i][h] > 0.0 ? dot[i][h] : 0.0);
+            val = fdiv_rn32(s, 11.313708498984761);
+        }
+        F1(pc.logits + uint64_t((r * pc.ld + b) * 4u)).v = val;
+    }
+}

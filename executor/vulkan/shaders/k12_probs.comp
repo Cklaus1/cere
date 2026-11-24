@@ -1,0 +1,79 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "k12_common.comp"
+// VulkanAmd P2 K12 probabilities (three 512 x 256 grid launches, STAGE 0 / 1 / 2) as k12_sampler.cu: z = x / T (fp32, correctly
+// rounded), lse = m + log(sum exp(z - m)) in fp64 with the software exp / log of k12_common, probs = fp32(exp(z - lse)); -inf -> 0.
+// Non-finite z (a fault upstream): +inf counts as the largest finite float, NaN carries no mass; a row with no mass puts p = 1
+// on its lowest NaN id (0 without one). Fixed grid, per-block fp64 partials combined in block order, so repeats are bit-equal.
+// Stage 0 also stores z in probs (read and overwritten in place by the same thread in stages 1-2).
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC { uint64_t x, probs, work, lse; uint vocab; float temperature; } pc;
+const uint kGrid = 512u, kBlock = 256u;
+const uint kGridStride = kGrid * kBlock;
+
+// The kGrid partials combined in one fixed order (thread t folds partials t, t + 256, ... in order, then the block reduction).
+float parts_max() {
+    float v = f_ninf();
+    for (uint b = gl_LocalInvocationID.x; b < kGrid; b += kBlock) v = max(v, ldf(pc.work + W_MAXPART, b));
+    return block_max_f(v);
+}
+double parts_sum() {
+    double v = 0.0LF;
+    for (uint b = gl_LocalInvocationID.x; b < kGrid; b += kBlock) v = v + ldd(pc.work + W_SUMPART, b);
+    return block_sum_d(v);
+}
+uint parts_nan() {
+    uint v = NONE;
+    for (uint b = gl_LocalInvocationID.x; b < kGrid; b += kBlock) v = min(v, ldu(pc.work + W_NANPART, b));
+    return block_min_u(v);
+}
+
+void main() {
+    const uint first = gl_WorkGroupID.x * kBlock + gl_LocalInvocationID.x;
+#if STAGE == 0
+    float m = f_ninf();
+    uint nan_id = NONE;
+    for (uint j = first; j < pc.vocab; j += kGridStride) {
+        const float z = fdiv_rn32(ldf(pc.x, j), pc.temperature);
+        stf(pc.probs, j, z);
+        m = max(m, mass_z(z));
+        if (isnanf(z) && nan_id == NONE) nan_id = j;
+    }
+    m = block_max_f(m);
+    nan_id = block_min_u(nan_id);
+    if (gl_LocalInvocationID.x == 0u) {
+        stf(pc.work + W_MAXPART, gl_WorkGroupID.x, m);
+        stu(pc.work + W_NANPART, gl_WorkGroupID.x, nan_id);
+    }
+#elif STAGE == 1
+    const double m = double(parts_max());
+    double sum = 0.0LF;
+    for (uint j = first; j < pc.vocab; j += kGridStride) {
+        const float z = mass_z(ldf(pc.probs, j));
+        if (z > f_ninf()) sum = sum + exp64(double(z) - m);
+    }
+    sum = block_sum_d(sum);
+    if (gl_LocalInvocationID.x == 0u) std_(pc.work + W_SUMPART, gl_WorkGroupID.x, sum);
+#else
+    const float m = parts_max();
+    const double sum = parts_sum();
+    const double log_sum = log64(sum);
+    const double lse = double(m) + log_sum;
+    // m + log(sum) rounds log(sum) away once m passes 2^53 (reachable only through a saturated +inf): the shift is applied to z first.
+    const bool huge = m > 9007199254740992.0;
+    if (m > f_ninf()) {
+        for (uint j = first; j < pc.vocab; j += kGridStride) {
+            const float z = mass_z(ldf(pc.probs, j));
+            float p = 0.0;
+            if (z > f_ninf()) p = float(exp64(huge ? (double(z) - double(m)) - log_sum : double(z) - lse));
+            stf(pc.probs, j, p);
+        }
+    } else {  // no mass anywhere (m is the same in every block)
+        const uint nan_id = parts_nan();
+        const uint only = nan_id != NONE ? nan_id : 0u;
+        for (uint j = first; j < pc.vocab; j += kGridStride) stf(pc.probs, j, j == only ? 1.0 : 0.0);
+    }
+    if (gl_WorkGroupID.x == 0u && gl_LocalInvocationID.x == 0u) std_(pc.lse, 0u, lse);
+#endif
+}

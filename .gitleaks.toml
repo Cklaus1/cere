@@ -1,0 +1,15 @@
+# gitleaks configuration: the default rules, minus two known false-positive classes.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "SHA-256 content digests (tokenizer, key, manifest and source pins) are hashes, not secrets"
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{64}$''']
+
+[[allowlists]]
+description = "invalid-config fixture: a token-like value where an env var name belongs, which the loader must refuse"
+condition = "AND"
+paths = ['''^tests/fixtures/runtime_config_invalid\.json$''']
+regexTarget = "secret"
+regexes = ['''^sk-cere-0123456789abcdef$''']

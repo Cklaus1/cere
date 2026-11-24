@@ -1,0 +1,44 @@
+#version 460
+// VulkanAutotune H7 (vulkan-autotune design note "Kernel-side hooks"): cooperative-matrix peak, no memory traffic in
+// the timed loop. Each subgroup loads one A and one B 16x16 tile once (from a buffer, so nothing folds), then runs ITERS
+// iterations of NACC independent coopMatMulAdd chains (register resident) and stores the accumulators once. FLOPs per
+// workgroup: NSG x ITERS x NACC x 2 x 16^3. INT8 1: int8 x int8 -> int32 (TOP/s), else FP16 x FP16 -> FP32.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+#ifndef INT8
+#define INT8 0
+#endif
+#define NACC 8
+#define NSG 4
+#if INT8
+#define EL int8_t
+#define AC int32_t
+#else
+#define EL float16_t
+#define AC float
+#endif
+layout(local_size_x = NSG * 32) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer EB { EL v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer OB { AC v[]; };
+layout(push_constant, std430) uniform PC { uint64_t src, dst; uint iters, pad; } pc;
+
+void main() {
+    coopmat<EL, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> A;
+    coopmat<EL, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> B;
+    coopMatLoad(A, EB(pc.src).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(B, EB(pc.src).v, 256, 16, gl_CooperativeMatrixLayoutColumnMajor);
+    coopmat<AC, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c[NACC];
+    [[unroll]] for (int i = 0; i < NACC; ++i) c[i] = coopmat<AC, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(AC(0));
+    for (uint it = 0u; it < pc.iters; ++it)
+        [[unroll]] for (int i = 0; i < NACC; ++i) c[i] = coopMatMulAdd(A, B, c[i]);
+    const uint g = gl_WorkGroupID.x * NSG + gl_SubgroupID;
+    [[unroll]] for (int i = 0; i < NACC; ++i) c[0] = c[0] + c[i];  // one store per subgroup: every chain is live
+    coopMatStore(c[0], OB(pc.dst).v, g * 256u, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

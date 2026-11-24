@@ -1,0 +1,1372 @@
+{
+  "levers": [
+    {
+      "name": "k2_gemm",
+      "slot": "gemm",
+      "layer": "executor",
+      "class": "hot",
+      "default": "cublaslt",
+      "impls": [
+        {
+          "id": "cublaslt",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_levers_off_identity.py::LeversOffIdentity::test_k2_default_equals_main",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k2_test.cpp::main",
+            "executor/vulkan/ktest/k2w_test.cpp::main",
+            "executor/vulkan/ktest/k2mx_test.cpp::main",
+            "executor/vulkan/ktest/k2v_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default"
+          ]
+        },
+        {
+          "id": "small_m",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_kernels_k2_gemm.py::K2Gemm::test_p11_small_m_oracle",
+          "d9_batch": true,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "k_step",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kStepK",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "group",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kGroup",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "max_cluster",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kMaxCluster",
+              "kind": "build",
+              "values": [
+                8
+              ]
+            },
+            {
+              "name": "max_m",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.h#kMaxM",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "max_segments",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.h#kMaxSegments",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            }
+          ],
+          "proven_in": [
+            "-v58"
+          ]
+        },
+        {
+          "id": "small_m_a8",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_kernels_k2m_a8.py::K2mA8::test_a8_oracle",
+          "d9_batch": true,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "k_step",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kStepK",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "group",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kGroup",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "max_cluster",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.cu#kMaxCluster",
+              "kind": "build",
+              "values": [
+                8
+              ]
+            },
+            {
+              "name": "max_m",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.h#kMaxM",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "max_segments",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_small_m.h#kMaxSegments",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            }
+          ],
+          "proven_in": []
+        },
+        {
+          "id": "tail_split",
+          "numerics": "changing",
+          "contract": "executor/vulkan/ktest/k2w_test.cpp::main",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k2w_test.cpp::main",
+            "executor/vulkan/ktest/k2_gemm_sites_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main",
+            "executor/vulkan/tests/coverage_s3.cpp::main"
+          ],
+          "d9_batch": true,
+          "picks": [],
+          "arch": [
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": []
+        }
+      ]
+    },
+    {
+      "name": "prefill_attention",
+      "slot": "attention.full",
+      "layer": "executor",
+      "class": "hot",
+      "default": "cuda_core",
+      "impls": [
+        {
+          "id": "cuda_core",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_levers_off_identity.py::LeversOffIdentity::test_prefill_default_equals_main",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k6_test.cpp::main",
+            "executor/vulkan/ktest/k9_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "p4",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_kernels_k6_attn.py::K6AttentionBlock::test_p4_extend",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k6_test.cpp::main",
+            "executor/vulkan/ktest/k9_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main",
+            "executor/vulkan/tests/spec_s3.cpp::main"
+          ],
+          "d9_batch": true,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "min_rows",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/p4_attention.h#kMinRows",
+              "kind": "build",
+              "values": [
+                17
+              ]
+            }
+          ],
+          "proven_in": []
+        }
+      ]
+    },
+    {
+      "name": "decode_step",
+      "slot": "infra",
+      "layer": "executor",
+      "class": "hot",
+      "default": "eager",
+      "impls": [
+        {
+          "id": "eager",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Forward::test_decode_invariance_equals_merge_base",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/forward_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "graph",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_graph_decode.py::GraphRowsK6::test_rows_1",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "max_rows",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_gemm.h#kMaxRows",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            }
+          ],
+          "proven_in": [
+            "default"
+          ]
+        },
+        {
+          "id": "spec_graph",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_graph_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "max_rows",
+              "unit": "count",
+              "source": "executor/cuda/src/model/layout.h#kDraftGraphRows",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "dense_context",
+              "unit": "count",
+              "source": "executor/cuda/src/model/layout.h#kDenseContext",
+              "kind": "build",
+              "values": [
+                2048
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "moe_gemm",
+      "slot": "ffn.moe",
+      "layer": "executor",
+      "class": "restart",
+      "default": "p3b",
+      "impls": [
+        {
+          "id": "p3b",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_p3b_moe.py::P3bMoe::test_block_within_oracle",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "k7",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_kernels_k7_moe.py::MoeTest::test_block_layer0_parity_inputs",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k7_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": []
+        }
+      ]
+    },
+    {
+      "name": "draft_tokens",
+      "slot": "spec.accept",
+      "layer": "executor",
+      "class": "hot",
+      "default": "max",
+      "impls": [
+        {
+          "id": "max",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/host/test_state.cpp::test_draft_tokens_lever_greedy_equals_plain",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/spec_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [
+            {
+              "name": "window",
+              "unit": "tokens",
+              "source": "executor/cuda/src/host/api.cpp#resolve_selection",
+              "kind": "launch",
+              "min": 4,
+              "max": 4
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "3",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/host/test_state.cpp::test_draft_tokens_lever_greedy_equals_plain",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "window",
+              "unit": "tokens",
+              "source": "executor/cuda/src/host/api.cpp#resolve_selection",
+              "kind": "launch",
+              "min": 3,
+              "max": 3
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "2",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/host/test_state.cpp::test_draft_tokens_lever_greedy_equals_plain",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "window",
+              "unit": "tokens",
+              "source": "executor/cuda/src/host/api.cpp#resolve_selection",
+              "kind": "launch",
+              "min": 2,
+              "max": 2
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "verify_attention",
+      "slot": "attention.full",
+      "layer": "executor",
+      "class": "hot",
+      "default": "per_row",
+      "impls": [
+        {
+          "id": "per_row",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_mtp_greedy_bit_identical",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/spec_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "batched",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_verify_attention_batched_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "k2_weights",
+      "slot": "gemm",
+      "layer": "executor",
+      "class": "restart",
+      "default": "bf16",
+      "impls": [
+        {
+          "id": "bf16",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_levers_off_identity.py::LeversOffIdentity::test_k2_default_equals_main",
+          "vulkan_contracts": [
+            "executor/vulkan/ktest/k2v_test.cpp::main",
+            "executor/vulkan/ktest/k2w_test.cpp::main",
+            "executor/vulkan/tests/forward_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "fp8",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_kernels_k2_fp8.py::K2Fp8::test_fp8_oracle",
+          "d9_batch": true,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "create",
+          "requires": [],
+          "params": [
+            {
+              "name": "k_step",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_fp8.h#kStepK",
+              "kind": "build",
+              "values": [
+                64
+              ]
+            },
+            {
+              "name": "max_m",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_fp8.h#kMaxM",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            },
+            {
+              "name": "max_segments",
+              "unit": "count",
+              "source": "executor/cuda/src/kernels/k2_fp8.h#kMaxSegments",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            }
+          ],
+          "proven_in": []
+        }
+      ]
+    },
+    {
+      "name": "drafter",
+      "slot": "spec.accept",
+      "layer": "runtime",
+      "class": "hot",
+      "default": "mtp",
+      "impls": [
+        {
+          "id": "mtp",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_mtp_greedy_bit_identical",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/spec_s3.cpp::main",
+            "executor/vulkan/ktest/mtp_kernels_test.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "lookup",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_lookup_greedy_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "min_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMinMatch",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxMatch",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "ways",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kWays",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "mtp+lookup",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_lookup_greedy_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "min_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMinMatch",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxMatch",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "ways",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kWays",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "mtp+lookup+tail",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_deep_chain_graph",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "min_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMinMatch",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxMatch",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "ways",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kWays",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            },
+            {
+              "name": "max_tail_drafts",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxTailDrafts",
+              "kind": "build",
+              "values": [
+                8
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "mtp+lookup+long",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_long_lookup_greedy_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "min_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMinMatch",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxMatch",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "ways",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kWays",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            },
+            {
+              "name": "max_tail_drafts",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxTailDrafts",
+              "kind": "build",
+              "values": [
+                8
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "mtp+lookup+chain",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_long_lookup_greedy_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "min_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMinMatch",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_match",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxMatch",
+              "kind": "build",
+              "values": [
+                32
+              ]
+            },
+            {
+              "name": "ways",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kWays",
+              "kind": "build",
+              "values": [
+                4
+              ]
+            },
+            {
+              "name": "max_chain_drafts",
+              "unit": "count",
+              "source": "executor/cuda/src/model/layout.h#kMaxChainDrafts",
+              "kind": "build",
+              "values": [
+                15
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "draft_policy",
+      "slot": "spec.accept",
+      "layer": "runtime",
+      "class": "hot",
+      "default": "fixed",
+      "impls": [
+        {
+          "id": "fixed",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_mtp_greedy_bit_identical",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/spec_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "adaptive",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_adaptive_greedy_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [
+            {
+              "name": "max_drafts",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxDrafts",
+              "kind": "build",
+              "values": [
+                3
+              ]
+            },
+            {
+              "name": "max_window",
+              "unit": "count",
+              "source": "executor/cuda/src/host/spec_lookup.h#kMaxWindow",
+              "kind": "build",
+              "values": [
+                16
+              ]
+            }
+          ],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "grammar_drafts",
+      "slot": "sample",
+      "layer": "runtime",
+      "class": "restart",
+      "default": "off",
+      "impls": [
+        {
+          "id": "off",
+          "numerics": "bit_identical",
+          "contract": "crates/cere-runtime/tests/server_native.rs::grammar_drafts_off_serves_constrained_requests_plain",
+          "vulkan_contracts": [
+            "executor/vulkan/tests/coverage_s3.cpp::main"
+          ],
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a",
+            "gfx1151",
+            "vulkan"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default"
+          ]
+        },
+        {
+          "id": "on",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_model_k8_forward.py::K8Speculation::test_spec_masked_sampled_d6_exact",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [
+            {
+              "speculative_draft_tokens": 4
+            }
+          ],
+          "params": [],
+          "proven_in": [
+            "-v58"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sdar_gemm",
+      "slot": "gemm",
+      "layer": "executor",
+      "class": "restart",
+      "default": "identical",
+      "family": "sdar",
+      "impls": [
+        {
+          "id": "identical",
+          "numerics": "bit_identical",
+          "contract": "executor/tests/gpu/test_sdar_kernels_pin.py::SdarGemmPin::test_pins_are_bit_identical",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "arena",
+          "requires": [],
+          "params": [],
+          "proven_in": [
+            "default",
+            "-v58"
+          ]
+        },
+        {
+          "id": "changing",
+          "numerics": "changing",
+          "contract": "executor/tests/gpu/test_sdar_kernels_pin.py::SdarGemmChanging::test_changing_within_bound",
+          "d9_batch": false,
+          "picks": [],
+          "arch": [
+            "sm_120a"
+          ],
+          "domain": {
+            "max_rows": 16,
+            "max_context": 262144
+          },
+          "workspace": "create",
+          "requires": [],
+          "params": [],
+          "proven_in": []
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "default",
+      "reference": "configs/runtime/native-g0.toml",
+      "changing": []
+    },
+    {
+      "name": "-v58",
+      "reference": "configs/runtime/native-g0-rows16-v58.toml",
+      "changing": [
+        {
+          "lever": "k2_gemm",
+          "impl": "small_m"
+        },
+        {
+          "lever": "grammar_drafts",
+          "impl": "on"
+        }
+      ]
+    }
+  ],
+  "families": [
+    {
+      "family": "qwen4_exp",
+      "impls": {
+        "decode_step": [
+          "eager",
+          "graph",
+          "spec_graph"
+        ],
+        "draft_policy": [
+          "fixed",
+          "adaptive"
+        ],
+        "draft_tokens": [
+          "max",
+          "3",
+          "2"
+        ],
+        "drafter": [
+          "mtp",
+          "lookup",
+          "mtp+lookup",
+          "mtp+lookup+tail",
+          "mtp+lookup+long",
+          "mtp+lookup+chain"
+        ],
+        "grammar_drafts": [
+          "off",
+          "on"
+        ],
+        "k2_gemm": [
+          "cublaslt",
+          "small_m",
+          "small_m_a8",
+          "tail_split"
+        ],
+        "k2_weights": [
+          "bf16",
+          "fp8"
+        ],
+        "moe_gemm": [
+          "p3b",
+          "k7"
+        ],
+        "prefill_attention": [
+          "cuda_core",
+          "p4"
+        ],
+        "sdar_gemm": [
+          "identical"
+        ],
+        "verify_attention": [
+          "per_row",
+          "batched"
+        ]
+      },
+      "calibrate_windows": {
+        "lookup": "mtp",
+        "mtp": "mtp",
+        "mtp+lookup": "mtp",
+        "mtp+lookup+chain": "all",
+        "mtp+lookup+long": "all",
+        "mtp+lookup+tail": "all"
+      }
+    },
+    {
+      "family": "sdar",
+      "impls": {
+        "decode_step": [
+          "eager"
+        ],
+        "draft_policy": [
+          "fixed"
+        ],
+        "draft_tokens": [
+          "max"
+        ],
+        "drafter": [
+          "mtp"
+        ],
+        "grammar_drafts": [
+          "off"
+        ],
+        "k2_gemm": [
+          "cublaslt"
+        ],
+        "k2_weights": [
+          "bf16"
+        ],
+        "moe_gemm": [
+          "p3b"
+        ],
+        "prefill_attention": [
+          "cuda_core"
+        ],
+        "sdar_gemm": [
+          "identical",
+          "changing"
+        ],
+        "verify_attention": [
+          "per_row"
+        ]
+      },
+      "calibrate_windows": {
+        "lookup": "all",
+        "mtp": "all",
+        "mtp+lookup": "all",
+        "mtp+lookup+chain": "all",
+        "mtp+lookup+long": "all",
+        "mtp+lookup+tail": "all"
+      }
+    },
+    {
+      "family": "inkling2_loop",
+      "impls": {
+        "decode_step": [
+          "eager"
+        ],
+        "draft_policy": [
+          "fixed"
+        ],
+        "draft_tokens": [
+          "max"
+        ],
+        "drafter": [
+          "mtp"
+        ],
+        "grammar_drafts": [
+          "off"
+        ],
+        "k2_gemm": [
+          "cublaslt"
+        ],
+        "k2_weights": [
+          "bf16"
+        ],
+        "moe_gemm": [
+          "p3b"
+        ],
+        "prefill_attention": [
+          "cuda_core"
+        ],
+        "sdar_gemm": [
+          "identical"
+        ],
+        "verify_attention": [
+          "per_row"
+        ]
+      },
+      "calibrate_windows": {
+        "lookup": "all",
+        "mtp": "all",
+        "mtp+lookup": "all",
+        "mtp+lookup+chain": "all",
+        "mtp+lookup+long": "all",
+        "mtp+lookup+tail": "all"
+      }
+    }
+  ]
+}

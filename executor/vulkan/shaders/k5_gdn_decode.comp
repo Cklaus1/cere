@@ -1,0 +1,199 @@
+#version 460
+// VulkanAmd P2: K5 GDN decode on Vulkan (the executor/cuda/src/kernels/k5_gdn_decode.h contract, re-proven per device).
+//
+// math_reference: flashinfer (via the CUDA kernel's documented arithmetic; nothing is vendored)
+//
+// One token's gated delta rule per value head h (16 key heads x 128, 48 value heads x 128, value head h uses key head
+// h / 3): q, k L2-normalised in-kernel (x * rsqrt(sum x^2 + 1e-6), scale folded into q); decay = exp(-exp(A_log) *
+// softplus(a + dt_bias)) (softplus(x) = x for x > 20, a select); beta = 1 / (1 + exp(-b)); S *= decay; u = beta *
+// (v - S k); S += u k^T; o = S q. State BF16 [48, 128 (v), 128 (k)] at rest, FP32 in registers.
+//
+// Mapping (the CUDA kernel's): a workgroup = 4 subgroups of 32 (required subgroup size 32) owns 16 value rows of one
+// value head (grid x = value head, y = 128 / 16 row blocks, z = chain); a subgroup owns 4 rows; lane l owns
+// k in [4l, 4l + 4). Every reduction is per lane in k order (FMA chains, two chains even/odd k for the row dots, as the
+// CUDA kernel) then the fixed xor butterfly 16, 8, 4, 2, 1 over the 32 lanes: a row's bits depend on nothing but its
+// own inputs, so chains in one call and calls of any width give the same bits.
+// Lowerings: ex2.approx -> exp2 (v_exp_f32), lg2.approx -> log2 (v_log_f32), rsqrt.approx -> inversesqrt (v_rsq_f32);
+// the correctly rounded reciprocal -> v_rcp_f32 plus one Newton step (fma); every CUDA __fmul_rn / __fadd_rn /
+// __fsub_rn is a `precise` (never contracted) operation; every __fmaf_rn is an explicit fma().
+//
+// ROWS 0: delta_rule_decode (one token, all addresses in push constants).
+// ROWS 1: delta_rule_decode_rows: chain z runs rows first[z] .. first[z] + rows[z] - 1 on its own state; after each row
+// but the chain's last the state is stored to saves[row] and rounded to BF16 in registers (the values the next
+// one-token call would load); after the last row it is stored to states[z]. The chain table is a 384-byte buffer.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#ifndef ROWS
+#define ROWS 0
+#endif
+
+layout(local_size_x = 128) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) writeonly buffer W2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) readonly buffer H16 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer F32 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Table {
+    uint64_t states[16];
+    uint64_t saves[16];
+    uint first[16];
+    uint rows[16];
+};
+
+layout(push_constant, std430) uniform PC {
+#if ROWS
+    uint64_t q, k, v, a, b, A_log, dt_bias, o, table;
+    float scale;
+    uint qkv_stride, ab_stride, o_stride;  // elements
+#else
+    uint64_t q, k, v, a, b, A_log, dt_bias, state, o;
+    float scale;
+#endif
+} pc;
+
+const float kLog2e = 1.44269502162933349609375;  // float(log2(e)) = 0x3FB8AA3B, exact
+const float kLn2 = 0.693147182464599609375;  // float(ln(2)) = 0x3F317218, exact
+const float kL2Eps = 1e-6;
+const float kSoftplusThreshold = 20.0;
+
+// 64-bit base + zero-extended 32-bit byte offset (every tensor is one <= 4 GiB buffer).
+uvec2 ld8(uint64_t base, uint off) { return V2(base + uint64_t(off)).v; }
+void st8(uint64_t base, uint off, uvec2 val) { W2(base + uint64_t(off)).v = val; }
+float ldbf(uint64_t base, uint off) { return uintBitsToFloat(uint(H16(base + uint64_t(off)).v) << 16); }
+
+void load4(uint64_t base, uint off, out float x[4]) {
+    const uvec2 r = ld8(base, off);
+    x[0] = uintBitsToFloat(r.x << 16); x[1] = uintBitsToFloat(r.x & 0xFFFF0000u);
+    x[2] = uintBitsToFloat(r.y << 16); x[3] = uintBitsToFloat(r.y & 0xFFFF0000u);
+}
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+float bf16_round(float f) { return uintBitsToFloat(bf16_rne(f) << 16); }
+void store4(uint64_t base, uint off, const float x[4]) {
+    st8(base, off, uvec2(bf16_rne(x[0]) | (bf16_rne(x[1]) << 16), bf16_rne(x[2]) | (bf16_rne(x[3]) << 16)));
+}
+
+float butterfly_sum(float s) {
+    precise float r = s;
+    [[unroll]] for (uint off = 16u; off >= 1u; off /= 2u) r = r + subgroupShuffleXor(r, off);
+    return r;
+}
+
+float exp_fast(float x) { precise float t = x * kLog2e; return exp2(t); }
+
+// 1 / x correctly rounded except in rare ties: the hardware reciprocal and one Newton step. x >= 1 here.
+float rcp_rn(float x) {
+    precise float r = 1.0 / x;
+    precise float e = fma(-x, r, 1.0);
+    precise float y = fma(e, r, r);
+    return isinf(x) ? 0.0 : y;
+}
+
+float inv_l2(const float x[4]) {
+    precise float s = 0.0;
+    [[unroll]] for (int i = 0; i < 4; ++i) s = fma(x[i], x[i], s);
+    precise float t = butterfly_sum(s) + kL2Eps;
+    return inversesqrt(t);
+}
+
+float row_dot(const float h[4], const float x[4]) {
+    precise float even = fma(h[0], x[0], 0.0);
+    precise float odd = fma(h[1], x[1], 0.0);
+    even = fma(h[2], x[2], even);
+    odd = fma(h[3], x[3], odd);
+    precise float s = even + odd;
+    return butterfly_sum(s);
+}
+
+// One token on the subgroup's 4 rows h (in place) into o; q, k at byte offsets of this lane's 4 elements, v at the
+// subgroup's 4 v entries, a / b at the value head's entry.
+void decode_step(inout float h[4][4], uint64_t qa, uint64_t ka, uint qk_off, uint64_t va, uint v_off, uint64_t aa,
+                 uint64_t ba, uint ab_off, float A_log, float dt_bias, out float o[4]) {
+    float q[4], k[4];
+    load4(qa, qk_off, q);
+    load4(ka, qk_off, k);
+    precise float inv_q = inv_l2(q) * pc.scale;
+    const float inv_k = inv_l2(k);
+    [[unroll]] for (int i = 0; i < 4; ++i) {
+        precise float qi = inv_q * q[i];
+        precise float ki = inv_k * k[i];
+        q[i] = qi;
+        k[i] = ki;
+    }
+    precise float x = ldbf(aa, ab_off) + dt_bias;
+    precise float onep = exp_fast(x) + 1.0;
+    precise float log1p_exp = log2(onep) * kLn2;
+    const float softplus = x <= kSoftplusThreshold ? log1p_exp : x;
+    precise float sp_a = softplus * exp_fast(A_log);
+    const float decay = exp_fast(-sp_a);
+    precise float den = exp_fast(-ldbf(ba, ab_off)) + 1.0;
+    const float beta = rcp_rn(den);
+
+    float v[4];
+    load4(va, v_off, v);
+    [[unroll]] for (int r = 0; r < 4; ++r) {
+        [[unroll]] for (int i = 0; i < 4; ++i) {
+            precise float d = h[r][i] * decay;
+            h[r][i] = d;
+        }
+        precise float diff = v[r] - row_dot(h[r], k);
+        precise float vn = beta * diff;
+        [[unroll]] for (int i = 0; i < 4; ++i) {
+            precise float u = fma(k[i], vn, h[r][i]);
+            h[r][i] = u;
+        }
+        o[r] = row_dot(h[r], q);
+    }
+}
+
+void main() {
+    const uint hv = gl_WorkGroupID.x;
+    const uint hk = hv / 3u;
+    const uint lane = gl_LocalInvocationID.x % 32u;
+    const uint warp = gl_LocalInvocationID.x / 32u;
+    const uint v0 = gl_WorkGroupID.y * 16u + warp * 4u;
+    const uint k0 = lane * 4u;
+    const uint head = hv * 128u * 128u * 2u;  // bytes
+    const float A_log = F32(pc.A_log + uint64_t(hv * 4u)).v;
+    const float dt_bias = ldbf(pc.dt_bias, hv * 2u);
+    const uint qk_off = (hk * 128u + k0) * 2u;
+    const uint v_off = (hv * 128u + v0) * 2u;
+
+#if ROWS
+    Table tb = Table(pc.table);
+    const uint64_t state = tb.states[gl_WorkGroupID.z];
+    const uint first = tb.first[gl_WorkGroupID.z];
+    const uint end = first + tb.rows[gl_WorkGroupID.z];
+#else
+    const uint64_t state = pc.state;
+#endif
+    float h[4][4];
+    [[unroll]] for (int r = 0; r < 4; ++r) load4(state, head + (v0 + uint(r)) * 256u + k0 * 2u, h[r]);
+#if ROWS
+    for (uint t = first; t < end; ++t) {
+        const uint qkv = t * pc.qkv_stride * 2u;
+        const uint ab = (t * pc.ab_stride + hv) * 2u;
+        float o[4];
+        decode_step(h, pc.q, pc.k, qkv + qk_off, pc.v, qkv + v_off, pc.a, pc.b, ab, A_log, dt_bias, o);
+        if (lane == 0u) store4(pc.o, t * pc.o_stride * 2u + v_off, o);
+        const bool last = t + 1u == end;
+        const uint64_t dst = last ? state : tb.saves[t];
+        [[unroll]] for (int r = 0; r < 4; ++r) {
+            store4(dst, head + (v0 + uint(r)) * 256u + k0 * 2u, h[r]);
+            [[unroll]] for (int i = 0; i < 4; ++i) h[r][i] = bf16_round(h[r][i]);
+        }
+    }
+#else
+    float o[4];
+    decode_step(h, pc.q, pc.k, qk_off, pc.v, v_off, pc.a, pc.b, hv * 2u, A_log, dt_bias, o);
+    if (lane == 0u) store4(pc.o, v_off, o);
+    [[unroll]] for (int r = 0; r < 4; ++r) store4(state, head + (v0 + uint(r)) * 256u + k0 * 2u, h[r]);
+#endif
+}

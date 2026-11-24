@@ -1,0 +1,40 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define WG 1024
+#include "k12_common.comp"
+// VulkanAmd P2 K12 top2_f32: one 1024-thread workgroup over the row; candidates are 64-bit keys (NaN above +inf, ties to the
+// lower id), the two largest per thread, merged by a fixed xor tree over the 32-lane subgroups then over the warps. Exact
+// (integer). ids u32 [2] = (first maximum, first maximum without it), scores f32 [2] their values.
+layout(local_size_x = 1024) in;
+layout(push_constant, std430) uniform PC { uint64_t values, ids, scores; uint vocab; } pc;
+shared uint64_t sb[32], ss[32];
+void push2(inout uint64_t best, inout uint64_t second, uint64_t p) {
+    if (p > second) {
+        if (p > best) { second = best; best = p; } else { second = p; }
+    }
+}
+void merge2(inout uint64_t best, inout uint64_t second, uint64_t ob, uint64_t os) {
+    const uint64_t lo_ = min(best, ob);
+    const uint64_t hs = max(second, os);
+    best = max(best, ob);
+    second = max(lo_, hs);
+}
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    uint64_t best = 0ul, second = 0ul;
+    for (uint j = tid; j < pc.vocab; j += 1024u) push2(best, second, key_of(ldf(pc.values, j), j));
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) merge2(best, second, shfl_key(best, o), shfl_key(second, o));
+    const uint warp = tid >> 5, lane = tid & 31u;
+    if (lane == 0u) { sb[warp] = best; ss[warp] = second; }
+    barrier();
+    if (warp == 0u) {
+        best = sb[lane]; second = ss[lane];
+        [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) merge2(best, second, shfl_key(best, o), shfl_key(second, o));
+        if (lane < 2u) {
+            const uint64_t p = lane == 0u ? best : second;
+            const uint i = ~uint(p);
+            stu(pc.ids, lane, i);
+            stf(pc.scores, lane, ldf(pc.values, i));
+        }
+    }
+}

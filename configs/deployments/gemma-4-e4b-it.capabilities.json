@@ -1,0 +1,92 @@
+{
+  "schema_version": "2",
+  "plugin": "sglang-http",
+  "profile_id": "sglang-gemma-4-e4b-it-v1",
+  "artifact_sha256": "2395797c6c8f5d308f2127cf7a97e801642aa6f60c7b5dafd6012d6a4fe096c1",
+  "execution_mode": "backend_managed",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "notes": "Backend-declared, unmeasured by CERE. SGLang owns batching, KV cache and scheduling. bf16 weights, no quantization (server reports quantization null), no speculative decoding (speculative_* null), KV cache dtype auto; SGLang kernels are not a CERE reference numerical mode and have not been measured by CERE. Rows are concurrent CERE requests (1-4, up to max_running_requests 4), not native batch rows; served by the GPU1 twin cere-gemma-g1 and the node-b RTX 5090 instance with the same SGLang arguments (scripts/live/gemma_deploy.py). Seeded sampling, json_schema, grammar and tool calls are unsupported. Not a throughput or capacity claim.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

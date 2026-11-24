@@ -1,0 +1,154 @@
+#version 460
+// VulkanAmd P2 K13: the grouped expert GEMV of the MTP draft's BF16 MoE block (executor/cuda/src/kernels/
+// k13_moe_bf16.cu grouped_gemv / small_gemv_kernel), on BF16 expert weights (FP4 0) or NVFP4 W4A16 ones (FP4 1).
+//
+// Arithmetic per output element: lane l of a subgroup of 32 accumulates its k elements {LE l + 32 LE i + j}
+// (LE 8: CUDA's order) as acc = fma(x, w, acc) for i, then j ascending, in FP32; then a fixed xor butterfly (16 .. 1)
+// sums the 32 lanes. The order depends on k alone: not on the tile's other rows, the call's m or the weight format.
+// GLU (GEMM1): weight rows gate = expert row col, up = expert row n + col of [E, 2 n, k]; out = BF16(SiLU(BF16(gate))
+// * BF16(up)) (k7_common silu_mul); else (GEMM2) out = BF16(acc).
+// FP4 1: each weight is decoded to the value the BF16 path reads from cerec's S2 tensors: BF16_RNE(RN(RN(e2m1 *
+// scale) * global)) as FP32 (the first product is exact), then the same accumulation, so the output is bit-equal to the
+// BF16 call on the dequantized tensors (k13_test checks).
+//
+// Workgroup (8 subgroups x COLS columns, active expert): the expert's sorted rows in passes of <= MR rows; per pass
+// every subgroup loads its COLS (GLU: 2 COLS) weight rows once per 256-element step and applies them to the pass's
+// rows. Subgroup size 32 required.
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#include "k7_common.comp"
+
+#ifndef GLU
+#define GLU 0
+#endif
+#ifndef FP4
+#define FP4 0
+#endif
+#ifndef MR
+#define MR 1
+#endif
+#define COLS (GLU != 0 ? 2 : 4)
+#define KW (GLU != 0 ? 2 * COLS : COLS)
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t a, perm, w, scale, glob, grp, out_;
+    uint a_div, n, k, e;
+} pc;
+
+shared float e4m3_lut[256];
+
+#ifndef LE
+#define LE 8  // elements per lane per step (the step is 32 LE); fixes the order with k (the host passes one LE for both formats)
+#endif
+#define LH (LE / 8)
+
+#if FP4
+// FP4: the LE weights of weight row `row` (expert-local row index into [E, rows, k]) at elements i .. i + LE - 1:
+// BF16(RN(RN(e2m1 * scale) * global)) as FP32 (i is a multiple of LE, so the LE elements share one 16-block's scale
+// when LE <= 16).
+void decode_fp4(uint row, uint i, float glob, out float f[LE]) {
+#if LE == 16
+    const uvec2 qv = ld8(pc.w, row * (pc.k / 2u) + i / 2u);
+    const uint qw[2] = uint[2](qv.x, qv.y);
+#else
+    const uint qw[1] = uint[1](ld4(pc.w, row * (pc.k / 2u) + i / 2u));
+#endif
+    const float sc = e4m3_lut[ld1(pc.scale, row * (pc.k / 16u) + i / 16u)];
+    [[unroll]] for (uint j = 0u; j < LE; ++j) {
+        const uint c = (qw[j / 8u] >> (4u * (j % 8u))) & 15u;
+        const float mag = float(e2m1_to_s8(c & 7u)) * 0.5;  // {0, .5, 1, 1.5, 2, 3, 4, 6}, exact
+        const float v = (c & 8u) != 0u ? -mag : mag;
+        precise float p = v * sc;
+        precise float g = p * glob;
+        f[j] = rbf(g);
+    }
+}
+#endif
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x, sg = gl_SubgroupID, lane = gl_SubgroupInvocationID, E = pc.e;
+#if FP4
+    e4m3_lut[lid] = e4m3_to_float(lid);
+    barrier();
+#endif
+    if (int(gl_WorkGroupID.y) >= ldi(pc.grp, (E + 1u) * 4u)) return;  // workgroup-uniform
+    const uint e = uint(ldi(pc.grp, (E + 2u + gl_WorkGroupID.y) * 4u));
+    const uint seg0 = uint(ldi(pc.grp, e * 4u));
+    const uint count = uint(ldi(pc.grp, (e + 1u) * 4u)) - seg0;
+    const uint n = pc.n, k = pc.k;
+    const uint col0 = (gl_WorkGroupID.x * 8u + sg) * COLS;
+    if (col0 >= n) return;  // subgroup-uniform (n % COLS == 0)
+    const uint expert_rows = GLU != 0 ? 2u * n : n;
+    uint wrow[KW];
+    float glob[KW];
+    [[unroll]] for (uint c = 0u; c < KW; ++c) {
+        const uint r = c < COLS ? col0 + c : n + col0 + c - COLS;
+        wrow[c] = e * expert_rows + r;
+#if FP4
+        glob[c] = ldf(pc.glob, (GLU != 0 ? 2u * e + (c < COLS ? 0u : 1u) : e) * 4u);
+#else
+        glob[c] = 0.0;
+#endif
+    }
+    for (uint p0 = 0u; p0 < count; p0 += MR) {
+        const uint rows = min(uint(MR), count - p0);
+        uint arow[MR];
+        [[unroll]] for (uint r = 0u; r < MR; ++r) {
+            arow[r] = 0u;
+            if (r < rows) arow[r] = pc.a_div != 0u ? uint(ldi(pc.perm, (seg0 + p0 + r) * 4u)) / pc.a_div : seg0 + p0 + r;
+        }
+        float acc[MR][KW];
+        [[unroll]] for (uint r = 0u; r < MR; ++r) [[unroll]] for (uint c = 0u; c < KW; ++c) acc[r][c] = 0.0;
+        for (uint i = lane * LE; i < k; i += 32u * LE) {
+            float wf[KW][LE];
+            [[unroll]] for (uint c = 0u; c < KW; ++c) {
+#if FP4
+                decode_fp4(wrow[c], i, glob[c], wf[c]);
+#else
+                [[unroll]] for (uint h = 0u; h < LH; ++h) {
+                    const uvec4 v = ld16(pc.w, (wrow[c] * k + i) * 2u + 16u * h);
+                    wf[c][8 * h + 0] = bf_lo(v.x); wf[c][8 * h + 1] = bf_hi(v.x); wf[c][8 * h + 2] = bf_lo(v.y); wf[c][8 * h + 3] = bf_hi(v.y);
+                    wf[c][8 * h + 4] = bf_lo(v.z); wf[c][8 * h + 5] = bf_hi(v.z); wf[c][8 * h + 6] = bf_lo(v.w); wf[c][8 * h + 7] = bf_hi(v.w);
+                }
+#endif
+            }
+            [[unroll]] for (uint r = 0u; r < MR; ++r) {
+                if (r < rows) {
+                    float xf[LE];
+                    [[unroll]] for (uint h = 0u; h < LH; ++h) {
+                        const uvec4 xv = ld16(pc.a, (arow[r] * k + i) * 2u + 16u * h);
+                        xf[8 * h + 0] = bf_lo(xv.x); xf[8 * h + 1] = bf_hi(xv.x); xf[8 * h + 2] = bf_lo(xv.y); xf[8 * h + 3] = bf_hi(xv.y);
+                        xf[8 * h + 4] = bf_lo(xv.z); xf[8 * h + 5] = bf_hi(xv.z); xf[8 * h + 6] = bf_lo(xv.w); xf[8 * h + 7] = bf_hi(xv.w);
+                    }
+                    [[unroll]] for (uint c = 0u; c < KW; ++c) {
+                        precise float a = acc[r][c];
+                        [[unroll]] for (uint j = 0u; j < LE; ++j) a = fma(xf[j], wf[c][j], a);
+                        acc[r][c] = a;
+                    }
+                }
+            }
+        }
+        [[unroll]] for (uint r = 0u; r < MR; ++r) {
+            if (r < rows) {
+                [[unroll]] for (uint c = 0u; c < KW; ++c) {
+                    precise float v = acc[r][c];
+                    [[unroll]] for (uint o = 16u; o >= 1u; o /= 2u) v = v + subgroupShuffleXor(v, o);
+                    acc[r][c] = v;
+                }
+            }
+        }
+        [[unroll]] for (uint r = 0u; r < MR; ++r) {
+            [[unroll]] for (uint c = 0u; c < COLS; ++c) {
+                if (r < rows && lane == (r * COLS + c) % 32u) {
+#if GLU
+                    const float res = silu_mul(rbf(acc[r][c]), rbf(acc[r][COLS + c]));
+#else
+                    const float res = acc[r][c];
+#endif
+                    st2(pc.out_, ((seg0 + p0 + r) * n + col0 + c) * 2u, f2bf(res));
+                }
+            }
+        }
+    }
+}

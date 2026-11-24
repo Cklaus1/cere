@@ -1,0 +1,48 @@
+[package]
+name = "cere-runtime"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[[bin]]
+name = "cered"
+path = "src/bin/cered.rs"
+
+[[bin]]
+name = "cere-native"
+path = "src/bin/cere-native.rs"
+
+[dependencies]
+cere-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+futures-util.workspace = true
+tokio-stream.workspace = true
+libc.workspace = true
+cere-proto.workspace = true
+tonic.workspace = true
+prost.workspace = true
+rustls-webpki.workspace = true
+rustls-pki-types.workspace = true
+cerec = { path = "../cere-compiler" }
+# NetTeleport S1 (net-teleport design note D-T5, F23): AES-256-GCM and HKDF of state blobs. Already in the tree
+# via rustls; no new crate.
+ring = { version = "=0.17.14", default-features = false }
+
+[dev-dependencies]
+cere-mock-sglang.workspace = true
+rcgen.workspace = true
+# hyper >= 1.12 (workspace): `sglang::tests` checks a connection with a request in flight is not ready (O304).
+hyper.workspace = true
+# `tokio::time::pause`: a test holds cered's deadline clock (server_resume.rs).
+tokio = { workspace = true, features = ["test-util"] }

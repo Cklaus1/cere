@@ -1,0 +1,13 @@
+{
+  "artifact_id": "dice-8b-bf16-be8c16464a6d5f58",
+  "created_utc": "2026-11-12T23:36:32Z",
+  "lock_id": "dice-8b-native-lock-v1",
+  "manifest_sha256": "be8c16464a6d5f58c98f61b306f5b826c7a4c9d7e390f8d4bfe5dd57a56ebbec",
+  "model_hash": "c636388748cd4f4f3def585344940db5535fd8fc86a970f0c3749b1a39273cb1",
+  "path": "/var/lib/cere/artifacts/dice-8b-bf16-be8c16464a6d5f58",
+  "profile_id": "rtxpro6000bw-bf16-text-v1",
+  "schema_version": "1",
+  "source_revision": "ca80967e77126a7b5854b51e6eeb4f1125543d94",
+  "template_hash": "87a2728cb8dc9fe424d624542f6060ec05a1d285ebbec578bb078900e33396b5",
+  "tokenizer_hash": "71c6b2ae4a42afd49107c2fc055b97e7487d456f7b4d52c36985d0145c2d205f"
+}

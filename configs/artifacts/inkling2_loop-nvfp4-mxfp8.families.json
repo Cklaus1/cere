@@ -1,0 +1,185 @@
+{
+  "groups": {
+    "nvfp4_group_size": 16,
+    "ple_index_members": [
+      "layer_multipliers",
+      "ngram_heads_offsets",
+      "ngram_heads_vocab_sizes"
+    ],
+    "ple_module_members": [
+      "conv1d.weight",
+      "key_proj.weight",
+      "norm_conv.weight",
+      "norm_key.weight",
+      "norm_query.weight",
+      "value_proj.weight"
+    ],
+    "ple_table_shards": 128
+  },
+  "rules": [
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_embed",
+      "pattern": "model\\.llm\\.(embed|unembed)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_final_norm",
+      "pattern": "model\\.llm\\.(embed_norm|norm)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_depth_residual_queries",
+      "pattern": "model\\.llm\\.attn_res\\.(attn_queries\\.[0-9]+|mlp_queries\\.[0-9]+|output_query)",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "any"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_cross_pass_queries",
+      "pattern": "model\\.llm\\.middle_cycle_cross_pass_(kv_)?queries",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_attention",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.attn\\.[a-z_0-9]+\\.(weight|static_w|weight_proj|scale|proj)",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "any"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_norm",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.(attn_norm|mlp_norm|q_input_norm|k_input_norm|v_input_norm)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_static_conv",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.(attn_sconv|mlp_sconv)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_controllers",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.controllers\\.(attn|k|v|mlp)\\.(down|forget|gain)_weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_router_weight",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.mlp\\.gate\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_router_bias",
+      "pattern": "model\\.llm\\.layers\\.[0-9]+\\.mlp\\.gate\\.bias",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "U8",
+      "family": "target_expert_nvfp4_codes",
+      "pattern": "model\\.llm\\.layers\\.([0-9]|1[0-9])\\.mlp\\.experts\\.(w13|w2)_weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "target",
+      "dtype": "F8_E4M3",
+      "family": "target_expert_nvfp4_block_scale",
+      "pattern": "model\\.llm\\.layers\\.([0-9]|1[0-9])\\.mlp\\.experts\\.(w13|w2)_weight_scale",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_expert_nvfp4_amax",
+      "pattern": "model\\.llm\\.layers\\.([0-9]|1[0-9])\\.mlp\\.experts\\.(w13|w2)_weight_amax",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_expert_nvfp4_outer_scale_denominator",
+      "pattern": "model\\.llm\\.layers\\.([0-9]|1[0-9])\\.mlp\\.experts\\.(w13|w2)_weight_outer_scale_denominator",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "F8_E4M3",
+      "family": "target_expert_mxfp8_values",
+      "pattern": "model\\.llm\\.layers\\.2[0-3]\\.mlp\\.experts\\.(w13|w2)_weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "target",
+      "dtype": "U8",
+      "family": "target_expert_mxfp8_scale",
+      "pattern": "model\\.llm\\.layers\\.2[0-3]\\.mlp\\.experts\\.(w13|w2)_weight_scale",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "draft",
+      "dtype": "BF16",
+      "family": "draft_mtp",
+      "pattern": "(fuse_weight|mask_embed|norm\\.weight|layers\\.[0-9]+\\..+|markov_head\\..+)",
+      "placement": "unused",
+      "role": "draft",
+      "shape_rule": "any"
+    },
+    {
+      "component": "vision",
+      "dtype": "BF16",
+      "family": "vision",
+      "pattern": "model\\.visual\\..+",
+      "placement": "unused",
+      "role": "vision",
+      "shape_rule": "any"
+    }
+  ],
+  "rules_id": "inkling2_loop-nvfp4-mxfp8-v1",
+  "schema_version": "1"
+}

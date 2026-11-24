@@ -1,0 +1,110 @@
+# SdarOptIn (O320, selftune design note DECISION (maintainer, 2026-11-13, SdarOptIn)): the opt-in twin of
+# native-g0-dice8b.toml, identical except `sdar_gemm = "changing"` (output-changing, restart class): DICE-8B's GEMMs
+# run the changing split-K table (executor/cuda/src/kernels/sdar/sdar_gemm.cpp kChanging) instead of the identical
+# pins. Same deployment, library and profile id; never the default. Its quality gate is scripts/live/dice_judge.py
+# --config on this file (the bars in force), not identity.
+# SelfTune ST4 S3d (selftune design note ST4, D-j, D-k, D-m): DICE-8B (family sdar) served by cered with the
+# in-process CERE executor built for it (`native_dev.py --model dice-8b build`, executor/models/dice-8b.json) on GPU0,
+# inside the `cere-native-g0` container. Dev only: one session, eager, BF16, greedy only (a request needs
+# `temperature: 0`), no speculation, prefix cache, snapshot, LoRA, research points or lever other than the defaults
+# (config.rs check_family refuses each by name). Same bind port and container as native-g0.toml: one lane at a time.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18309"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-g0-dice-8b-v1"
+served_model_name = "DICE-8B"
+deployment = "configs/deployments/dice-8b-native"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+
+# library_sha256 equals the deployment lock's backend_build_sha256; scripts/native/lock_native.py updates both from
+# the DICE-8B build's build.json (flags.model dice-8b).
+[deployments.native]
+family = "sdar"
+library = "/opt/cere/libcere_executor.so"
+library_sha256 = "65751188a0fd4114f695183d052c4af53df1b6ca74826034c4b074a2c8c5106a"
+artifact_dir = "/var/lib/cere/artifacts/dice-8b-bf16-be8c16464a6d5f58"
+expected_manifest_sha256 = "be8c16464a6d5f58c98f61b306f5b826c7a4c9d7e390f8d4bfe5dd57a56ebbec"
+device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"
+# The model's max_position_embeddings (the sdar device's support limit); one session, so the pool is one context.
+max_context_tokens = 32768
+kv_pool_tokens = 32768
+# --thinking-kwarg unset: DICE-8B's S2 reference renders its prompts without chat_template_kwargs (its template reads
+# an unset enable_thinking as thinking on); the profile has no thinking toggle, so every request renders that way.
+sidecar = ["python3", "/src/scripts/native/tokenizer_sidecar.py", "--artifact", "/var/lib/cere/artifacts/dice-8b-bf16-be8c16464a6d5f58", "--thinking-kwarg", "unset"]
+# Recorded evidence only: the image that provides CUDA user space and the tokenizer libraries.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+# SdarOptIn (crates/cere-runtime/src/levers.rs `sdar_gemm`): the only lever other than the family's defaults.
+[deployments.native.levers]
+sdar_gemm = "changing"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt plus max_tokens must fit the 32,768-token context; the S2 reference generates 256 tokens per prompt.
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 256
+max_output_tokens = 2048
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# One executor session (the profile's decode_batch_max 1): one request in flight, the rest wait in cered's queue.
+[admission]
+max_backend_inflight = 1
+per_scope_inflight = 1
+queue_depth = 16
+
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[ledger]
+state_dir = "/var/lib/cere/native-g0-dice8b"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

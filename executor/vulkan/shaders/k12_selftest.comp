@@ -1,0 +1,33 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define WG 64
+#include "k12_common.comp"
+// VulkanAmd P2 K12: test-only shader that exposes the arithmetic helpers of k12_common.comp (the exactness argument of the sampler)
+// to k12_test: out[i] = op(a[i], b[i]). op 0 fdiv_rn32, 1 fdiv_rn64, 2 exp64(a), 3 log64(a), 4 hardware fp32 a / b, 5 hardware fp64 a / b,
+// 6 uniform_u(seed = a64[i], key = low word of b, 0, 1), 7 block_sum_d, 8 block_max_f / block_sum_u (per 64-thread workgroup; sanity probes of the block reductions). Not part of the executor.
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC { uint64_t a, b, o; uint n, op; } pc;
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (pc.op == 7u) {  // block_sum_d of a[i] over each 64-thread workgroup (all threads reach it), written per thread
+        const double s = block_sum_d(i < pc.n ? ldd(pc.a, i) : 0.0LF);
+        if (i < pc.n) std_(pc.o, i, s);
+        return;
+    }
+    if (pc.op == 8u) {  // block_max_f / block_sum_u of a[i] (float) per workgroup
+        const float mx = block_max_f(i < pc.n ? ldf(pc.a, i) : 0.0);
+        const uint su = block_sum_u(i < pc.n ? uint(ldf(pc.a, i)) : 0u);
+        if (i < pc.n) { stf(pc.o, 2u * i, mx); stu(pc.o, 2u * i + 1u, su); }
+        return;
+    }
+    if (i >= pc.n) return;
+    switch (pc.op) {
+        case 0u: stf(pc.o, i, fdiv_rn32(ldf(pc.a, i), ldf(pc.b, i))); break;
+        case 1u: std_(pc.o, i, fdiv_rn64(ldd(pc.a, i), ldd(pc.b, i))); break;
+        case 2u: std_(pc.o, i, exp64(ldd(pc.a, i))); break;
+        case 3u: std_(pc.o, i, log64(ldd(pc.a, i))); break;
+        case 4u: stf(pc.o, i, ldf(pc.a, i) / ldf(pc.b, i)); break;
+        case 5u: std_(pc.o, i, ldd(pc.a, i) / ldd(pc.b, i)); break;
+        default: std_(pc.o, i, uniform_u(packUint2x32(uvec2(ldu(pc.a, 2u * i), ldu(pc.a, 2u * i + 1u))), ldu(pc.b, i), 0u, 1u)); break;
+    }
+}

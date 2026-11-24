@@ -1,0 +1,323 @@
+// Inkling S11: shared GLSL of the Inkling shaders (ki_*.comp; included after #version, GL_GOOGLE_include_directive and a
+// `#define WG <workgroup size>` line; never compiled alone).
+//
+// The Inkling kernels are bit-equal to the CPU references in executor/ref/inkling/*_ref.h (spec inkling design note
+// section 5, gate G1), which fix every operation order. This file restates the references' common pieces
+// (executor/ref/inkling/common_ref.h) in GLSL:
+// - float controls: fp32 NaN / Inf / signed zero / denormals preserved (as k12_common.comp), so the CPU's IEEE behaviour
+//   holds on RADV;
+// - `precise` on every expression whose order matters (NoContraction: no mul+add fusion, no reassociation); an fma the
+//   reference fuses is an explicit fma();
+// - canonical reductions ref::reduce_{sum,dot,max}<L>: lane t of L accumulates the elements t, t + L, t + 2L, ...
+//   in order (dots with fma), then a halving tree over shared memory (lane t += lane t + o for o = L/2 .. 1), lane 0's
+//   value is the result. Shared memory, not subgroup operations: the order does not depend on the subgroup size
+//   (RADV wave32 / wave64, lavapipe 8), and no required subgroup size is set;
+// - correctly rounded division and square root (the reference's IEEE `/` and std::sqrt); rsqrt = 1 / sqrt, two roundings;
+// - BF16 round-to-nearest-even (the references' and torch's `.to(bfloat16)`).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// SignedZeroInfNanPreserve (cap 4466, mode 4461) and DenormPreserve (cap 4464, mode 4459) for fp32 (k12_common.comp).
+spirv_execution_mode(capabilities = [4466], 4461, 32);
+spirv_execution_mode(capabilities = [4464], 4459, 32);
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer KU4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer KU2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer KU1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer KF1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer KH1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer KB1 { uint8_t v; };
+
+uvec4 ldu4(uint64_t a, uint i) { return KU4(a + uint64_t(i) * 16ul).v; }  // a 16-byte aligned
+uvec2 ldu2(uint64_t a, uint i) { return KU2(a + uint64_t(i) * 8ul).v; }  // a 8-byte aligned
+uint ldu(uint64_t a, uint i) { return KU1(a + uint64_t(i) * 4ul).v; }
+void stu(uint64_t a, uint i, uint x) { KU1(a + uint64_t(i) * 4ul).v = x; }
+float ldf(uint64_t a, uint i) { return KF1(a + uint64_t(i) * 4ul).v; }
+void stf(uint64_t a, uint i, float x) { KF1(a + uint64_t(i) * 4ul).v = x; }
+uint ldb8(uint64_t a, uint i) { return uint(KB1(a + uint64_t(i)).v); }
+void stb8(uint64_t a, uint i, uint v) { KB1(a + uint64_t(i)).v = uint8_t(v); }
+
+// ---- FP8 E4M3 (fn: no inf, 0x7f / 0xff NaN, max 448) and FP4 E2M1 codecs ----
+// e4m3_rn: torch's .to(float8_e4m3fn) of an fp32 with |x| <= 448 (callers clamp): round to nearest even, subnormals
+// (step 2^-9) included; NaN -> 0x7f with the sign.
+uint e4m3_rn(float x) {
+    const uint u = floatBitsToUint(x), s = (u >> 24) & 0x80u;
+    const float a = abs(x);
+    if (isnan(x)) return s | 0x7fu;
+    if (a < 0.015625) { precise float sa = a * 512.0; return s | uint(roundEven(sa)); }  // < 2^-6: subnormal (exact scaling), 8 = the first normal
+    const uint ua = floatBitsToUint(a);
+    const uint e = (ua >> 23) - 120u;  // biased e4m3 exponent (127 - 7)
+    const uint m = ua & 0x7fffffu, keep = m >> 20, rem = m & 0xfffffu;
+    const uint up = (rem > 0x80000u || (rem == 0x80000u && (keep & 1u) != 0u)) ? 1u : 0u;
+    return s | ((e << 3) + keep + up);
+}
+float e4m3_f(uint c) {
+    const uint e = (c >> 3) & 15u, m = c & 7u;
+    if (e == 15u && m == 7u) return uintBitsToFloat(0x7fc00000u);
+    // exact: the sign is a bit, m * 2^-9 is a float conversion of a 3-bit integer scaled by a power of two
+    const uint sg = (c & 0x80u) << 24;
+    if (e == 0u) { precise float d = float(m) * 0.001953125; return uintBitsToFloat(floatBitsToUint(d) | sg); }
+    return uintBitsToFloat(sg | ((e + 120u) << 23) | (m << 20));
+}
+// e2m1_rn: the golden's e2m1_rn (cvt.rn.satfinite.e2m1x2.f32), returned as the 4-bit code (sign bit 3, copysign: -0 -> 8).
+uint e2m1_rn(float x) {
+    const float a = abs(x);
+    const uint m = a <= 0.25 ? 0u : a < 0.75 ? 1u : a <= 1.25 ? 2u : a < 1.75 ? 3u : a <= 2.5 ? 4u : a < 3.5 ? 5u : a <= 5.0 ? 6u : 7u;
+    return ((floatBitsToUint(x) >> 28) & 8u) | m;
+}
+float e2m1_f(uint c) {
+    const float v[8] = float[8](0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0);
+    const float r = v[c & 7u];
+    return (c & 8u) != 0u ? -r : r;
+}
+// 2 * e2m1 value as a signed int8 (k7_common.comp's e2m1_to_s8): 16 codes' products sum exactly in int32, and the FP32
+// chain over the same products is exact too (each product is a multiple of 1/4 of magnitude <= 36, every partial sum
+// <= 576), so isum / 4 equals that chain bit for bit.
+uint e2m1_s8(uint c) {
+    const uint i = c & 7u;
+    const uint mag = i < 2u ? i : (2u + (i & 1u)) << ((i >> 1) - 1u);
+    return (c & 8u) != 0u ? ((0u - mag) & 0xFFu) : mag;
+}
+// One code byte (2 codes, low nibble first) -> two int8 in the low 16 bits.
+uint e2m1_s8_pair(uint byte) { return e2m1_s8(byte & 15u) | (e2m1_s8(byte >> 4) << 8); }
+spirv_instruction(extensions = ["SPV_KHR_integer_dot_product"], capabilities = [6019, 6018], id = 4450)
+int sdot4x8(uint a, uint b, spirv_literal int fmt);
+
+// ---- BF16 ----
+float bf2f(uint b) { return uintBitsToFloat((b & 0xffffu) << 16); }
+uint f2bf(float f) {  // round to nearest even; NaN stays a quiet NaN (the ktests' f2bf)
+    const uint u = floatBitsToUint(f);
+    if ((u & 0x7fffffffu) > 0x7f800000u) return ((u >> 16) | 0x40u) & 0xffffu;
+    return ((u + 0x7fffu + ((u >> 16) & 1u)) >> 16) & 0xffffu;
+}
+float ldbf(uint64_t a, uint i) { return bf2f(uint(KH1(a + uint64_t(i) * 2ul).v)); }
+void stbf(uint64_t a, uint i, float x) { KH1(a + uint64_t(i) * 2ul).v = uint16_t(f2bf(x)); }
+float round_bf(float x) { return bf2f(f2bf(x)); }  // x.to(bfloat16).float()
+
+// ---- fused multiply-add ----
+// RADV: fma() is v_fma_f32 (one rounding). Lavapipe (the development device) splits fma into mul + add, so a build with
+// -DKI_SOFT_FMA=1 (build.d/ki_inkling.sh, env KI_SOFT_FMA=1) replaces it by an exact software fma: the product is exact
+// in fp64, TwoSum gives the fp64 sum s and its exact error; rounding s to fp32 equals rounding the exact sum except when s
+// lies exactly on an fp32 midpoint with a non-zero error, where the error's sign picks the neighbour.
+#if KI_SOFT_FMA
+float ki_next_up(float v) {
+    const uint b = floatBitsToUint(v);
+    if ((b & 0x7fffffffu) == 0u) return uintBitsToFloat(1u);
+    return uintBitsToFloat((b & 0x80000000u) != 0u ? b - 1u : b + 1u);
+}
+float ki_next_down(float v) { return -ki_next_up(-v); }
+float ki_fma(float a, float b, float c) {
+    precise double p = double(a) * double(b);  // exact
+    precise double s = p + double(c);
+    if (isinf(s) || isnan(s) || s == 0.0LF) return float(s);  // overflow / NaN / exact zero (sign as the fp64 sum)
+    precise double bp = s - double(c);
+    precise double err = (p - bp) + (double(c) - (s - bp));  // TwoSum: s + err == p + c
+    const float r = float(s);
+    if (err == 0.0LF || isinf(r) || double(r) == s) return r;
+    const float lo = double(r) < s ? r : ki_next_down(r);
+    const float hi = double(r) < s ? ki_next_up(r) : r;
+    precise double mid = (double(lo) + double(hi)) * 0.5LF;  // exact
+    if (s != mid) return r;
+    return err > 0.0LF ? hi : lo;
+}
+#else
+float ki_fma(float a, float b, float c) { return fma(a, b, c); }
+#endif
+
+// ---- correctly rounded division (k12_common.comp fdiv_rn32, restated; fma through ki_fma) ----
+
+float ki_div(float a, float b) {
+    const uint ba = floatBitsToUint(a), bb = floatBitsToUint(b);
+    const uint ea = (ba >> 23) & 255u, eb = (bb >> 23) & 255u;
+    if (ea == 0u || ea == 255u || eb == 0u || eb == 255u) {
+        // IEEE special cases spelled out: RADV's a / b is a * rcp(b), so 0 / denormal would give 0 * inf = NaN.
+        const bool na = (ba & 0x7fffffffu) > 0x7f800000u, nb = (bb & 0x7fffffffu) > 0x7f800000u;
+        const bool za = (ba & 0x7fffffffu) == 0u, zb = (bb & 0x7fffffffu) == 0u;
+        const bool ia = (ba & 0x7fffffffu) == 0x7f800000u, ib = (bb & 0x7fffffffu) == 0x7f800000u;
+        const uint sg = (ba ^ bb) & 0x80000000u;
+        if (na || nb || (za && zb) || (ia && ib)) return uintBitsToFloat(0x7fc00000u);
+        if (za || ib) return uintBitsToFloat(sg);
+        if (ia || zb) return uintBitsToFloat(sg | 0x7f800000u);
+    } else if (ea >= 100u && ea <= 154u && eb >= 100u && eb <= 154u) {
+        precise float y = 1.0 / b;
+        precise float q = a * y;
+        precise float e = ki_fma(-b, q, a);
+        q = ki_fma(e, y, q);
+        e = ki_fma(-b, q, a);
+        q = ki_fma(e, y, q);
+        precise float e1 = ki_fma(-b, q, a);
+        const uint eq = (floatBitsToUint(q) >> 23) & 255u;
+        if (eq > 30u && eq < 220u) {
+            const float ulp = uintBitsToFloat((eq - 23u) << 23);
+            precise float bound = 0.49f * abs(b) * ulp;
+            if (abs(e1) < bound) return q;
+        }
+    }
+    // The nearest of three neighbouring floats by the exact fp64 residual (denormal operands and results included).
+    const double tiny = packDouble2x32(uvec2(0u, 0x36A00000u));  // 2^-149
+    const double da = (ea == 0u ? double(ba & 0x7fffffu) * tiny : abs(double(a)));
+    const double db = (eb == 0u ? double(bb & 0x7fffffu) * tiny : abs(double(b)));
+    const uint sgn = (ba ^ bb) & 0x80000000u;
+    const double q = da / db;
+    uint bf = q < 1.1754943508222875e-38LF ? uint(roundEven(q * 7.1362384635297994e44LF)) : floatBitsToUint(float(q));
+    if (bf >= 0x7f800000u) return uintBitsToFloat(0x7f800000u | sgn);
+    uint best = bf; double rb = 1.0e300LF;
+    const uint order[3] = uint[3](bf, bf > 0u ? bf - 1u : bf, bf + 1u);
+    for (int k = 0; k < 3; ++k) {
+        const uint c = order[k];
+        const double cd = (c >> 23) == 0u ? double(c & 0x7fffffu) * tiny : double(uintBitsToFloat(c));
+        precise double r = abs(fma(-cd, db, da));
+        if (r < rb || (r == rb && (c & 1u) == 0u && (best & 1u) != 0u)) { rb = r; best = c; }
+    }
+    return uintBitsToFloat(best | sgn);
+}
+
+// ---- correctly rounded square root ----
+// c = the fp64 root rounded to fp32, then moved to the float whose rounding interval holds sqrt(x): the midpoints
+// c +- ulp/2 have 25 significant bits, so their squares are exact in fp64 and compare exactly with x (an exact tie
+// is impossible: a 25-bit odd significand squared is not a 24-bit value). Denormal x is scaled by 2^32 (root by 2^16).
+float ki_sqrt(float x) {
+    const uint bx = floatBitsToUint(x);
+    if ((bx & 0x7fffffffu) == 0u || bx >= 0x7f800000u) return sqrt(x);  // +-0, +inf, NaN, negatives (NaN)
+    const bool den = (bx >> 23) == 0u;
+    const double dx = den ? double(bx) * packDouble2x32(uvec2(0u, 0x38A00000u)) : double(x);  // 2^-149 * 2^32 = 2^-117
+    uint c = floatBitsToUint(float(sqrt(dx)));
+    [[unroll]] for (int it = 0; it < 2; ++it) {
+        const double cd = double(uintBitsToFloat(c));
+        const double up = double(uintBitsToFloat(c + 1u));
+        const double dn = double(uintBitsToFloat(c - 1u));
+        precise double mu = (cd + up) * 0.5LF;  // exact (25 bits)
+        precise double md = (cd + dn) * 0.5LF;
+        precise double mu2 = mu * mu;           // exact (50 bits)
+        precise double md2 = md * md;
+        if (mu2 < dx) c += 1u;
+        else if (md2 > dx) c -= 1u;
+    }
+    const float r = uintBitsToFloat(c);
+    precise float rs = r * uintBitsToFloat(0x37800000u);  // * 2^-16 (exact: the root of a denormal is a normal float)
+    return den ? rs : r;
+}
+float ki_rsqrt(float x) { return ki_div(1.0, ki_sqrt(x)); }
+
+// ---- transcendentals: executor/ref/inkling/common_ref.h ref::exp / log / tanh / sigmoid, operation for operation
+// (constants as their fp32 bits; every unfused op one rounding via precise). ----
+float ki_mul(float a, float b) { precise float r = a * b; return r; }
+float ki_add(float a, float b) { precise float r = a + b; return r; }
+float ki_sub(float a, float b) { precise float r = a - b; return r; }
+// ref::max (fmaxf, IEEE maxNum): a NaN operand loses to a number.
+float ki_max(float a, float b) { return isnan(a) ? b : isnan(b) ? a : max(a, b); }
+float ki_exp2i(int n) { return n >= -126 ? uintBitsToFloat(uint(n + 127) << 23) : uintBitsToFloat(1u << uint(n + 149)); }
+float ki_exp(float x) {
+    if (isnan(x)) return x;
+    if (x > uintBitsToFloat(0x42b17218u)) return uintBitsToFloat(0x7f800000u);  // 88.72283905
+    if (x < uintBitsToFloat(0xc2cff1b5u)) return 0.0;                           // -103.972084
+    const float sh = 12582912.0;                                                  // 1.5 * 2^23
+    const float k = ki_sub(ki_fma(x, uintBitsToFloat(0x3fb8aa3bu), sh), sh);
+    float r = ki_fma(k, uintBitsToFloat(0xbf318000u), x);
+    r = ki_fma(k, uintBitsToFloat(0x395e8083u), r);
+    float q = uintBitsToFloat(0x39506967u);
+    q = ki_fma(q, r, uintBitsToFloat(0x3ab743ceu));
+    q = ki_fma(q, r, uintBitsToFloat(0x3c088908u));
+    q = ki_fma(q, r, uintBitsToFloat(0x3d2aa9c1u));
+    q = ki_fma(q, r, uintBitsToFloat(0x3e2aaaaau));
+    q = ki_fma(q, r, uintBitsToFloat(0x3f000000u));
+    const float y = ki_add(ki_fma(ki_mul(r, r), q, r), 1.0);
+    const int n = int(k);
+    if (n >= -126 && n <= 127) return ki_mul(y, ki_exp2i(n));
+    const int h = n / 2;
+    return ki_mul(ki_mul(y, ki_exp2i(h)), ki_exp2i(n - h));
+}
+float ki_log(float x) {
+    if (isnan(x) || x < 0.0) return uintBitsToFloat(0x7fc00000u);
+    if (x == 0.0) return uintBitsToFloat(0xff800000u);
+    if (isinf(x)) return x;
+    int e = 0;
+    uint u = floatBitsToUint(x);
+    if ((u >> 23) == 0u) { u = floatBitsToUint(ki_mul(x, 8388608.0)); e = -23; }
+    e += int(u >> 23) - 126;
+    float m = uintBitsToFloat((u & 0x007fffffu) | 0x3f000000u);
+    if (m < uintBitsToFloat(0x3f3504f3u)) { e -= 1; m = ki_add(m, m); }
+    const float f = ki_sub(m, 1.0);
+    const float z = ki_mul(f, f);
+    float q = uintBitsToFloat(0x3d9021bbu);
+    q = ki_fma(q, f, uintBitsToFloat(0xbdebd1b8u));
+    q = ki_fma(q, f, uintBitsToFloat(0x3def251au));
+    q = ki_fma(q, f, uintBitsToFloat(0xbdfe5d4fu));
+    q = ki_fma(q, f, uintBitsToFloat(0x3e11e9bfu));
+    q = ki_fma(q, f, uintBitsToFloat(0xbe2aae50u));
+    q = ki_fma(q, f, uintBitsToFloat(0x3e4cceacu));
+    q = ki_fma(q, f, uintBitsToFloat(0xbe7ffffcu));
+    q = ki_fma(q, f, uintBitsToFloat(0x3eaaaaaau));
+    const float ef = float(e);
+    float y = ki_fma(ef, uintBitsToFloat(0xb95e8083u), ki_mul(ki_mul(f, z), q));
+    y = ki_fma(z, -0.5, y);
+    return ki_fma(ef, uintBitsToFloat(0x3f318000u), ki_add(f, y));
+}
+float ki_tanh(float x) {
+    if (isnan(x)) return x;
+    const float a = abs(x);
+    if (a < 0.625) {
+        const float z = ki_mul(x, x);
+        float q = uintBitsToFloat(0xbbbaf0eau);
+        q = ki_fma(q, z, uintBitsToFloat(0x3ca9134eu));
+        q = ki_fma(q, z, uintBitsToFloat(0xbd5c1e2du));
+        q = ki_fma(q, z, uintBitsToFloat(0x3e088393u));
+        q = ki_fma(q, z, uintBitsToFloat(0xbeaaaa99u));
+        return ki_fma(ki_mul(x, z), q, x);
+    }
+    const float y = a >= 9.0 ? 1.0 : ki_sub(1.0, ki_div(2.0, ki_add(ki_exp(ki_add(a, a)), 1.0)));
+    return x < 0.0 ? -y : y;
+}
+float ki_sigmoid(float x) {
+    const bool neg = x < 0.0;
+    const float e = ki_exp(neg ? x : -x);
+    const float n = neg ? e : 1.0;
+    const float d = ki_add(1.0, e);
+    const float c = ki_add(ki_sub(1.0, d), e);
+    const float q = ki_div(n, d);
+    float r = ki_fma(-q, d, n);
+    r = ki_fma(-q, c, r);
+    return ki_add(q, ki_div(r, d));
+}
+
+// ---- canonical reductions (ref::reduce_*<L>), segmented: the workgroup's WG lanes form WG / L segments of L lanes
+// (L <= WG, both powers of two), one row each; lane t of a segment holds the row's partial of the elements t, t + L, ...
+// Fixed L per op (contract with the CUDA refs): 256 for 2304-wide rows, 64 for rank-64 rows, 32 for head_dim 128,
+// 16 for d_rel 16. ----
+shared float ki_red[WG];
+// Halving tree within each segment (lane j += lane j + o for o = L/2 .. 1); every lane returns its segment's lane 0
+// value. All WG lanes call it (it has barriers).
+float ki_tree_sum(float v, uint L) {
+    const uint t = gl_LocalInvocationID.x, j = t & (L - 1u);
+    ki_red[t] = v;
+    barrier();
+    for (uint o = L >> 1; o > 0u; o >>= 1) {
+        if (j < o) {
+            precise float s = ki_red[t] + ki_red[t + o];
+            ki_red[t] = s;
+        }
+        barrier();
+    }
+    const float r = ki_red[t - j];
+    barrier();
+    return r;
+}
+float ki_tree_max(float v, uint L) {
+    const uint t = gl_LocalInvocationID.x, j = t & (L - 1u);
+    ki_red[t] = v;
+    barrier();
+    for (uint o = L >> 1; o > 0u; o >>= 1) {
+        if (j < o) ki_red[t] = ki_red[t] < ki_red[t + o] ? ki_red[t + o] : ki_red[t];  // std::max(a, b)
+        barrier();
+    }
+    const float r = ki_red[t - j];
+    barrier();
+    return r;
+}

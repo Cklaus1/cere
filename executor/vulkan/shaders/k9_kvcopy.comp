@@ -1,0 +1,47 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: the FP8 prefill's decoded K / V copy (HIP's amd-amd step 16 design, p4_attention_hip.cpp): the
+// call's positions 0 .. n - 1 (n = 1 + its largest index) up to the copy's capacity are decoded once from the E4M3 cache
+// (row slots[j], j when slots is 0) into BF16 copies [position, 512] in qsa_attention's scratch; k9_attn.comp (rows
+// path) reads a position below the capacity from the copy, others from the cache. E4M3 -> BF16 is exact (the FP32
+// decode's high half, no rounding), so every output bit is the same with or without the copy.
+// MODE 0: n = 0; MODE 1: n = max(n, 1 + max index) (integer atomics: order-free); MODE 2: decode, thread = (position,
+// 16 bytes), positions >= min(cap, n) exit.
+#include "k9_common.comp"
+
+#ifndef MODE
+#define MODE 0
+#endif
+
+layout(local_size_x = 256) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t idx, kc, vc, slots, kb, vb, nword;
+    uint count, cap;
+} pc;
+
+void main() {
+#if MODE == 0
+    if (gl_GlobalInvocationID.x == 0u) U1(pc.nword).v = 0u;
+#elif MODE == 1
+    int mx = -1;
+    for (uint i = gl_GlobalInvocationID.x; i < pc.count; i += gl_NumWorkGroups.x * 256u) mx = max(mx, I1(pc.idx + uint64_t(i * 4u)).v);
+    mx = subgroupMax(mx);
+    if (subgroupElect() && mx >= 0) atomicMax(U1(pc.nword).v, uint(mx) + 1u);
+#else
+    const uint i = gl_GlobalInvocationID.x, j = i / 32u, c = (i % 32u) * 16u;
+    if (j >= pc.cap || j >= U1(pc.nword).v) return;
+    const uint src = pc.slots != 0ul ? uint(L1(pc.slots + uint64_t(j * 8u)).v) : j;
+    const uvec4 k = V4(pc.kc + uint64_t(src * 512u + c)).v, v = V4(pc.vc + uint64_t(src * 512u + c)).v;
+    const uint kw[4] = uint[4](k.x, k.y, k.z, k.w), vw[4] = uint[4](v.x, v.y, v.z, v.w);
+    uint ko[8], vo[8];
+    [[unroll]] for (int e = 0; e < 8; ++e) {
+        const uint w0 = kw[e / 2] >> (16 * (e % 2)), w1 = vw[e / 2] >> (16 * (e % 2));
+        ko[e] = (floatBitsToUint(e4m3(w0 & 0xFFu)) >> 16) | (floatBitsToUint(e4m3((w0 >> 8) & 0xFFu)) & 0xFFFF0000u);
+        vo[e] = (floatBitsToUint(e4m3(w1 & 0xFFu)) >> 16) | (floatBitsToUint(e4m3((w1 >> 8) & 0xFFu)) & 0xFFFF0000u);
+    }
+    const uint64_t o = uint64_t((j * 512u + c) * 2u);
+    V4(pc.kb + o).v = uvec4(ko[0], ko[1], ko[2], ko[3]); V4(pc.kb + o + 16ul).v = uvec4(ko[4], ko[5], ko[6], ko[7]);
+    V4(pc.vb + o).v = uvec4(vo[0], vo[1], vo[2], vo[3]); V4(pc.vb + o + 16ul).v = uvec4(vo[4], vo[5], vo[6], vo[7]);
+#endif
+}

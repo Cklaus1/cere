@@ -1,0 +1,47 @@
+# M3.6 managed node agent profile (m36 design note Q3, Q13): `cere-worker` for `worker-a` on node-b, launching and
+# supervising its loopback `cere-mock-sglang` backend itself (gate G3) when the coordinator issues `LoadModel` for the
+# approved lock. `lock_sha256` is the SHA-256 of `configs/deployments/qwen38-flash-next.lock.json`, the deployment
+# `configs/runtime/federation-dev.toml` pins. The agent runs as root in `cere-worker-a` and drops the child to
+# uid/gid 65534. The PEM and launch paths are placeholders that the live harness patches with its per-run PKI and
+# deploy directories; `cere-worker --check-config` checks their shape only (argv[0] must exist only at start).
+# Timings and limits equal `configs/cluster/dev-tailnet.yaml` `control_plane`. The agent needs no repository checkout.
+cluster_id = "lab-cere"
+worker_id = "worker-a"
+listen = "100.71.1.1:7443"
+principal = "cere-worker-a"
+ca_file = "/tmp/cere-fed-PLACEHOLDER/pki/ca.pem"
+cert_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a.pem"
+key_file = "/tmp/cere-fed-PLACEHOLDER/pki/worker-a-key.pem"
+state_dir = "/var/lib/cere-worker/worker-a"
+
+[coordinator]
+endpoint = "https://100.72.2.2:7443"
+principal = "cere-coordinator"
+coordinator_id = "cere-coordinator"
+
+[backend]
+base_url = "http://127.0.0.1:18317"
+load_endpoint = "/get_load"
+served_model_name = "Qwen3.8-Flash-Next"
+lock_sha256 = "eb182556781d898eb7a0cd8780ce20000586eb10f8114c6cd81393381ec236ec"
+
+# Q3: the backend the agent launches; --port is the base_url port, --server-info the operator's identity file.
+# startup_timeout_ms and stop_timeout_ms keep their defaults (600000, 30000).
+[backend.launch]
+argv = ["/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang", "--port", "18317", "--server-info", "/var/lib/cere/fed-PLACEHOLDER/server-info.json"]
+uid = 65534
+gid = 65534
+
+# Q12: retained operations and the tombstone horizon (at least the 600 s work cap).
+[journal]
+max_operations = 4096
+retry_horizon_ms = 600000
+
+# Q14; output_stall_ms defaults to rpc_timeout_ms and must not exceed lost_after_ms.
+[limits]
+heartbeat_interval_ms = 1000
+lost_after_ms = 15000
+rpc_timeout_ms = 5000
+control_quota = 64
+output_buffer_bytes = 1048576
+output_stall_ms = 5000

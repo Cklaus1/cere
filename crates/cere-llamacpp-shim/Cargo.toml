@@ -1,0 +1,22 @@
+[package]
+name = "cere-llamacpp-shim"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "SGLang-surface adapter in front of a llama.cpp llama-server, so cere-worker can front non-CUDA GPUs."
+
+[[bin]]
+name = "cere-llamacpp-shim"
+path = "src/bin/cere-llamacpp-shim.rs"
+
+[dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+cere-runtime = { path = "../cere-runtime" }

@@ -1,0 +1,75 @@
+#version 460
+// VulkanAmd P2: K5 GDN gating on Vulkan (the executor/cuda/src/kernels/k5_gdn.h `gating` contract, re-proven per device).
+//
+// math_reference: sglang (fused_gdn_gating, via the CUDA kernel's documented arithmetic; nothing is vendored)
+//
+// Per (t, h): x = a[t, h] + dt_bias[h] (FP32); softplus = x <= 20 ? log(1 + exp(x)) : x (a select);
+// g = (0 - exp(A_log[h])) * softplus; beta = float(bf16(1 / (1 + exp(0 - b[t, h])))). exp is exp2(. * log2e)
+// (v_exp_f32, CUDA kGatingVariant 4's ex2.approx non-ftz); log is a precise logf (CUDA: libdevice logf), here the
+// FP32 series in log_precise (a few ulp; the hardware log2's relative accuracy near 1 is not documented, so it is not relied on).
+// `/` is the driver's FP32 division (CUDA: div.full, a 2-ulp division).
+// One invocation per (t, h), no reduction.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 2) readonly buffer H16 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F32 { float v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t a, b, A_log, dt_bias, g, beta;
+    uint a_stride, b_stride, tokens, heads;
+} pc;
+
+const float kLog2e = 1.44269502162933349609375;  // 0x3FB8AA3B, exactly representable
+
+float ldbf(uint64_t base, uint idx) { return uintBitsToFloat(uint(H16(base + uint64_t(idx * 2u)).v) << 16); }
+float triton_exp(float x) { precise float t = x * kLog2e; return exp2(t); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+
+// log(y) for y >= 1 (+inf for +inf), in FP32 without the hardware log: y = m 2^e with m in [sqrt(1/2), sqrt(2)),
+// f = m - 1 (exact), log(m) = 2 atanh(s), s = f / (2 + f), |s| <= 0.1716, by its odd series to s^11 (truncation
+// < 1e-9 relative); e ln2 as e * ln2_hi (exact: ln2_hi has 9 trailing zero bits, e <= 128) + e * ln2_lo. Error a few
+// FP32 ulp (the shader may not use FP64: the launch layer does not enable shaderFloat64).
+float log_precise(float y) {
+    if (isinf(y)) return y;
+    int e;
+    float m = frexp(y, e);  // m in [0.5, 1)
+    if (m < 0.70710678) { m = m * 2.0; e = e - 1; }
+    precise float f = m - 1.0;
+    precise float s = f / (2.0 + f);
+    precise float s2 = s * s;
+    precise float p = 1.0 / 11.0;
+    p = p * s2 + 1.0 / 9.0;
+    p = p * s2 + 1.0 / 7.0;
+    p = p * s2 + 1.0 / 5.0;
+    p = p * s2 + 1.0 / 3.0;
+    precise float l = 2.0 * s + 2.0 * s * s2 * p;
+    const float fe = float(e);
+    precise float r = fe * uintBitsToFloat(0x3F317200u) + (fe * 1.42860682030941723212e-06 + l);
+    return r;
+}
+
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.tokens * pc.heads) return;
+    const uint t = i / pc.heads;
+    const uint h = i - t * pc.heads;
+    precise float x = ldbf(pc.a, t * pc.a_stride + h) + ldbf(pc.dt_bias, h);
+    precise float onep = triton_exp(x) + 1.0;
+    const float softplus = x <= 20.0 ? log_precise(onep) : x;
+    precise float na = 0.0 - triton_exp(F32(pc.A_log + uint64_t(h * 4u)).v);
+    precise float g = na * softplus;
+    F32(pc.g + uint64_t(i * 4u)).v = g;
+    precise float nb = 0.0 - ldbf(pc.b, t * pc.b_stride + h);
+    precise float den = triton_exp(nb) + 1.0;
+    precise float sig = 1.0 / den;
+    F32(pc.beta + uint64_t(i * 4u)).v = uintBitsToFloat(bf16_rne(sig) << 16);
+}

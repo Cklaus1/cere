@@ -1,0 +1,443 @@
+#version 460
+// VulkanAmd P2 K2 large-m GEMM (m > 16, prefill): y[r, j] = sum_i x[r, i] w[j, i] on VK_KHR_cooperative_matrix,
+// the executor/hip/src/k2_wmma.cpp role (HIP's K2-SHIFT GEMM), turned from the P0-3 prototype (p0/coopmat/gemm_cm.comp).
+//
+// x BF16 [m, k]; w BF16 [n, k] (MX 0) or MXFP8 (MX 1: q E4M3 [n, k], scales UE8M0 [n, k / 32]); y BF16 (RNE, NaN
+// 0x7FFF) or FP32 [m, n]. RADV has no BF16 shader or matrix type (spec P0-1), so each operand row is carried as FP16
+// times its own power of two: x'[r, i] = x[r, i] * 2^sx[r], w'[j, i] = w[j, i] * 2^sw[j] (k2_gemm_scan.comp picks
+// the shifts and flags rows for which this is not exact). For rows not flagged every FP16 operand equals the BF16 (or
+// decoded MXFP8) value times a power of two, every FP16 x FP16 product is exact in FP32, and the FP32 accumulation of
+// the scaled products rounds exactly as that of the unscaled ones would (no overflow or underflow on these ranges);
+// the epilogue multiplies by 2^-(sx[r] + sw[j]) with ldexp (exact). Outputs of flagged rows are written here too and
+// then overwritten by k2_gemm_f32.comp (the FP32 route), so no output ever carries an inexact operand.
+//
+// Order and invariance (k2_wmma's design): block tile 128 x 128, k step 64, 256 threads = 8 subgroups of 32 as 2 (m)
+// x 4 (n), each 64 x 32 = 4 x 2 16x16 accumulators. Per output: acc = 0; for k0 ascending in 16-wide chunks:
+// acc = MulAdd(chunk) - the same coopMatMulAdd sequence for every element whatever its tile, subgroup or lane; no
+// split-K, no atomics, nothing that depends on the call's first row, its row count, or the other rows (the shifts
+// are per row). So a row's bits are the same in any call (shift / row-count invariance) and repeats are bit-equal.
+// An MXFP8 row is decoded to exactly its BF16 upcast's value and scanned as that value, so it gives the upcast's bits.
+//
+// Staging: global loads for the next k step held in registers while this one computes, converted to FP16 when
+// written to shared memory (rows padded by 16 B). Rows past m / n are clamped (never zeroed: an `in_bounds ? load : 0`
+// made ACO wait for every load, P0-3); they feed only outputs that are not stored.
+// The epilogue reads the accumulators per element with RADV's wave32 layout (element e of lane l = row 2 e + l / 16,
+// column l % 16), which the host checks with k2_gemm_probe.comp before it records this shader.
+//
+// P4-B split x rows (info SPLIT + tail count, k2_gemm_scan.comp): the staging zeroes the row's tail values (BF16
+// magnitude bits below split_threshold(shift)), so the matrix unit sees only values exact as FP16 * 2^shift. After
+// the k loop the workgroup computes, for each split row of its tile and each of its 128 columns, tail = the exact FP32
+// fma chain (ascending i, from 0) over the row's tail values x[r, i] * w[j, i] (w decoded exactly as the FP32 route
+// does), and adds it to the accumulator once: acc += ldexp(tail, sx[r] + sw[j]) (exact scaling), before the same
+// epilogue. The tail lists ((i << 16) | BF16 bits, ascending i) are built while staging (a shared pool of PCAP
+// entries, segments sized by the scan's counts); rows whose segment does not fit ("late" rows) list theirs after the
+// k loop from a second read of the row. Both give the same list, so the same bits. Tail sums of up to 64 pooled rows
+// (32 late rows) at a time, in XS / WS (free after the k loop). No per-output arithmetic depends on which rows share
+// the tile, the chunk or the pool, so shift / row-count invariance and bit-equal repeats hold. A tile without split
+// rows runs a separate copy of the k loop with the P2 staging (the same instructions, so the same bits as before).
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#include "k2_gemm_common.comp"
+
+#ifndef MX
+#define MX 0
+#endif
+// Subgroup mapping knobs (VulkanAutotune H3; build-time only, the default build defines neither): KNT threads (wave32
+// subgroups KNT / 32) as (KNT / 32 / KSGN) (m) x KSGN (n), each TM x TN 16x16 accumulators (TM = 256 KSGN / KNT,
+// TN = 8 / KSGN), over the fixed 128 x 128 tile; QX / QW follow. The tile, BK, each element's MulAdd sequence and the
+// tail machinery are unchanged, so the knobs change no output bit. The tail machinery reuses XS / WS for the tail sums
+// and the late rows' lists, which needs the 128 x 128 x 64 tile: BM, BN and BK are not knobs.
+#ifndef KNT
+#define KNT 256
+#endif
+#ifndef KSGN
+#define KSGN 4
+#endif
+#if (KNT != 128 && KNT != 256 && KNT != 512) || (KSGN != 1 && KSGN != 2 && KSGN != 4 && KSGN != 8) || 256 * KSGN < KNT || 256 * KSGN / KNT > 16
+#error "unsupported KNT / KSGN"
+#endif
+#if KNT == 256
+#define NT 256u
+#elif KNT == 128
+#define NT 128u
+#else
+#define NT 512u
+#endif
+#if KSGN == 4
+#define SGN 4u
+#define TN 2u
+#elif KSGN == 1
+#define SGN 1u
+#define TN 8u
+#elif KSGN == 2
+#define SGN 2u
+#define TN 4u
+#else
+#define SGN 8u
+#define TN 1u
+#endif
+#if 256 * KSGN / KNT == 4
+#define TM 4u
+#elif 256 * KSGN / KNT == 1
+#define TM 1u
+#elif 256 * KSGN / KNT == 2
+#define TM 2u
+#elif 256 * KSGN / KNT == 8
+#define TM 8u
+#else
+#define TM 16u
+#endif
+#define BM 128u
+#define BN 128u
+#define BK 64u
+#define KV 8u    // uvec4 (8 FP16) per staged row per k step
+#define LDV 9u   // padded shared row stride, uvec4
+#if KNT == 256
+#define QX 4u    // x uvec4 loads per thread per k step: BM * KV / NT
+#if MX
+#define QW 2u    // w loads of 16 E4M3 bytes: BN * (BK / 16) / NT
+#else
+#define QW 4u
+#endif
+#elif KNT == 128
+#define QX 8u
+#if MX
+#define QW 4u
+#else
+#define QW 8u
+#endif
+#else
+#define QX 2u
+#if MX
+#define QW 1u
+#else
+#define QW 2u
+#endif
+#endif
+// subgroups (NSG_) and tail-sum chunk rows per pass (TSTEP_, one thread per tile column): NT / 32, NT / BN
+#if KNT == 256
+#define NSG_ 8u
+#define TSTEP_ 2u
+#elif KNT == 128
+#define NSG_ 4u
+#define TSTEP_ 1u
+#else
+#define NSG_ 16u
+#define TSTEP_ 4u
+#endif
+
+layout(local_size_x = KNT) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, w, s, y, xinfo, winfo;
+    uint m, n, k, out_f32, group, pad;
+} pc;
+
+shared uvec4 XS[BM * LDV];
+shared uvec4 WS[BN * LDV];
+shared int SHX[BM];
+shared int SHW[BN];
+shared int SLOT[BM];    // the tile row's pooled slot p (0 .. NP-1), late slot 128 + l, or -1 (not split)
+shared uint SEG[BM];    // pooled slot -> pool offset | tail count << 16
+shared uint SPR[BM];    // late slot -> tile row (slot orders: any; no output depends on them)
+shared uint NP, NL, POOLN;
+shared uint CNT[32];    // late rows: tail values listed per row of the current chunk
+#define PCAP 640u       // pool entries ((i << 16) | BF16 bits): keeps the LDS total <= 42 KB (3 workgroups per WGP)
+shared uint POOL[PCAP];
+shared uint CUR[BM];    // pooled slot -> pool write cursor (k loop)
+#define LCAP 64u        // SPLIT_MAX: list entries per late row, in WS
+#define CHP 64u         // pooled rows per chunk: tail sums 32 x 128 x 4 B in XS + 32 x 128 x 4 B in WS
+#define CH 32u          // late rows per chunk: lists 32 x 64 x 4 B in WS, tail sums in XS
+
+uint cv2(uint u, float s) { return packHalf2x16(vec2(bf_lo(u), bf_hi(u)) * s); }
+uvec4 cvt(uvec4 v, float s) { return uvec4(cv2(v.x, s), cv2(v.y, s), cv2(v.z, s), cv2(v.w, s)); }
+void wsput(uint e, uint v) { WS[e >> 2u][e & 3u] = v; }
+uint wsget(uint e) { return WS[e >> 2u][e & 3u]; }
+// tail sum of chunk row t (< 64), tile column c: rows 0..31 in XS, 32..63 in WS
+void lput(uint t, uint c, float v) {
+    const uint e = (t % 32u) * BN + c;
+    if (t < 32u) XS[e >> 2u][e & 3u] = floatBitsToUint(v); else WS[e >> 2u][e & 3u] = floatBitsToUint(v);
+}
+float lget(uint t, uint c) {
+    const uint e = (t % 32u) * BN + c;
+    return uintBitsToFloat(t < 32u ? XS[e >> 2u][e & 3u] : WS[e >> 2u][e & 3u]);
+}
+#if MX
+uint cq2(uint q, uint b, float sc) { return packHalf2x16(vec2(e4m3((q >> (8u * b)) & 0xFFu, sc), e4m3((q >> (8u * b + 8u)) & 0xFFu, sc))); }
+uvec4 cq8(uint q0, uint q1, float sc) { return uvec4(cq2(q0, 0u, sc), cq2(q0, 2u, sc), cq2(q1, 0u, sc), cq2(q1, 2u, sc)); }
+#endif
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x, sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    const uint wm = sg / SGN, wn = sg % SGN;
+    const uint m = pc.m, n = pc.n, k = pc.k;
+    // block order: groups of `group` x-row tiles sweep the n tiles together (k2_wmma's; order only, never bits)
+    const uint nbn = (n + BN - 1u) / BN, nbm = (m + BM - 1u) / BM, lin = gl_WorkGroupID.x, per = pc.group * nbn;
+    const uint g0 = (lin / per) * pc.group, gm = min(nbm - g0, pc.group);
+    const uint m0 = (g0 + (lin % per) % gm) * BM, n0 = ((lin % per) / gm) * BN;
+
+    if (tid == 0u) { NP = 0u; NL = 0u; POOLN = 0u; }
+    barrier();
+#if KNT == 256
+    if (tid < BM) {
+#else
+    for (uint u = tid; u < BM + BN; u += NT) if (u < BM) {
+        const uint tid = u;  // the row / column this pass covers (the default build's one-pass form, unrolled)
+#endif
+        const uint xi = ld4(pc.xinfo, min(m0 + tid, m - 1u) * 4u);
+        SHX[tid] = info_shift(xi);
+        int sl = -1;
+        if (m0 + tid < m && (xi & SPLIT) != 0u) {  // rows past m (clamped) never split
+            const uint t = info_tails(xi), off = atomicAdd(POOLN, t);
+            if (off + t <= PCAP) { const uint p = atomicAdd(NP, 1u); SEG[p] = off | (t << 16u); CUR[p] = off; sl = int(p); }
+            else { const uint l = atomicAdd(NL, 1u); SPR[l] = tid; sl = int(128u + l); }
+        }
+        SLOT[tid] = sl;
+#if KNT == 256
+    } else SHW[tid - BM] = info_shift(ld4(pc.winfo, min(n0 + tid - BM, n - 1u) * 4u));
+#else
+    } else SHW[u - BM] = info_shift(ld4(pc.winfo, min(n0 + u - BM, n - 1u) * 4u));
+#endif
+    barrier();
+    const uint np = NP, nl = NL, nsp = np + nl;  // workgroup-uniform
+
+    // per staged row: byte offset of its k = 0 chunk and its scale (constant over k)
+    // xt: split rows: tail threshold (bits 0..14) and, pooled rows, bit 31 + the row's pooled slot (bits 16..22)
+    uint xo[QX], wo[QW], xt[QX];
+    float sx[QX];
+    [[unroll]] for (uint q = 0u; q < QX; ++q) {
+        const uint e = tid + q * NT, row = e / KV, c = e % KV;
+        xo[q] = min(m0 + row, m - 1u) * k * 2u + c * 16u;
+        sx[q] = pow2(SHX[row]);
+        const int sl = SLOT[row];
+        xt[q] = sl < 0 ? 0u : (split_threshold(SHX[row]) | (sl < 128 ? (0x80000000u | (uint(sl) << 16u)) : 0u));
+    }
+#if MX
+    uint so[QW];
+    int sw[QW];
+    [[unroll]] for (uint q = 0u; q < QW; ++q) {
+        const uint e = tid + q * NT, row = e / 4u, c = e % 4u, gw = min(n0 + row, n - 1u);
+        wo[q] = gw * k + c * 16u;
+        so[q] = gw * (k / 32u) + c / 2u;
+        sw[q] = SHW[row] - 127;
+    }
+#else
+    float sw[QW];
+    [[unroll]] for (uint q = 0u; q < QW; ++q) {
+        const uint e = tid + q * NT, row = e / KV, c = e % KV;
+        wo[q] = min(n0 + row, n - 1u) * k * 2u + c * 16u;
+        sw[q] = pow2(SHW[row]);
+    }
+#endif
+
+    uvec4 rx[QX], rw[QW];
+#if MX
+    uint rs[QW];
+#define FETCH_W(K0)                                                                                                  \
+    [[unroll]] for (uint q = 0u; q < QW; ++q) { rw[q] = ld16(pc.w, wo[q] + (K0)); rs[q] = ld1(pc.s, so[q] + (K0) / 32u); }
+#else
+#define FETCH_W(K0) [[unroll]] for (uint q = 0u; q < QW; ++q) rw[q] = ld16(pc.w, wo[q] + (K0) * 2u);
+#endif
+#define FETCH(K0)                                                                                                    \
+    [[unroll]] for (uint q = 0u; q < QX; ++q) rx[q] = ld16(pc.x, xo[q] + (K0) * 2u);                                 \
+    FETCH_W(K0)
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[TM][TN];
+    [[unroll]] for (uint i = 0u; i < TM; ++i)
+        [[unroll]] for (uint j = 0u; j < TN; ++j) acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a[TM];
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b[TN];
+
+#if MX
+#define STAGE_W                                                                                                      \
+    [[unroll]] for (uint q = 0u; q < QW; ++q) {                                                                      \
+        const uint e = tid + q * NT, row = e / 4u, c = e % 4u;                                                       \
+        const float sc = pow2(int(rs[q]) + sw[q]);                                                                   \
+        WS[row * LDV + 2u * c] = cq8(rw[q].x, rw[q].y, sc);                                                          \
+        WS[row * LDV + 2u * c + 1u] = cq8(rw[q].z, rw[q].w, sc);                                                     \
+    }
+#else
+#define STAGE_W                                                                                                      \
+    [[unroll]] for (uint q = 0u; q < QW; ++q) {                                                                      \
+        const uint e = tid + q * NT;                                                                                 \
+        WS[(e / KV) * LDV + e % KV] = cvt(rw[q], sw[q]);                                                             \
+    }
+#endif
+// P2 staging (no split row in the tile)
+#define STAGE_X_CLEAN                                                                                                \
+    [[unroll]] for (uint q = 0u; q < QX; ++q) {                                                                      \
+        const uint e = tid + q * NT;                                                                                 \
+        XS[(e / KV) * LDV + e % KV] = cvt(rx[q], sx[q]);                                                             \
+    }
+// split staging: tails zeroed; pooled rows append their tails to the pool (skipped by a subgroup with none this step) (the row's 8 staging threads are 8
+// consecutive lanes c = 0..7 of one subgroup (c = lane % 8, 4 rows per subgroup): an exclusive subgroup sum of the
+// counts packed one 8-bit field per row orders the entries by i within the row, with no carry between fields
+// (<= 64 per row); lane 7 of the row advances its cursor after all 8 have read it: the next read follows a barrier)
+#define STAGE_X_SPLIT(K0)                                                                                            \
+    [[unroll]] for (uint q = 0u; q < QX; ++q) {                                                                      \
+        const uint e = tid + q * NT, thr = xt[q] & 0x7FFFu;                                                          \
+        uvec4 v = rx[q];                                                                                             \
+        /* any tail among the 8: min over (magnitude - 1) (16-bit wrap: 0 -> 0xFFFF) below thr - 1, packed */       \
+        const uvec4 am = v & 0x7FFF7FFFu;                                                                            \
+        const u16vec2 m1 = u16vec2(1us);                                                                             \
+        const u16vec2 mn = min(min(unpackUint2x16(am.x) - m1, unpackUint2x16(am.y) - m1),                            \
+                               min(unpackUint2x16(am.z) - m1, unpackUint2x16(am.w) - m1));                           \
+        uint bits = 0u;                                                                                              \
+        if (thr != 0u && min(uint(mn.x), uint(mn.y)) < thr - 1u) {                                                   \
+            [[unroll]] for (uint j = 0u; j < 8u; ++j) {                                                              \
+                const uint av = (v[j / 2u] >> (16u * (j % 2u))) & 0x7FFFu;                                           \
+                if (av != 0u && av < thr) bits |= 1u << j;                                                           \
+            }                                                                                                        \
+            [[unroll]] for (uint j = 0u; j < 8u; ++j)                                                                \
+                if ((bits & (1u << j)) != 0u) v[j / 2u] &= ~(0xFFFFu << (16u * (j % 2u)));                           \
+        }                                                                                                            \
+        XS[(e / KV) * LDV + e % KV] = cvt(v, sx[q]);                                                                 \
+        const bool listed = (xt[q] >> 31u) != 0u;                                                                    \
+        if (subgroupAny(listed && bits != 0u)) {                                                                     \
+            const uint lb = listed ? bits : 0u, sh8 = 8u * (lane / 8u), pk = bitCount(lb) << sh8;                    \
+            const uint before = (subgroupExclusiveAdd(pk) >> sh8) & 0xFFu, total = (subgroupAdd(pk) >> sh8) & 0xFFu; \
+            const uint ps = (xt[q] >> 16u) & 0x7Fu, cur = listed ? CUR[ps] : 0u;                                     \
+            uint o = cur + before;                                                                                   \
+            [[unroll]] for (uint j = 0u; j < 8u; ++j)                                                                \
+                if ((lb & (1u << j)) != 0u)                                                                          \
+                    POOL[min(o++, PCAP - 1u)] = (((K0) + (e % KV) * 8u + j) << 16u) | ((rx[q][j / 2u] >> (16u * (j % 2u))) & 0xFFFFu); \
+            if (listed && (lane & 7u) == 7u) CUR[ps] = cur + total;                                                  \
+        }                                                                                                            \
+    }
+#define KLOOP(STAGE_X)                                                                                               \
+    FETCH(0u)                                                                                                        \
+    for (uint k0 = 0u; k0 < k; k0 += BK) {                                                                           \
+        barrier();                                                                                                   \
+        STAGE_X                                                                                                      \
+        STAGE_W                                                                                                      \
+        barrier();                                                                                                   \
+        if (k0 + BK < k) {                                                                                           \
+            FETCH(k0 + BK)                                                                                           \
+        }                                                                                                            \
+        [[unroll]] for (uint kk = 0u; kk < BK; kk += 16u) {                                                          \
+            [[unroll]] for (uint i = 0u; i < TM; ++i)                                                                \
+                coopMatLoad(a[i], XS, (wm * TM * 16u + i * 16u) * LDV + kk / 8u, LDV, gl_CooperativeMatrixLayoutRowMajor); \
+            [[unroll]] for (uint j = 0u; j < TN; ++j)                                                                \
+                coopMatLoad(b[j], WS, (wn * TN * 16u + j * 16u) * LDV + kk / 8u, LDV, gl_CooperativeMatrixLayoutColumnMajor); \
+            [[unroll]] for (uint i = 0u; i < TM; ++i)                                                                \
+                [[unroll]] for (uint j = 0u; j < TN; ++j) acc[i][j] = coopMatMulAdd(a[i], b[j], acc[i][j]);          \
+        }                                                                                                            \
+    }
+    // (barrier() at each step's start: the previous step's shared reads are done)
+    if (nsp == 0u) {
+        KLOOP(STAGE_X_CLEAN)
+    } else {
+        KLOOP(STAGE_X_SPLIT(k0))
+    }
+
+    const uint hl = lane / 16u, cl = lane % 16u;
+#if MX
+#define WVAL(GC, I) e4m3(ld1(pc.w, (GC) * k + (I)), uintBitsToFloat(ld1(pc.s, (GC) * (k / 32u) + (I) / 32u) << 23u))
+#else
+#define WVAL(GC, I) uintBitsToFloat(uint(U16(pc.w + uint64_t(((GC) * k + (I)) * 2u)).v) << 16u)
+#endif
+// add the tail sums of chunk slots s0 .. s0 + len - 1 to their rows' accumulators, scaled like them (exact)
+#define ADD_TAILS(S0, LEN)                                                                                           \
+    [[unroll]] for (uint i = 0u; i < TM; ++i)                                                                        \
+        [[unroll]] for (uint e = 0u; e < 8u; ++e) {                                                                  \
+            const uint rr = wm * TM * 16u + i * 16u + 2u * e + hl;                                                   \
+            const int rel = SLOT[rr] - int(S0);                                                                      \
+            if (rel >= 0 && rel < int(LEN)) {                                                                        \
+                [[unroll]] for (uint j = 0u; j < TN; ++j) {                                                          \
+                    const uint ct = wn * TN * 16u + j * 16u + cl;                                                    \
+                    acc[i][j][e] = acc[i][j][e] + ldexp(lget(uint(rel), ct), SHX[rr] + SHW[ct]);                     \
+                }                                                                                                    \
+            }                                                                                                        \
+        }
+    // split rows' tails (workgroup-uniform branches)
+    {
+    // Tail sums: thread = tile column tid % 128, chunk rows tid / 128, + 2, ..: one fma chain per output (tl = 0;
+    // tl = fma(x[i], w[c, i], tl) over the row's tail values, i ascending). (Lanes over rows instead, so that a load's
+    // 32 lanes read one weight row, was slower on K3's up projection: the loop runs to the largest count of the 32.)
+// The weights of a thread's first 4 list positions are kept (rows that share tail channels, as K5's do, reuse them).
+#define TAIL_SUMS(NROWS, CHROWS, LIST)                                                                               \
+    {                                                                                                                \
+        const uint cc = tid % BN, gc = min(n0 + cc, n - 1u);                                                         \
+        uint ci[4] = uint[4](0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu);                                    \
+        float cw[4] = float[4](0.0, 0.0, 0.0, 0.0);                                                                  \
+        for (uint t = tid / BN; t < (NROWS); t += TSTEP_) {                                                          \
+            uint off = 0u, cnt = 0u;                                                                                 \
+            LIST                                                                                                     \
+            float tl = 0.0;                                                                                          \
+            for (uint q = 0u; q < cnt; ++q) {                                                                        \
+                const uint ent = ENTRY(off + q), i = min(ent >> 16u, k - 1u);                                        \
+                float wv = 0.0;                                                                                      \
+                bool hit = false;                                                                                    \
+                [[unroll]] for (uint u = 0u; u < 4u; ++u) if (u == q && ci[u] == i) { wv = cw[u]; hit = true; }      \
+                if (!hit) {                                                                                          \
+                    wv = WVAL(gc, i);                                                                                \
+                    [[unroll]] for (uint u = 0u; u < 4u; ++u) if (u == q) { ci[u] = i; cw[u] = wv; }                 \
+                }                                                                                                    \
+                tl = fma(uintBitsToFloat(ent << 16u), wv, tl);                                                       \
+            }                                                                                                        \
+            lput(t, cc, tl);                                                                                         \
+        }                                                                                                            \
+    }
+    // pooled rows, CHP per chunk
+    for (uint c0 = 0u; c0 < np; c0 += CHP) {
+        barrier();  // the k loop's (or the previous chunk's) shared reads are done; the pool is complete
+#define ENTRY(E) POOL[min((E), PCAP - 1u)]
+        TAIL_SUMS(min(np - c0, CHP), CHP, { const uint seg = SEG[c0 + t]; off = seg & 0xFFFFu; cnt = seg >> 16u; })
+#undef ENTRY
+        barrier();
+        ADD_TAILS(c0, CHP)
+    }
+    // late rows, CH per chunk: lists from a second read of the row (subgroup sg: chunk rows sg, sg + 8, ..; lanes read
+    // 8 consecutive values, ascending i by lane), then as above
+    for (uint c0 = 0u; c0 < nl; c0 += CH) {
+        barrier();
+        for (uint t = sg; t < CH && c0 + t < nl; t += NSG_) {
+            const uint tr = SPR[c0 + t], thr = split_threshold(SHX[tr]), xr = (m0 + tr) * k * 2u;
+            uint base = 0u;
+            for (uint i0 = 0u; i0 < k; i0 += 256u) {
+                const uint i = i0 + lane * 8u;
+                const uvec4 v = i < k ? ld16(pc.x, xr + i * 2u) : uvec4(0u);
+                const uint vw[4] = uint[4](v.x, v.y, v.z, v.w);
+                uint bits = 0u;
+                [[unroll]] for (uint j = 0u; j < 8u; ++j) {
+                    const uint av = (vw[j / 2u] >> (16u * (j % 2u))) & 0x7FFFu;
+                    if (av != 0u && av < thr) bits |= 1u << j;
+                }
+                uint o = base + subgroupExclusiveAdd(bitCount(bits));
+                [[unroll]] for (uint j = 0u; j < 8u; ++j)
+                    if ((bits & (1u << j)) != 0u) {
+                        if (o < LCAP) wsput(t * LCAP + o, ((i + j) << 16u) | ((vw[j / 2u] >> (16u * (j % 2u))) & 0xFFFFu));
+                        ++o;
+                    }
+                base += subgroupAdd(bitCount(bits));
+            }
+            if (lane == 0u) CNT[t] = min(base, LCAP);
+        }
+        barrier();
+#define ENTRY(E) wsget(E)
+        TAIL_SUMS(min(nl - c0, CH), CH, { off = t * LCAP; cnt = CNT[t]; })
+#undef ENTRY
+        barrier();
+        ADD_TAILS(128u + c0, CH)
+    }
+    }
+
+    // epilogue: per element, undo the two shifts (exact) and store
+    [[unroll]] for (uint i = 0u; i < TM; ++i)
+        [[unroll]] for (uint j = 0u; j < TN; ++j) {
+            const uint rt = wm * TM * 16u + i * 16u, ct = wn * TN * 16u + j * 16u + cl, c = n0 + ct;
+            const int shc = SHW[ct];
+            [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+                const uint rr = rt + 2u * e + hl, r = m0 + rr;
+                if (r < m && c < n) {
+                    const float v = ldexp(acc[i][j][e], -(SHX[rr] + shc));
+                    const uint o = r * n + c;
+                    if (pc.out_f32 != 0u) stf(pc.y, o * 4u, v);
+                    else st2(pc.y, o * 2u, f2bf(v));
+                }
+            }
+        }
+}

@@ -1,0 +1,178 @@
+#version 460
+// VulkanAmd P2 K2 large-m GEMM: the exact FP32 route (no matrix unit), P0-3's `f32simt_bf16` on buffer addresses.
+//
+// Writes y[r, j] for every output with FB set on x row r or FB / SPLIT on w row j (k2_gemm_common.comp's info word; an
+// x row's SPLIT is k2_gemm.comp's, a w row's is handled here as FB; push `force` 1:
+// every output, the "FP32 route only" mode used for timing and as the reference of the fallback rows). Each operand
+// is decoded exactly to FP32 (BF16: a 16-bit shift; MXFP8: k2_mgemv.comp's E4M3 decode times 2^(s - 127), the BF16
+// upcast's value); BF16 x BF16 and BF16 x decoded-E4M3 products are exact in FP32, accumulated by one fma chain per
+// output in ascending k (acc = fma(x, w, acc)), then stored as FP32 or BF16 (RNE, NaN 0x7FFF). The order depends on
+// nothing but k: an output's bits are a function of its x row and w row only (shift / row-count invariant), and an
+// MXFP8 weight gives its BF16 upcast's bits. Inf / NaN operands propagate as IEEE fma does.
+//
+// Tile 128 x 128, k step 16, 256 threads, 8 x 8 outputs per thread. A workgroup whose tile has no flagged row (and
+// force 0) returns at once, so the dispatch costs ~nothing when no row is flagged; a tile with <= 32 flagged x rows
+// and no flagged w row computes those rows only (the sparse path: the same per-output fma chain, so the same bits).
+#extension GL_KHR_shader_subgroup_basic : require
+#include "k2_gemm_common.comp"
+
+#ifndef MX
+#define MX 0
+#endif
+#define BM 128u
+#define BN 128u
+#define BK 16u
+
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, w, s, y, xinfo, winfo;
+    uint m, n, k, out_f32, group, force;
+} pc;
+
+shared vec4 AS[BK * BM / 4u];  // [k][row / 4]
+shared vec4 BS[BK * BN / 4u];
+shared uint FX[BM];
+shared uint FW[BN];
+shared uint LIST[BM];   // the tile's flagged x rows (any order: each output's arithmetic does not depend on it)
+shared uint NX, AW;
+shared float XA[BK * 8u];  // sparse path: [k][row of the chunk]
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x, tx = tid % 16u, ty = tid / 16u;
+    const uint m = pc.m, n = pc.n, k = pc.k;
+    const uint nbn = (n + BN - 1u) / BN, nbm = (m + BM - 1u) / BM, lin = gl_WorkGroupID.x, per = pc.group * nbn;
+    const uint g0 = (lin / per) * pc.group, gm = min(nbm - g0, pc.group);
+    const uint m0 = (g0 + (lin % per) % gm) * BM, n0 = ((lin % per) / gm) * BN;
+
+    if (tid == 0u) { NX = 0u; AW = 0u; }
+    barrier();
+    if (tid < BM) {
+        const uint f = (m0 + tid < m) ? (ld4(pc.xinfo, (m0 + tid) * 4u) & FB) : 0u;
+        FX[tid] = f;
+        if (f != 0u) LIST[atomicAdd(NX, 1u)] = tid;
+    } else {
+        const uint f = (n0 + tid - BM < n) ? (ld4(pc.winfo, (n0 + tid - BM) * 4u) & (FB | SPLIT)) : 0u;  // no w-side split
+        FW[tid - BM] = f;
+        if (f != 0u) atomicOr(AW, 1u);
+    }
+    barrier();
+    const uint nx = NX;
+    const bool aw = AW != 0u;
+    if (pc.force == 0u && !aw && nx == 0u) return;  // workgroup-uniform
+
+    // staging: thread -> tile row tid / 2, 8 k at (tid % 2) * 8; rows past m / n clamped (outputs not stored)
+    const uint srow = tid / 2u, sc = tid % 2u, kb = sc * 8u;
+    const uint gw = min(n0 + srow, n - 1u);
+#if MX
+    const uint wo = gw * k + sc * 8u, so = gw * (k / 32u);
+    uvec2 rw;
+    uint rs;
+#define LOAD_W(K0) rw = ld8(pc.w, wo + (K0)); rs = ld1(pc.s, so + ((K0) + sc * 8u) / 32u);
+#define STAGE_W                                                                                                    \
+    {                                                                                                              \
+        const float scw = uintBitsToFloat(rs << 23);                                                               \
+        [[unroll]] for (uint t = 0u; t < 8u; ++t)                                                                  \
+            BS[(kb + t) * (BN / 4u) + srow / 4u][srow % 4u] = e4m3((t < 4u ? rw.x : rw.y) >> (8u * (t % 4u)), scw); \
+    }
+#else
+    const uint wo = gw * k * 2u + sc * 16u;
+    uvec4 rw;
+#define LOAD_W(K0) rw = ld16(pc.w, wo + (K0) * 2u);
+#define STAGE_W                                                                     \
+    [[unroll]] for (uint t = 0u; t < 4u; ++t) {                                     \
+        BS[(kb + 2u * t) * (BN / 4u) + srow / 4u][srow % 4u] = bf_lo(rw[t]);        \
+        BS[(kb + 2u * t + 1u) * (BN / 4u) + srow / 4u][srow % 4u] = bf_hi(rw[t]);   \
+    }
+#endif
+
+    if (pc.force == 0u && !aw && nx <= 32u) {
+        // Sparse path (only a few x rows flagged, no w row): the flagged rows alone, 8 at a time against the tile's
+        // 128 columns; thread = (row tid / 32 of the chunk, columns 4 (tid % 32) .. + 3). Per output the same
+        // arithmetic as the full path below: acc = 0, acc = fma(x[i], w[i], acc) for i ascending.
+        // (A barrier-free variant, one column per thread reading its weight row from memory, was 1.2-1.7x faster on
+        // n 2,048 but 1.7x slower on n 10,240: 10,240 rows streamed independently thrash page translation. Dropped.)
+        const uint r8 = tid / 32u, c4 = (tid % 32u) * 4u;
+        for (uint c0 = 0u; c0 < nx; c0 += 8u) {
+            const uint xrow = m0 + LIST[min(c0 + (tid / 2u) % 8u, nx - 1u)];
+            const uint xo8 = xrow * k * 2u + sc * 16u;
+            uvec4 rx8 = ld16(pc.x, xo8);
+            LOAD_W(0u)
+            float a4[4] = float[4](0.0, 0.0, 0.0, 0.0);
+            for (uint k0 = 0u; k0 < k; k0 += BK) {
+                barrier();
+                if (tid < 16u) {
+                    [[unroll]] for (uint t = 0u; t < 4u; ++t) {
+                        XA[(kb + 2u * t) * 8u + tid / 2u] = bf_lo(rx8[t]);
+                        XA[(kb + 2u * t + 1u) * 8u + tid / 2u] = bf_hi(rx8[t]);
+                    }
+                }
+                STAGE_W
+                barrier();
+                if (k0 + BK < k) {
+                    rx8 = ld16(pc.x, xo8 + (k0 + BK) * 2u);
+                    LOAD_W(k0 + BK)
+                }
+                [[unroll]] for (uint kk = 0u; kk < BK; ++kk) {
+                    const float xv = XA[kk * 8u + r8];
+                    const vec4 b = BS[kk * (BN / 4u) + c4 / 4u];
+                    a4[0] = fma(xv, b.x, a4[0]); a4[1] = fma(xv, b.y, a4[1]);
+                    a4[2] = fma(xv, b.z, a4[2]); a4[3] = fma(xv, b.w, a4[3]);
+                }
+            }
+            if (c0 + r8 < nx) {
+                const uint r = m0 + LIST[c0 + r8];
+                [[unroll]] for (uint j = 0u; j < 4u; ++j) {
+                    const uint c = n0 + c4 + j;
+                    if (c < n) {
+                        const uint o = r * n + c;
+                        if (pc.out_f32 != 0u) stf(pc.y, o * 4u, a4[j]);
+                        else st2(pc.y, o * 2u, f2bf(a4[j]));
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    const uint xo = min(m0 + srow, m - 1u) * k * 2u + sc * 16u;
+    LOAD_W(0u)
+    uvec4 rx = ld16(pc.x, xo);
+
+    float acc[8][8];
+    [[unroll]] for (uint i = 0u; i < 8u; ++i)
+        [[unroll]] for (uint j = 0u; j < 8u; ++j) acc[i][j] = 0.0;
+    for (uint k0 = 0u; k0 < k; k0 += BK) {
+        barrier();
+        [[unroll]] for (uint t = 0u; t < 4u; ++t) {
+            AS[(kb + 2u * t) * (BM / 4u) + srow / 4u][srow % 4u] = bf_lo(rx[t]);
+            AS[(kb + 2u * t + 1u) * (BM / 4u) + srow / 4u][srow % 4u] = bf_hi(rx[t]);
+        }
+        STAGE_W
+        barrier();
+        if (k0 + BK < k) {
+            rx = ld16(pc.x, xo + (k0 + BK) * 2u);
+            LOAD_W(k0 + BK)
+        }
+        [[unroll]] for (uint kk = 0u; kk < BK; ++kk) {
+            const vec4 a0 = AS[kk * (BM / 4u) + ty], a1 = AS[kk * (BM / 4u) + 16u + ty];
+            const vec4 b0 = BS[kk * (BN / 4u) + tx], b1 = BS[kk * (BN / 4u) + 16u + tx];
+            const float av[8] = float[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+            const float bv[8] = float[8](b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w);
+            [[unroll]] for (uint i = 0u; i < 8u; ++i)
+                [[unroll]] for (uint j = 0u; j < 8u; ++j) acc[i][j] = fma(av[i], bv[j], acc[i][j]);
+        }
+    }
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+        const uint rl = (i / 4u) * 64u + ty * 4u + i % 4u, r = m0 + rl;
+        if (r < m) {
+            [[unroll]] for (uint j = 0u; j < 8u; ++j) {
+                const uint cl = (j / 4u) * 64u + tx * 4u + j % 4u, c = n0 + cl;
+                if (c < n && (pc.force != 0u || (FX[rl] | FW[cl]) != 0u)) {
+                    const uint o = r * n + c;
+                    if (pc.out_f32 != 0u) stf(pc.y, o * 4u, acc[i][j]);
+                    else st2(pc.y, o * 2u, f2bf(acc[i][j]));
+                }
+            }
+        }
+    }
+}

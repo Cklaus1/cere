@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "inkling-2-mini-native-amd-vk-lock-v1",
+  "recipe_sha256": "baa543698f5afda16b30c7dcbc863cbd3aee63d4cab49241413891a5a0cbbbb3",
+  "artifact_sha256": "6e585d30f49d24da39b8e81ccabca5a59e65e89e0fd28a22ca4022df907ac6d8",
+  "model_content_sha256": "4bcd2a3721352d465aba40466092b203fec7f0a6d8278cc2a93df4136c99ce5b",
+  "tokenizer_sha256": "8e7689dd177a7cff55a88522c91264b746fd59c69d744f886f56b1cdd0b307a0",
+  "template_sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
+  "backend_build_sha256": "ecb7b0ea90f5efd597039af74e71baaf743339f98f2696210996ed786512c1db",
+  "backend_profile_id": "native-amd-inkling-2-mini-vk-v67",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

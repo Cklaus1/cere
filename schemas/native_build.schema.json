@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/native_build.schema.json",
+  "title": "CERE native build record build/native/build.json (tasks/m22-spec.md Q11, H3)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "git_head",
+    "git_dirty",
+    "image_digest",
+    "flags",
+    "source_tree_sha256",
+    "static_libs",
+    "ccache",
+    "outputs"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "git_head": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+    },
+    "git_dirty": {
+      "type": "boolean"
+    },
+    "image_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cuda",
+        "cxx",
+        "link"
+      ],
+      "properties": {
+        "cuda": {
+          "type": "string"
+        },
+        "cxx": {
+          "type": "string"
+        },
+        "link": {
+          "type": "string"
+        },
+        "model": {
+          "description": "SelfTune ST4 S3a: the CERE_MODEL descriptor id (executor/models/<id>.json) the library is built for; present only when it is not the default qwen38-flash-next",
+          "type": "string",
+          "pattern": "^(?!qwen38-flash-next$)[a-z0-9][a-z0-9.-]*$"
+        },
+        "moe_backend": {
+          "description": "tasks/m23-spec.md M23-D1: present only in a CERE_MOE_BACKEND=p3b build",
+          "const": "p3b"
+        },
+        "p3b_cuda": {
+          "description": "the extra CUDA flags of the P3b translation units (FlashInfer's JIT flags)",
+          "type": "string"
+        }
+      }
+    },
+    "mutant": {
+      "description": "SelfTune ST4 S4a: the fail-first sdar mutant of a test-only `native_dev.py build --sdar-mutant NAME` library (scripts/live/native_dev.py SDAR_MUTANTS, executor/CMakeLists.txt CERE_SDAR_MUTANT; lock_native.py, integrate.py precheck and dice_serve.py refuse it); absent from every other build",
+      "enum": [
+        "causal",
+        "fp32tie",
+        "changing_k_short"
+      ]
+    },
+    "source_tree_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "static_libs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.+-]{1,128}(?![\\s\\S])"
+      }
+    },
+    "ccache": {
+      "description": "build/ccache: the version of the ccache the compiles went through (`native_dev.py build --ccache`, dev only; lock_native.py refuses such a build), `off` for a clean build",
+      "type": "string",
+      "pattern": "^(off|[0-9]+\\.[0-9]+(\\.[0-9]+)?)(?![\\s\\S])"
+    },
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "sha256",
+          "bytes",
+          "needed"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.+-]{1,128}(?![\\s\\S])"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "needed": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.+-]{1,128}(?![\\s\\S])"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+#version 460
+// VulkanAmd P2 K1: copy_segments (k1_primitives.h): `count` (1 .. 128) device byte ranges, `rows` rows of `width` bytes, row r from
+// src + r * src_pitch to dst + r * dst_pitch, in one dispatch. Workgroup y = segment, the workgroups of a segment stride over its
+// units (16 bytes when dst, src, both pitches and width are 16-byte aligned, else single bytes), row-major, as the CUDA kernel.
+// Segment table (device buffer, 6 x uint64 per segment): dst, dst_pitch, src, src_pitch, width, rows.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer U64 { uint64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer B1 { uint8_t v; };
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC { uint64_t table; } pc;
+
+void main() {
+    const uint64_t e = pc.table + uint64_t(gl_WorkGroupID.y) * 48ul;
+    const uint64_t dst = U64(e).v, dpitch = U64(e + 8ul).v, src = U64(e + 16ul).v, spitch = U64(e + 24ul).v, width = U64(e + 32ul).v, rows = U64(e + 40ul).v;
+    const bool vec = ((dst | src | dpitch | spitch | width) & 15ul) == 0ul;
+    const uint64_t per_row = vec ? width / 16ul : width;
+    const uint64_t units = per_row * rows;
+    const uint64_t step = uint64_t(gl_NumWorkGroups.x) * 256ul;
+    for (uint64_t u = uint64_t(gl_WorkGroupID.x) * 256ul + uint64_t(gl_LocalInvocationID.x); u < units; u += step) {
+        const uint64_t r = u / per_row;
+        const uint64_t c = u - r * per_row;
+        if (vec) V4(dst + r * dpitch + c * 16ul).v = V4(src + r * spitch + c * 16ul).v;
+        else B1(dst + r * dpitch + c).v = B1(src + r * spitch + c).v;
+    }
+}

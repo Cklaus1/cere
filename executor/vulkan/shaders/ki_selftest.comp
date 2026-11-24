@@ -1,0 +1,53 @@
+#version 460
+// Inkling S11: self-test of ki_common.comp (ki_test "common" rows). MODE 0: elementwise sqrt / div / rsqrt / bf16 round
+// of x, y. MODE 1: per row the canonical sum, dot and max of length n with L = WG lanes. MODE 2: elementwise
+// ki_exp / ki_log / ki_tanh / ki_sigmoid of x (row "trans", against ref::exp / log / tanh / sigmoid). MODE 3:
+// elementwise ki_fma(x[2i], x[2i + 1], y[i]) (row "common", against std::fma).
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P { uint64_t x, y, o; uint n, rows; } p;
+
+void main() {
+#if MODE == 0
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    const float a = ldf(p.x, i), b = ldf(p.y, i);
+    stf(p.o, 4u * i + 0u, ki_sqrt(a));
+    stf(p.o, 4u * i + 1u, ki_div(a, b));
+    stf(p.o, 4u * i + 2u, ki_rsqrt(a));
+    stf(p.o, 4u * i + 3u, round_bf(b));
+#elif MODE == 3
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    stf(p.o, i, ki_fma(ldf(p.x, 2u * i), ldf(p.x, 2u * i + 1u), ldf(p.y, i)));
+#elif MODE == 2
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    const float a = ldf(p.x, i);
+    stf(p.o, 4u * i + 0u, ki_exp(a));
+    stf(p.o, 4u * i + 1u, ki_log(a));
+    stf(p.o, 4u * i + 2u, ki_tanh(a));
+    stf(p.o, 4u * i + 3u, ki_sigmoid(a));
+#else
+    const uint row = gl_WorkGroupID.x, t = gl_LocalInvocationID.x;
+    const uint base = row * p.n;
+    precise float s = 0.0, d = 0.0;
+    float m = uintBitsToFloat(0xff800000u);
+    for (uint i = t; i < p.n; i += WG) {
+        const float a = ldf(p.x, base + i), b = ldf(p.y, base + i);
+        s = s + a;
+        d = ki_fma(a, b, d);
+        m = m < a ? a : m;
+    }
+    const float rs = ki_tree_sum(s, WG);
+    const float rd = ki_tree_sum(d, WG);
+    const float rm = ki_tree_max(m, WG);
+    if (t == 0u) {
+        stf(p.o, 3u * row + 0u, rs);
+        stf(p.o, 3u * row + 1u, rd);
+        stf(p.o, 3u * row + 2u, rm);
+    }
+#endif
+}

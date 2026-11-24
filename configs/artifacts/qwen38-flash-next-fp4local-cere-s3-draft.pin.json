@@ -1,0 +1,13 @@
+{
+  "artifact_id": "qwen38-flash-next-fp4local-cere-s3-draft-r2m-968222f4504e4fe3",
+  "created_utc": "2026-10-19T03:32:59Z",
+  "lock_id": "qwen38-flash-next-native-spec-lock-v1",
+  "manifest_sha256": "968222f4504e4fe34920340295afbbd548925308cf8b1659f541e7d646b17838",
+  "model_hash": "4ddc51d4f97d2283b0556d5683a7e53ac32437853c6fdfa084aac379824b78e4",
+  "path": "/var/lib/cere/artifacts/qwen38-flash-next-fp4local-cere-s3-draft-r2m-968222f4504e4fe3",
+  "profile_id": "rtxpro6000bw-plehost-nvfp4-mxfp8-text-v1",
+  "schema_version": "1",
+  "source_revision": "b9ce18a6887e18c089fdea8509a33e63429a3300",
+  "template_hash": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "tokenizer_hash": "5cba89bb97f70720773d6148b3e86aa3f22e914acbad16930f559d107996405b"
+}

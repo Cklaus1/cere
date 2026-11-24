@@ -1,0 +1,58 @@
+schema_version: "1"
+name: federated-two-pc-template
+evidence: unmeasured
+nodes:
+  - id: pc-a
+    kind: machine
+    capacity_bytes: null
+    attributes: {network: tailscale, role: worker}
+  - id: a-gpu0
+    kind: gpu
+    capacity_bytes: null
+    attributes: {host: pc-a, memory_technology: gddr7}
+  - id: a-vram0
+    kind: device_memory
+    capacity_bytes: null
+    attributes: {host: pc-a, owner: a-gpu0}
+  - id: a-hostram
+    kind: host_memory
+    capacity_bytes: null
+    attributes: {host: pc-a}
+  - id: pc-b
+    kind: machine
+    capacity_bytes: null
+    attributes: {network: tailscale, role: worker}
+  - id: b-gpu0
+    kind: gpu
+    capacity_bytes: null
+    attributes: {host: pc-b, memory_technology: unknown}
+  - id: b-vram0
+    kind: device_memory
+    capacity_bytes: null
+    attributes: {host: pc-b, owner: b-gpu0}
+  - id: b-hostram
+    kind: host_memory
+    capacity_bytes: null
+    attributes: {host: pc-b}
+links:
+  - from: a-gpu0
+    to: a-vram0
+    kind: local
+    bandwidth_bytes_s: null
+    latency_ns: null
+    peer_access: true
+    contention_domain: a-gpu-memory
+  - from: b-gpu0
+    to: b-vram0
+    kind: local
+    bandwidth_bytes_s: null
+    latency_ns: null
+    peer_access: true
+    contention_domain: b-gpu-memory
+  - from: pc-a
+    to: pc-b
+    kind: network
+    bandwidth_bytes_s: null
+    latency_ns: null
+    peer_access: false
+    contention_domain: tailnet-control

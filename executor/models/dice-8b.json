@@ -1,0 +1,347 @@
+{
+  "schema_version": "1",
+  "model_id": "dice-8b",
+  "architecture": {
+    "value": [
+      "SDARForCausalLM"
+    ],
+    "sources": [
+      "config.json:architectures"
+    ]
+  },
+  "model_type": {
+    "value": "sdar",
+    "sources": [
+      "config.json:model_type"
+    ]
+  },
+  "checkpoint": {
+    "name": "DICE-8B",
+    "config_json_sha256": "b8c590079d62b58fef6932d2bf8313a0eb45d0951df35b297b13454c509bb8ab",
+    "config_json_fixture": "tests/fixtures/model_configs/dice-8b/config.json",
+    "hub": {
+      "repo": "DeadlyKitt3n/DICE-8B",
+      "revision": "ca80967e77126a7b5854b51e6eeb4f1125543d94"
+    }
+  },
+  "dimensions": {
+    "vocab_size": {
+      "value": 151936,
+      "sources": [
+        "config.json:vocab_size"
+      ]
+    },
+    "hidden_size": {
+      "value": 4096,
+      "sources": [
+        "config.json:hidden_size"
+      ]
+    },
+    "num_hidden_layers": {
+      "value": 36,
+      "sources": [
+        "config.json:num_hidden_layers"
+      ]
+    },
+    "num_attention_heads": {
+      "value": 32,
+      "sources": [
+        "config.json:num_attention_heads"
+      ]
+    },
+    "num_key_value_heads": {
+      "value": 8,
+      "sources": [
+        "config.json:num_key_value_heads"
+      ]
+    },
+    "head_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:head_dim"
+      ]
+    },
+    "rotary_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:head_dim"
+      ]
+    },
+    "rope_theta": {
+      "value": 1000000,
+      "sources": [
+        "config.json:rope_theta"
+      ]
+    },
+    "rms_norm_eps": {
+      "value": 1e-06,
+      "sources": [
+        "config.json:rms_norm_eps"
+      ]
+    },
+    "max_position_embeddings": {
+      "value": 32768,
+      "sources": [
+        "config.json:max_position_embeddings"
+      ]
+    },
+    "intermediate_size": {
+      "value": 12288,
+      "sources": [
+        "config.json:intermediate_size"
+      ]
+    },
+    "eos_token_id": {
+      "value": 151643,
+      "sources": [
+        "config.json:eos_token_id"
+      ]
+    }
+  },
+  "layers": {
+    "sources": [
+      "config.json:use_sliding_window"
+    ],
+    "kinds": [
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "dense",
+        "ple": false
+      }
+    ]
+  },
+  "slots": {
+    "full_attention": [
+      "norm",
+      "attention.full",
+      "norm",
+      "ffn.dense"
+    ],
+    "model": [
+      "embed.token",
+      "norm",
+      "lm_head",
+      "sample",
+      "decode.block_diffusion"
+    ]
+  },
+  "weights": {
+    "quant_algo": {
+      "value": "none",
+      "sources": [
+        "config.json!quantization_config"
+      ]
+    },
+    "dense_dtype": {
+      "value": "bfloat16",
+      "sources": [
+        "config.json:torch_dtype"
+      ]
+    },
+    "tie_word_embeddings": {
+      "value": false,
+      "sources": [
+        "config.json:tie_word_embeddings"
+      ]
+    }
+  },
+  "graph": null,
+  "draft_head": {
+    "kind": "none"
+  },
+  "vision": null,
+  "decode": {
+    "policy": "block_diffusion",
+    "block_size": {
+      "value": 4,
+      "sources": [
+        "config.json:block_size"
+      ]
+    },
+    "mask_token_id": {
+      "value": 151669,
+      "sources": [
+        "config.json:mask_token_id"
+      ]
+    },
+    "attention_within_block": "bidirectional",
+    "attention_across_blocks": "causal",
+    "cache_write": "per_block",
+    "unmasking": "confidence_threshold"
+  }
+}

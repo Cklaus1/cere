@@ -1,0 +1,129 @@
+# FP4-Local S2 eval config, CUR arm (fp4local design note "S2 quality plan", FL-14; dev-only, never the default):
+# native-g0-spec-nvfp4.toml (-v19: profile native-g0-qwen38-flash-next-v19, deployment, levers, prefix cache, MTP
+# speculation, memory limit, the shipped NVFP4 artifact) unchanged except [api]: max_output_tokens 131,072 (AIME26 and
+# GPQA ask 130,000) and default_deadline_ms = max_deadline_ms (tool-eval-bench sends no X-Cere-Deadline-Ms; its
+# --timeout is 1,800 s). native-g0-spec-fp4local-eval.toml is the FP4L arm's twin. Same container, bind and state_dir
+# as native-g0.toml (one native backend on GPU0 at a time). scripts/native/lock_native.py pins its library with
+# native-g0.toml.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18309"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-g0-qwen38-flash-next-v19"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next-native-spec-nvfp4"
+shared_backend_tenancy = "exclusive"
+# The executor's prefix cache (m210 design note D2) namespaces each scope's sessions by its cache_salt, so nothing
+# is shared across scopes.
+allow_cross_scope_prefix_cache = false
+prefix_cache_isolation = "cache_salt"
+
+# library_sha256 equals the deployment lock's backend_build_sha256; scripts/native/lock_native.py updates both.
+[deployments.native]
+library = "/opt/cere/libcere_executor.so"
+library_sha256 = "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453"
+artifact_dir = "/var/lib/cere/artifacts/qwen38-flash-next-nvfp4-b580d9bd2713aba7"
+expected_manifest_sha256 = "b580d9bd2713aba7dc09be32a02e856ef73d1de1783e11a085b29bbbd4dc04e7"
+device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"
+max_context_tokens = 200000
+# One 200,000-token KV pool shared by the four rows (ledger CR1, M1 floor; m25 N2 (a), m26 N1 (d)): each session
+# reserves its pages at create; a request that does not fit waits in cered's queue. 0 or absent would derive
+# rows x context = 800,000, which breaks the floor (needs-human).
+kv_pool_tokens = 200000
+# The prefix cache's device state pool (m210 design note D6, OQ3 (b)): 16 x 59,031,808 B; 0 = cache off.
+prefix_state_slots = 16
+sidecar = ["python3", "/src/scripts/native/tokenizer_sidecar.py", "--artifact", "/var/lib/cere/artifacts/qwen38-flash-next-nvfp4-b580d9bd2713aba7"]
+# m29 design note D11: the MTP draft (4 tokens per round) on DEVICE with the artifact's draft token map.
+speculative_draft_tokens = 4
+# m29 design note M29S2-02 (ledger M1): the drafts' ~6.3 GiB raise the executor limit above the 80 GiB default.
+# Projection (D10'): executor ~85,200 MiB -> 86,016 MiB; the maintainer replaces it with the R3-measured peak + 512 MiB.
+# The GPU0 free floor (10,240 MiB) is unchanged.
+executor_memory_limit_bytes = 90194313216
+# Recorded evidence only: the image that provides CUDA user space and the tokenizer libraries.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+# The profile's kernel and drafter selections (crates/cere-runtime/src/levers.rs): decode_step, verify_attention and
+# draft_policy are bit-identical to the registry default; k2_gemm small_m changes numerics (plain twin: -v14), so
+# spec == plain holds against native-g0-k2s.toml; drafter mtp+lookup is lossless (the target verifies every draft).
+[deployments.native.levers]
+decode_step = "spec_graph"
+verify_attention = "batched"
+draft_policy = "adaptive"
+k2_gemm = "small_m"
+drafter = "mtp+lookup"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt plus max_tokens must fit the 200,000-token context (m25 design note D6). S2 eval: output up to 131,072;
+# a 130,000-token request reserves 130,000+ of the 200,000-token pool, so one such request runs at a time.
+[api]
+max_request_body_bytes = 8388608
+max_messages = 4096
+default_max_output_tokens = 1024
+max_output_tokens = 131072
+default_deadline_ms = 1800000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# Four executor rows (the profile's decode_batch_max; m26 design note D9). A request with n choices costs n.
+[admission]
+max_backend_inflight = 4
+per_scope_inflight = 4
+queue_depth = 16
+
+[auth]
+# The operator routes, incl. POST /v1/cere/workers/{worker_id}/flush_cache (m210 design note D11, N2 (a)); the
+# flush empties this profile's prefix cache (prefix_state_slots 16).
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[[auth.scopes]]
+scope_id = "native-b"
+token_env = "CERE_TOKEN_NATIVE_B"
+
+[ledger]
+state_dir = "/var/lib/cere/native-g0"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

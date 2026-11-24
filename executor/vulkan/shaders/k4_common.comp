@@ -1,0 +1,149 @@
+// VulkanAmd P2 K4: helpers shared by the k4_*.comp shaders (included, never compiled on its own; no #version).
+//
+// math_reference: sglang (via executor/cuda/src/kernels/k4_ple.cu and k4_nvfp4.h, whose documented arithmetic is
+// restated here; nothing is vendored): `_hash_contexts` / `_shift_right_ignore_eos` (qwen4_exp.py:603-683), the pinned
+// gather + scale (:718-870), the NVFP4 row decode (fp4local design note D8).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer B1 { uint8_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer U64 { uint64_t v; };
+
+const uint kNgramHeads = 16u;
+const uint kHeadsPerNgram = 8u;
+const uint kHeadDim = 160u;     // elements per table row
+const uint kRowChunks = 10u;    // 16-element chunks per row
+const uint kMaxBlocks = 64u;    // block-table entries (k4_ple_vk.h)
+const uint kNvfp4RowBytes = 80u;
+const uint kNvfp4RowScales = 10u;
+const uint kChannels = 10240u;
+const uint kHidden = 2560u;
+const uint kConvStateLen = 9u;
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, any NaN -> 0x7FFF
+// (CUDA's cvt.rn.bf16.f32; the NaN test is on the bits, so no float-mode assumption).
+float bf(uint h) { return uintBitsToFloat(h << 16); }
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return (u & 0x7FFFFFFFu) > 0x7F800000u ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+float bf16r(float f) { return uintBitsToFloat(bf16_rne(f) << 16); }
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+// OCP E4M3 (e4m3fn) byte -> FP32, exact: sign bit 7, exponent bits 6-3 (bias 7), mantissa 2-0; 0x7F / 0xFF NaN;
+// subnormals man * 2^-9 (k4_nvfp4.h e4m3).
+float e4m3(uint byte) {
+    const uint sign = (byte & 0x80u) << 24;
+    const uint e = (byte >> 3) & 0xFu;
+    const uint m = byte & 0x7u;
+    if (e == 0xFu && m == 0x7u) return uintBitsToFloat(sign | 0x7FC00000u);
+    if (e == 0u) return uintBitsToFloat(sign | floatBitsToUint(float(m) * 0.001953125));
+    return uintBitsToFloat(sign | ((e - 7u + 127u) << 23) | (m << 20));
+}
+
+// E2M1 code (low 4 bits) -> FP32: magnitudes {0, 0.5, 1, 1.5, 2, 3, 4, 6}, code 8 is -0 (k4_nvfp4.h e2m1).
+float e2m1(uint code) {
+    const uint sign = (code & 0x8u) << 28;
+    const uint e = (code >> 1) & 0x3u;
+    const uint m = code & 0x1u;
+    const uint mag = e == 0u ? (m == 0u ? 0u : 0x3F000000u) : (((e - 1u + 127u) << 23) | (m << 22));
+    return uintBitsToFloat(sign | mag);
+}
+
+// k4_nvfp4.h `scaled`: (E2M1 x E4M3, exact in FP32) x global, one FP32 rounding. Two products, no sum.
+float nvfp4_scaled(uint code, float scale, float global_scale) {
+    precise float block = e2m1(code) * scale;
+    precise float v = block * global_scale;
+    return v;
+}
+
+// `_hash_contexts` at the last position of the window (t0, t1, t2) for head `head` (k4_ple.cu ngram_id): shift-1 source
+// t1, shift-2 source EOS when t0 or t1 is EOS; products wrap as uint64; floor-mod as torch.remainder (the C remainder
+// computed on unsigned magnitudes, then moved to the divisor's sign).
+int64_t ngram_id(int64_t t0, int64_t t1, int64_t t2, uint head, uint64_t mult, uint64_t vocab, uint64_t offs, int64_t eos) {
+    const int64_t prev1 = t1;
+    const int64_t prev2 = (t0 == eos || t1 == eos) ? eos : t0;
+    uint64_t mix = (uint64_t(t2) * uint64_t(I64(mult).v)) ^ (uint64_t(prev1) * uint64_t(I64(mult + 8ul).v));
+    if (head >= kHeadsPerNgram) mix ^= uint64_t(prev2) * uint64_t(I64(mult + 16ul).v);
+    const int64_t a = int64_t(mix);
+    const int64_t b = I64(vocab + uint64_t(head * 8u)).v;
+    const uint64_t ua = a < 0l ? (0ul - uint64_t(a)) : uint64_t(a);
+    const uint64_t ub = b < 0l ? (0ul - uint64_t(b)) : uint64_t(b);
+    const uint64_t q = ua % ub;
+    int64_t r = a < 0l ? -int64_t(q) : int64_t(q);
+    if (r != 0l && ((r < 0l) != (b < 0l))) r += b;
+    return r + I64(offs + uint64_t(head * 8u)).v;
+}
+
+// Split-table addressing (k4_ple_vk.h): a valid id's block and in-block row (32-bit), from the block table at `desc`.
+bool row_valid(int64_t id, uint64_t rows) { return id >= 0l && uint64_t(id) < rows; }
+uint64_t block_base(uint64_t desc, uint b) { return U64(desc + uint64_t(b * 8u)).v; }
+uint64_t block_scale_base(uint64_t desc, uint b) { return U64(desc + uint64_t((kMaxBlocks + b) * 8u)).v; }
+
+// One 16-element chunk of an FP8 row at row_addr (valid) or of a zero row: 16 E4M3 -> BF16 (exact), times the BF16 scale
+// (one RNE) when has_scale; an invalid id reads zero bytes (a +0 row, then scaled). Writes 32 bytes at dst (16-aligned).
+void fp8_chunk_at(bool valid, uint64_t row_addr, uint chunk, bool has_scale, float s, uint64_t dst) {
+    uvec4 raw = uvec4(0u);
+    if (valid) raw = V4(row_addr + uint64_t(chunk * 16u)).v;
+    uint w[8];
+    [[unroll]] for (int i = 0; i < 8; ++i) {
+        const uint word = raw[i / 2];
+        const uint pair = (i % 2 == 0) ? (word & 0xFFFFu) : (word >> 16);
+        precise float l = bf16r(e4m3(pair & 0xFFu));
+        precise float h = bf16r(e4m3(pair >> 8));
+        if (has_scale) {
+            precise float ls = l * s;
+            precise float hs = h * s;
+            l = ls;
+            h = hs;
+        }
+        w[i] = pack2(l, h);
+    }
+    V4(dst).v = uvec4(w[0], w[1], w[2], w[3]);
+    V4(dst + 16ul).v = uvec4(w[4], w[5], w[6], w[7]);
+}
+
+// One 16-element block of an NVFP4 row (8 packed bytes at row_addr, one E4M3 scale at scale_row_addr + chunk), each
+// element nvfp4_scaled then BF16 RNE; an invalid id decodes zero bytes (code 0, scale 0x00). Writes 32 bytes at dst.
+void nvfp4_chunk_at(bool valid, uint64_t row_addr, uint64_t scale_row_addr, uint chunk, float global_scale, uint64_t dst) {
+    uvec2 raw = uvec2(0u);
+    uint scale_byte = 0u;
+    if (valid) {
+        raw = V2(row_addr + uint64_t(chunk * 8u)).v;
+        scale_byte = uint(B1(scale_row_addr + uint64_t(chunk)).v);
+    }
+    const float scale = e4m3(scale_byte);
+    uint w[8];
+    [[unroll]] for (int i = 0; i < 8; ++i) {
+        const uint byte = ((i < 4 ? raw.x : raw.y) >> (8 * (i % 4))) & 0xFFu;
+        w[i] = pack2(nvfp4_scaled(byte & 0xFu, scale, global_scale), nvfp4_scaled(byte >> 4, scale, global_scale));
+    }
+    V4(dst).v = uvec4(w[0], w[1], w[2], w[3]);
+    V4(dst + 16ul).v = uvec4(w[4], w[5], w[6], w[7]);
+}
+
+// A valid id's block b and in-block row rr (32-bit): b = r / rows_per_block (the split-table rule of k4_ple_vk.h).
+void split_row(int64_t id, uint rpb, out uint b, out uint rr) {
+    const uint r = uint(id);
+    b = r / rpb;
+    rr = r - b * rpb;
+}
+
+// Workgroup index over a 2-D grid (x <= 65,535 per dimension: large counts spill into y).
+uint wg_linear() { return gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x; }

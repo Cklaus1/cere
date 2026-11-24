@@ -1,0 +1,22 @@
+{
+  "captured_utc": "2026-10-06T20:59:08Z",
+  "image_digest": "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69",
+  "oracle_packages": {
+    "flashinfer_python": "0.6.17",
+    "safetensors": "0.8.0",
+    "sglang": "0.5.19.dev3+gd4689328e",
+    "tokenizers": "0.22.2",
+    "torch": "2.13.0+cu130",
+    "transformers": "5.12.1",
+    "triton": "3.7.1"
+  },
+  "schema_version": "1",
+  "toolchain": {
+    "cmake": "3.28.3",
+    "cuda_runtime": "13.0.96",
+    "glibc": "2.39",
+    "gxx": "13.3.0",
+    "ninja": "1.11.1",
+    "nvcc": "13.0.88"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/model_recipe.schema.json",
+  "title": "CERE model_recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recipe_id",
+    "model_ref",
+    "backend_profile_id",
+    "context_tokens",
+    "required_operations",
+    "residency",
+    "sampling_defaults"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "recipe_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "model_ref": {
+      "type": "string",
+      "pattern": "^(local|registry)://[A-Za-z0-9][A-Za-z0-9._/@:-]{0,1023}(?![\\s\\S])"
+    },
+    "backend_profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "context_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "required_operations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "chat",
+          "infill",
+          "embed",
+          "rerank",
+          "classify",
+          "score"
+        ]
+      },
+      "maxItems": 10000
+    },
+    "adapters": {
+      "type": "array",
+      "uniqueItems": true,
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "scale"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "scale": {
+            "type": "number"
+          }
+        }
+      },
+      "maxItems": 10000
+    },
+    "residency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "priority",
+        "keep_warm_seconds",
+        "pinned"
+      ],
+      "properties": {
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "keep_warm_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
+        },
+        "pinned": {
+          "type": "boolean"
+        }
+      }
+    },
+    "sampling_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "temperature",
+        "top_p"
+      ],
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "top_p": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "max_new_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 131072
+        }
+      }
+    }
+  }
+}

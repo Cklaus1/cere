@@ -1,0 +1,38 @@
+#version 460
+// VulkanAmd P2 K4: the PLE table gather from a split table (k4_ple_vk.h). NVFP4 0: k4_ple.h gather (E4M3 rows x the
+// optional BF16 scale); NVFP4 1: gather_nvfp4 (k4_nvfp4.h decode). One workgroup of 160 = 16 rows x 10 chunks: row
+// wg_linear() * 16 + tid / 10, chunk tid % 10 (16 elements, 32 output bytes). Ids outside [0, rows) give the zero-byte
+// decode. Bit-exact.
+#include "k4_common.comp"
+
+#ifndef NVFP4
+#define NVFP4 0
+#endif
+
+layout(local_size_x = 160) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t desc, ids, out_;
+    uint64_t scale;   // NVFP4 0: BF16 scale address or 0; NVFP4 1: F32 global address
+    uint64_t rows;    // table rows
+    uint64_t n;
+    uint rpb;         // rows per block
+} pc;
+
+void main() {
+    const uint64_t row = uint64_t(wg_linear()) * 16ul + uint64_t(gl_LocalInvocationID.x / kRowChunks);
+    const uint chunk = gl_LocalInvocationID.x % kRowChunks;
+    if (row >= pc.n) return;
+    const int64_t id = I64(pc.ids + row * 8ul).v;
+    const uint64_t dst = pc.out_ + row * uint64_t(kHeadDim * 2u) + uint64_t(chunk * 32u);
+    const bool valid = row_valid(id, pc.rows);
+    uint b = 0u, rr = 0u;
+    if (valid) split_row(id, pc.rpb, b, rr);
+#if NVFP4
+    nvfp4_chunk_at(valid, valid ? block_base(pc.desc, b) + uint64_t(rr * kNvfp4RowBytes) : 0ul,
+                   valid ? block_scale_base(pc.desc, b) + uint64_t(rr * kNvfp4RowScales) : 0ul, chunk, F1(pc.scale).v, dst);
+#else
+    const bool has_scale = pc.scale != 0ul;
+    fp8_chunk_at(valid, valid ? block_base(pc.desc, b) + uint64_t(rr * kHeadDim) : 0ul, chunk, has_scale,
+                 has_scale ? bf(uint(H1(pc.scale).v)) : 1.0, dst);
+#endif
+}

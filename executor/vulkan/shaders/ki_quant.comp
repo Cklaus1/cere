@@ -1,0 +1,88 @@
+#version 460
+// Inkling S11: per-token activation quantizers of the expert inputs (spec section 3.4 / 5, the checkpoint's declared
+// activation quantization; arm Q = an internal note nvfp4_quant / mxfp8_quant). One workgroup per
+// row of K (2304 or 1152) values, one lane per block (lanes >= K / block idle).
+// MODE 0, MXFP8 (block 32): raw = amax_b * float(1/448); e = ((bits(raw) + 0x7fffff) & 0x7f800000) >> 23, 0 when
+// raw <= 2^-127, <= 254; scale = max(float(e << 23), 2^-127); inv = e == 0 ? 2^127 : 1 / scale;
+// MODE 1, NVFP4 per-token amax, block 16, fouroversix_mae (routed_quant.cuh is the contract): amax = max |x| of the row;
+// encoder = min(1536 / amax, FLT_MAX) (one IEEE div); decoder = 1 / encoder; outer = amax * float(1/1536);
+// per block s6 = e4m3(min(bmax * (encoder * float(1/6)), 448)), s4 likewise with * 0.25; inv = min(1 / (s * decoder),
+// FLT_MAX); r = e2m1_rn(x * inv); err = pairwise16 |(r * s) * outer - x|; choose4 = err4 < err6. Outputs packed codes u8
+// [rows][K / 2] (element 2i in the low nibble), E4M3 block scales u8 [rows][K / 16], amax FP32 [rows], and the
+// per-row count of /4 blocks u32 [rows] when `c4` != 0.
+// flags bit 1: x is BF16 (else FP32). Bit 2 (NVFP4, fail-first G3 only, CUDA moe.h kGlobalActScale): amax = 64 for
+// every row (one global activation scale) instead of the row's amax.
+#extension GL_GOOGLE_include_directive : require
+#define WG 256
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t x, q, s, amax, c4;
+    uint K, rows, flags;
+} p;
+
+float ld_x(uint i) { return (p.flags & 1u) != 0u ? ldbf(p.x, i) : ldf(p.x, i); }
+
+const float FLT_MAX = 3.4028234663852886e38;
+
+void main() {
+    const uint t = gl_LocalInvocationID.x, row = gl_WorkGroupID.x;
+    const uint base = row * p.K;
+#if MODE == 0
+    const uint nb = p.K / 32u;
+    if (t >= nb) return;
+    float am = 0.0;
+    for (uint i = 0u; i < 32u; ++i) { const float a = abs(ld_x(base + t * 32u + i)); am = a > am ? a : am; }  // fmaxf: NaN loses
+    precise float raw = am * uintBitsToFloat(0x3b124925u);  // float(1/448)
+    const uint bits = floatBitsToUint(raw);
+    uint e = ((bits + 0x7fffffu) & 0x7f800000u) >> 23;
+    e = raw <= uintBitsToFloat(0x00400000u) ? 0u : min(e, 254u);  // 2^-127
+    const float scale = max(uintBitsToFloat(e << 23), uintBitsToFloat(0x00400000u));
+    const float inv = e == 0u ? uintBitsToFloat(0x7f000000u) : ki_div(1.0, scale);  // 2^127
+    for (uint i = 0u; i < 32u; ++i) {
+        precise float v = ld_x(base + t * 32u + i) * inv;
+        v = v > -448.0 ? v : -448.0;  // fminf(fmaxf(v, -448), 448): NaN -> -448
+        v = v < 448.0 ? v : 448.0;
+        stb8(p.q, base + t * 32u + i, e4m3_rn(v));
+    }
+    stb8(p.s, row * nb + t, e);
+#else
+    const uint nb = p.K / 16u;
+    float xb[16];
+    float bm = 0.0;
+    if (t < nb)
+        for (uint i = 0u; i < 16u; ++i) { xb[i] = ld_x(base + t * 16u + i); const float a = abs(xb[i]); bm = a > bm ? a : bm; }
+    const float amax = (p.flags & 2u) != 0u ? 64.0 : ki_tree_max(bm, WG);
+    if (t >= nb) return;
+    const float enc0 = ki_div(1536.0, amax);
+    const float enc = min(enc0, FLT_MAX);
+    const float dec = ki_div(1.0, enc);
+    precise float outer = amax * uintBitsToFloat(0x3a2aaaabu);  // float(1/1536)
+    uint code[2][16];
+    float sc[2];
+    float err[2];
+    [[unroll]] for (uint k = 0u; k < 2u; ++k) {  // k = 0: max/6, k = 1: max/4
+        precise float ef = k == 0u ? enc * uintBitsToFloat(0x3e2aaaabu) : enc * 0.25;  // float(1/6), 0.25
+        precise float sv = bm * ef;
+        sc[k] = e4m3_f(e4m3_rn(min(sv, 448.0)));
+        precise float sd = sc[k] * dec;
+        const float inv = min(ki_div(1.0, sd), FLT_MAX);
+        float ab[16];
+        [[unroll]] for (uint i = 0u; i < 16u; ++i) {
+            precise float xi = xb[i] * inv;
+            code[k][i] = e2m1_rn(xi);
+            precise float dq = (e2m1_f(code[k][i]) * sc[k]) * outer;
+            precise float d = dq - xb[i];
+            ab[i] = abs(d);
+        }
+        [[unroll]] for (uint w = 8u; w > 0u; w >>= 1)  // pairwise16: pairs in index order
+            [[unroll]] for (uint i = 0u; i < w; ++i) { precise float s2 = ab[2u * i] + ab[2u * i + 1u]; ab[i] = s2; }
+        err[k] = ab[0];
+    }
+    const uint ch = err[1] < err[0] ? 1u : 0u;
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) stb8(p.q, row * (p.K / 2u) + t * 8u + i, code[ch][2u * i] | (code[ch][2u * i + 1u] << 4));
+    stb8(p.s, row * nb + t, e4m3_rn(sc[ch]));
+    if (t == 0u) stf(p.amax, row, amax);
+    if (p.c4 != 0ul && ch == 1u) atomicAdd(KU1(p.c4 + uint64_t(row) * 4ul).v, 1u);
+#endif
+}

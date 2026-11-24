@@ -1,0 +1,208 @@
+#version 460
+// VulkanAmd P2 K7: the W4A4 grouped GEMM for calls of m > 8 (verify tails, prefill) on int8 cooperative matrices
+// (VK_KHR_cooperative_matrix, s8 x s8 -> s32, 16x16x16, subgroup scope), the executor/hip/src/k7_seg_gemm.inc role.
+// Workgroup (64 output columns, active expert): 4 subgroups of 32, 16 columns each; the expert's rows in passes of 64
+// (four 16-row tiles), k in chunks of 64 (4 NVFP4 blocks). Codes are unpacked to int8 2 * e2m1 while staging A
+// (rows) and B (columns) in shared memory; one coopMatMulAdd per (row tile, 16-element block) with a zero
+// accumulator is that block's exact integer dot isum for every (row, column) of the tile. A lane reads its own output
+// column's 4 weight scales of a chunk into registers (no shared staging). VulkanPrefill 2026-11-21: per-lane weight
+// scales and the 64-element chunk (shared memory 35 -> 17 KB for GLU, so more workgroups per WGP) took moe_block at
+// m 1,205 from 14.7 to 13.1 ms and at m 4,096 from 35.0 to 30.3 ms; register prefetch of the next chunk was slower.
+//
+// Arithmetic per output element: k7_gemv.comp's, operation for operation: acc = acc + float(isum_b) * (a_scale_b *
+// w_scale_b) in block order (the product is exact, so a contraction to FMA cannot change it), then the same epilogue.
+// The per-element scale needs the accumulator's element -> (row, column) map: on RADV (wave32) element i of lane l is
+// (2 i + l / 16, l % 16). That map is implementation-defined, so the host runs k7_probe.comp first and refuses this
+// path (CERE_ERR_UNSUPPORTED) on a device whose map differs.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#include "k7_common.comp"
+
+#ifndef GLU
+#define GLU 0
+#endif
+#define NB 4u         // NVFP4 blocks per 64-element k chunk
+#define LDA (NB + 1u)  // uvec4 per staged row / column: NB blocks of 16 int8 + 1 pad
+// Tile knobs (VulkanAutotune H3; build-time only, the default build defines neither): BM rows per pass (BM / 16 row
+// tiles), BN output columns per workgroup (BN / 16 subgroups of 32, two staging threads per column: 2 BN threads).
+// The host's grid x is n / BN (MoeOptions::gemm_bn). Every output element sums the same blocks in the same order at
+// any tiling (int8 sums are exact), so the tiles change no output bit.
+#ifndef BM
+#define BM 64
+#endif
+#ifndef BN
+#define BN 64
+#endif
+#if (BM != 32 && BM != 64 && BM != 128) || (BN != 64 && BN != 128) || BM > BN
+#error "unsupported BM / BN"
+#endif
+// (BMU / BNU: the unsigned literals the default build's code spells; RT row tiles per pass; NTH threads)
+#if BM == 32
+#define BMU 32u
+#define RT 2u
+#elif BM == 64
+#define BMU 64u
+#define RT 4u
+#else
+#define BMU 128u
+#define RT 8u
+#endif
+#if BN == 64
+#define BNU 64u
+#define NTH 128
+#else
+#define BNU 128u
+#define NTH 256
+#endif
+
+layout(local_size_x = NTH) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t a_codes, a_scales, perm, w0, s0, w1, s1, alphas, grp, out_, ids;
+    uint a_div, n, k, e, row_tiles, pad;
+} pc;
+
+shared uvec4 AS[BMU * LDA];
+shared uvec4 BS0[BNU * LDA];
+#if GLU
+shared uvec4 BS1[BNU * LDA];
+#endif
+shared vec4 asv[NB * RT * 2 * 2];  // [block][tile][row % 2][(row % 16) / 2 / 4]: a lane's 8 rows in two vec4
+shared uint lut[256];
+shared int arow[BMU];
+
+uint unpack_lo(uint w) { return lut[w & 0xFFu] | (lut[(w >> 8) & 0xFFu] << 16); }
+uint unpack_hi(uint w) { return lut[(w >> 16) & 0xFFu] | (lut[w >> 24] << 16); }
+// 16 code bytes (v: 32 codes) -> 32 int8 in dst[base .. base + 1] (a macro: shared arrays cannot be passed)
+#define PUT16(dst, base, v)                                                                                     \
+    dst[(base)] = uvec4(unpack_lo(v.x), unpack_hi(v.x), unpack_lo(v.y), unpack_hi(v.y));                       \
+    dst[(base) + 1u] = uvec4(unpack_lo(v.z), unpack_hi(v.z), unpack_lo(v.w), unpack_hi(v.w));
+
+// Block b's scale of a column's 4 chunk scales (the bytes of c).
+float wscale(uint c, uint b) { return e4m3_to_float((c >> (8u * b)) & 0xFFu); }
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x, tile = gl_WorkGroupID.y, E = pc.e;
+    if (int(tile) >= ldi(pc.grp, (E + 1u) * 4u)) return;  // workgroup-uniform
+    const uint e = uint(ldi(pc.grp, (E + 2u + tile) * 4u));
+    const uint seg0 = uint(ldi(pc.grp, e * 4u));
+    const uint seg_rows = uint(ldi(pc.grp, (e + 1u) * 4u)) - seg0;
+    const uint k = pc.k, n = pc.n;
+    const uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID, rl = lane % 16u, hl = lane / 16u;
+    const uint col0 = gl_WorkGroupID.x * BNU;
+    const uint col = col0 + sg * 16u + rl;
+    // staging map: thread t stages row / column t / 2, code bytes (t % 2) * 16 .. + 15 and the row's scales
+    // (t % 2) * 2 .. + 1
+    const uint sr = lid / 2u, sh = lid % 2u;
+    const uint ws_row = e * n + col0 + sr;
+    const uint wc_row = e * n + col;  // the lane's output column (its weight scales)
+    lut[lid] = e2m1_pair(lid);
+#if NTH == 128
+    lut[lid + 128u] = e2m1_pair(lid + 128u);
+#endif
+    const float alpha = ldf(pc.alphas, e * 4u);
+
+    for (uint p0 = 0u; p0 < seg_rows; p0 += BMU) {
+        const uint rows = min(BMU, seg_rows - p0), tiles = (rows + 15u) / 16u;
+        barrier();  // the previous pass is done with arow / the staging buffers
+        if (lid < BMU) {
+            int src = -1;
+            if (lid < rows) src = pc.a_div != 0u ? ldi(pc.perm, (seg0 + p0 + lid) * 4u) / int(pc.a_div) : int(seg0 + p0 + lid);
+            arow[lid] = src;
+        }
+        barrier();
+#if BM < BN
+        const int ar = sr < BMU ? arow[sr] : -1;
+#else
+        const int ar = arow[sr];
+#endif
+        float acc0[RT][8], acc1[RT][8];
+        [[unroll]] for (uint t = 0u; t < RT; ++t)
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) { acc0[t][i] = 0.0; acc1[t][i] = 0.0; }
+        for (uint k0 = 0u; k0 < k; k0 += 64u) {
+            const uint co = k0 / 2u + sh * 16u, so = k0 / 16u + sh * 2u;
+            uvec4 a0 = uvec4(0u);
+            const uvec4 b0 = ld16(pc.w0, ws_row * (k / 2u) + co);
+            const uint cs0 = ld4(pc.s0, wc_row * (k / 16u) + k0 / 16u);
+            uint as4 = 0u;
+            if (ar >= 0) {
+                a0 = ld16(pc.a_codes, uint(ar) * (k / 2u) + co);
+                as4 = ld2(pc.a_scales, uint(ar) * (k / 16u) + so);
+            }
+#if GLU
+            const uvec4 g0 = ld16(pc.w1, ws_row * (k / 2u) + co);
+            const uint cs1 = ld4(pc.s1, wc_row * (k / 16u) + k0 / 16u);
+#endif
+            barrier();  // the previous chunk's shared reads are done
+#if BM < BN
+            if (sr < BMU) {
+#endif
+            PUT16(AS, sr * LDA + sh * 2u, a0)
+#if BM < BN
+            }
+#endif
+            PUT16(BS0, sr * LDA + sh * 2u, b0)
+#if GLU
+            PUT16(BS1, sr * LDA + sh * 2u, g0)
+#endif
+#if BM < BN
+            if (sr < BMU)
+#endif
+            {
+                const uint t = sr / 16u, h = sr % 2u, i = (sr % 16u) / 2u;
+                [[unroll]] for (uint q = 0u; q < NB / 2u; ++q) {
+                    const uint b = sh * (NB / 2u) + q;
+                    asv[((b * RT + t) * 2u + h) * 2u + i / 4u][i % 4u] = ar >= 0 ? e4m3_to_float((as4 >> (8u * q)) & 0xFFu) : 0.0;
+                }
+            }
+            barrier();
+            [[unroll]] for (uint b = 0u; b < NB; ++b) {
+                coopmat<int8_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> B0;
+                coopMatLoad(B0, BS0, (sg * 16u) * LDA + b, LDA, gl_CooperativeMatrixLayoutColumnMajor);
+                const float ws0 = wscale(cs0, b);
+#if GLU
+                coopmat<int8_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> B1;
+                coopMatLoad(B1, BS1, (sg * 16u) * LDA + b, LDA, gl_CooperativeMatrixLayoutColumnMajor);
+                const float ws1 = wscale(cs1, b);
+#endif
+                [[unroll]] for (uint t = 0u; t < RT; ++t) {
+                    if (t < tiles) {  // workgroup-uniform
+                        coopmat<int8_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> A;
+                        coopMatLoad(A, AS, (t * 16u) * LDA + b, LDA, gl_CooperativeMatrixLayoutRowMajor);
+                        const vec4 sl = asv[((b * RT + t) * 2u + hl) * 2u], shv = asv[((b * RT + t) * 2u + hl) * 2u + 1u];
+                        const float sa[8] = float[8](sl.x, sl.y, sl.z, sl.w, shv.x, shv.y, shv.z, shv.w);
+                        coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> D0 =
+                            coopMatMulAdd(A, B0, coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0));
+                        [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                            precise float tv = float(D0[i]) * (sa[i] * ws0);
+                            precise float a = acc0[t][i] + tv;
+                            acc0[t][i] = a;
+                        }
+#if GLU
+                        coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> D1 =
+                            coopMatMulAdd(A, B1, coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0));
+                        [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                            precise float tv = float(D1[i]) * (sa[i] * ws1);
+                            precise float a = acc1[t][i] + tv;
+                            acc1[t][i] = a;
+                        }
+#endif
+                    }
+                }
+            }
+        }
+        [[unroll]] for (uint t = 0u; t < RT; ++t)
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                const uint r = t * 16u + 2u * i + hl;
+                if (r < rows) {
+                    precise float g0v = rbf((acc0[t][i] * 0.25) * alpha);
+                    float res = g0v;
+#if GLU
+                    precise float up = rbf((acc1[t][i] * 0.25) * alpha);
+                    res = silu_mul(g0v, up);
+#endif
+                    st2(pc.out_, ((seg0 + p0 + r) * n + col) * 2u, f2bf(res));
+                }
+            }
+    }
+}

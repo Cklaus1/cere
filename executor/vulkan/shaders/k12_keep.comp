@@ -1,0 +1,393 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#if STAGE == 4 || STAGE == 5
+#define WG 1024
+#else
+#define WG 256
+#endif
+#include "k12_common.comp"
+// VulkanAmd P2 K12 keep_mask (D3), a port of k12_sampler.cu's design, one file with STAGE:
+//   6 clear (zero the radix counters), 0 / 1 / 2 hist (exact radix select, one 11 / 11 / 10-bit digit per pass, over the fp32 bit
+//   patterns of the positive probabilities), 3 collect (ids above the cut, ties per block), 4 resolve (one block: orders the
+//   min(top_k, #positive, 1024) ranks and runs sampler_ref::keep_mask's scan on them, fp64 masses summed in rank order),
+//   5 masked (one block, only for top_k > 1024: the whole-row path, 31-step bisections on bit patterns, for a row resolve marked kMasked).
+// Probabilities are positive floats, so every ordering test is on their bit patterns (immune to denormal / NaN handling).
+// All fp64 mass sums are in a fixed order; divisions by a sum are correctly rounded (fdiv_rn64); mul-adds are `precise`.
+#if STAGE == 4 || STAGE == 5
+layout(local_size_x = 1024) in;
+#else
+layout(local_size_x = 256) in;
+#endif
+layout(push_constant, std430) uniform PC {
+    uint64_t probs, work, mask;
+    uint vocab, top_k;
+    float top_p, min_p;
+    uint span, collect_blocks;
+} pc;
+const uint kGrid = 512u, kBlock = 256u, kThreads = 1024u, kCandidates = 1024u, kRadixBins = 2048u;
+const uint kGridStride = kGrid * kBlock;
+const uint kInfBits = 0x7f800000u;
+const uint kResolved = 0u, kMasked = 1u;
+
+uint radix_shift(uint pass) { return pass == 0u ? 21u : (pass == 1u ? 10u : 0u); }
+uint radix_width(uint pass) { return pass == 2u ? 10u : 11u; }
+
+float pv(uint i) { return ldf(pc.probs, i); }
+uint pbits(uint i) { return floatBitsToUint(ldf(pc.probs, i)); }
+bool positive_bits(uint v) { return v != 0u && v <= kInfBits; }  // a positive float (also a denormal; never NaN here)
+
+#if STAGE == 0 || STAGE == 1 || STAGE == 2 || STAGE == 3
+struct Sel { uint positive, sel, bits, rank; };
+shared uint sh_scan[256];
+shared uvec2 sh_found;
+
+// The digit holding rank `rank` (0 = the largest) in the descending digit order of hist[q]: x = the digit, y = the ids in higher digits.
+uvec2 find_bin(uint q, uint rank) {
+    const uint t = gl_LocalInvocationID.x;
+    uint own = 0u;
+    for (uint b = t * 8u; b < (t + 1u) * 8u; ++b) own += ldu(pc.work + uint64_t(W_HIST + q * kRadixBins * 4u), b);
+    sh_scan[t] = own;
+    barrier();
+    for (uint off = 1u; off < 256u; off <<= 1) {  // inclusive suffix sums: the ids in thread t's digits and above
+        const uint add = t + off < 256u ? sh_scan[t + off] : 0u;
+        barrier();
+        sh_scan[t] += add;
+        barrier();
+    }
+    const uint higher = sh_scan[t] - own;
+    if (higher <= rank && rank < sh_scan[t]) {  // exactly one thread
+        uint acc = higher;
+        for (int b = int((t + 1u) * 8u) - 1; b >= int(t * 8u); --b) {
+            const uint n = ldu(pc.work + uint64_t(W_HIST + q * kRadixBins * 4u), uint(b));
+            if (rank < acc + n) { sh_found = uvec2(uint(b), acc); break; }
+            acc += n;
+        }
+    }
+    barrier();
+    const uvec2 o = sh_found;
+    barrier();
+    return o;
+}
+
+// The rank to resolve and the digits of its pattern the first `done` passes selected.
+Sel select_digits(uint done) {
+    uint own = 0u;
+    for (uint b = gl_LocalInvocationID.x; b < kRadixBins; b += kBlock) own += ldu(pc.work + uint64_t(W_HIST), b);
+    Sel s;
+    s.positive = block_sum_u(own);
+    s.sel = min(min(pc.top_k, s.positive), kCandidates);
+    s.bits = 0u; s.rank = 0u;
+    if (s.sel == 0u) return s;
+    s.rank = s.sel - 1u;
+    for (uint q = 0u; q < done; ++q) {
+        const uvec2 f = find_bin(q, s.rank);
+        s.rank -= f.y;
+        s.bits = (s.bits << radix_width(q)) | f.x;
+    }
+    return s;
+}
+#endif
+
+#if STAGE == 6
+void main() {
+    for (uint i = gl_GlobalInvocationID.x; i < W_COUNTER_WORDS; i += 256u * gl_NumWorkGroups.x) stu(pc.work + uint64_t(W_HIST), i, 0u);
+}
+#elif STAGE == 0 || STAGE == 1 || STAGE == 2
+shared uint bins[2048];
+void main() {
+    const uint PASS = STAGE;
+    const uint shift = radix_shift(PASS), high = shift + radix_width(PASS), digit = (1u << radix_width(PASS)) - 1u;
+    for (uint b = gl_LocalInvocationID.x; b < kRadixBins; b += kBlock) bins[b] = 0u;
+    uint prefix = 0u;
+    if (PASS > 0u) {
+        const Sel s = select_digits(PASS);
+        if (s.sel == 0u) return;  // no positive probability (the same in every thread)
+        prefix = s.bits;
+    }
+    barrier();
+    for (uint j = gl_WorkGroupID.x * kBlock + gl_LocalInvocationID.x; j < pc.vocab; j += kGridStride) {
+        const uint v = pbits(j);
+        if (!positive_bits(v)) continue;
+        if (PASS > 0u && (v >> high) != prefix) continue;
+        atomicAdd(bins[(v >> shift) & digit], 1u);
+    }
+    barrier();
+    for (uint b = gl_LocalInvocationID.x; b < kRadixBins; b += kBlock)
+        if (bins[b] != 0u) atomicAdd(U1(pc.work + uint64_t(W_HIST + PASS * kRadixBins * 4u + b * 4u)).v, bins[b]);
+}
+#elif STAGE == 3
+// Block b owns the mask words [b * span, (b + 1) * span): it clears them, appends its ids with p > t to cand and counts its ids with p == t.
+void main() {
+    const Sel s = select_digits(3u);
+    if (gl_WorkGroupID.x == 0u && gl_LocalInvocationID.x == 0u) {
+        stu(pc.work + W_SELECT, 0u, s.positive); stu(pc.work + W_SELECT, 1u, s.sel);
+        stu(pc.work + W_SELECT, 2u, s.bits); stu(pc.work + W_SELECT, 3u, s.rank);
+    }
+    const uint words = (pc.vocab + 31u) / 32u;
+    const uint w0 = gl_WorkGroupID.x * pc.span;
+    const uint w1 = min(words, w0 + pc.span);
+    for (uint i = w0 + gl_LocalInvocationID.x; i < w1; i += kBlock) stu(pc.mask, i, 0u);
+    uint ties = 0u;
+    if (s.sel > 0u) {
+        const uint i1 = min(pc.vocab, w1 * 32u);
+        for (uint i = w0 * 32u + gl_LocalInvocationID.x; i < i1; i += kBlock) {
+            const uint v = pbits(i);
+            if (!positive_bits(v)) continue;
+            if (v > s.bits) {
+                stu(pc.work + W_CAND, atomicAdd(U1(pc.work + uint64_t(W_ABOVE)).v, 1u), i);  // above < sel <= kCandidates
+            } else if (v == s.bits) {
+                ++ties;
+            }
+        }
+    }
+    ties = block_sum_u(ties);
+    if (gl_LocalInvocationID.x == 0u) stu(pc.work + W_TIE, gl_WorkGroupID.x, ties);
+}
+#elif STAGE == 4
+shared float av[1024];
+shared uint ai[1024];
+shared float rv[1024];
+shared uint ri[1024];
+shared double qd[1024];
+shared uint base_[512];
+shared uint warp_n[32];
+shared uint s_n, s_mode;
+shared double s_total, s_threshold;
+void main() {
+    const uint t = gl_LocalInvocationID.x;
+    const uint lane = t & 31u;
+    const uint s_positive = ldu(pc.work + W_SELECT, 0u), sel = ldu(pc.work + W_SELECT, 1u), s_bits = ldu(pc.work + W_SELECT, 2u);
+    if (sel == 0u) {  // no positive probability: the mask stays clear (sampler_ref keeps nothing)
+        if (t == 0u) stu(pc.work + W_MODE, 0u, kResolved);
+        return;
+    }
+    const uint above = ldu(pc.work + uint64_t(W_ABOVE), 0u);  // < sel
+    const uint ties = sel - above;                          // the `ties` lowest ids with p == t take ranks above .. sel - 1
+    float v = 0.0;
+    uint id = NONE;
+    if (t < above) {
+        id = ldu(pc.work + W_CAND, t);
+        v = pv(id);
+        av[t] = v;
+        ai[t] = id;
+    }
+    // base: exclusive prefix of tie_count over the collect blocks (warp 0, lane l owns a run of blocks).
+    if (t < 32u) {
+        const uint kRun = (kGrid + 31u) / 32u;
+        const uint b0 = lane * kRun, b1 = min(pc.collect_blocks, b0 + kRun);
+        uint own = 0u;
+        for (uint b = b0; b < b1; ++b) own += ldu(pc.work + W_TIE, b);
+        const uint incl = subgroupInclusiveAdd(own);
+        uint acc = incl - own;
+        for (uint b = b0; b < b1; ++b) {
+            base_[b] = acc;
+            acc += ldu(pc.work + W_TIE, b);
+        }
+    }
+    barrier();
+    if (t < above) {
+        uint r = 0u;
+        for (uint j = 0u; j < above; ++j) r += (av[j] > v || (av[j] == v && ai[j] < id)) ? 1u : 0u;
+        rv[r] = v;
+        ri[r] = id;
+    }
+    // The ties in id order: the blocks' spans in order, each scanned in kThreads chunks with a block-wide ballot.
+    const float tv = uintBitsToFloat(s_bits);
+    for (uint b = 0u; b < pc.collect_blocks && base_[b] < ties; ++b) {
+        if (ldu(pc.work + W_TIE, b) == 0u) continue;
+        const uint i1 = min(pc.vocab, (b + 1u) * pc.span * 32u);
+        uint done = base_[b];
+        for (uint i = b * pc.span * 32u; i < i1 && done < ties; i += kThreads) {
+            const uint j = i + t;
+            const bool tie = j < i1 && pbits(j) == s_bits;
+            const uvec4 bal = subgroupBallot(tie);
+            if (lane == 0u) warp_n[t >> 5] = uint(bitCount(bal.x));
+            barrier();
+            uint pos = done + uint(bitCount(bal.x & ((1u << lane) - 1u)));
+            uint total = 0u;
+            for (uint x = 0u; x < 32u; ++x) {
+                if (x < (t >> 5)) pos += warp_n[x];
+                total += warp_n[x];
+            }
+            if (tie && pos < ties) {
+                rv[above + pos] = tv;
+                ri[above + pos] = j;
+            }
+            barrier();  // warp_n is rewritten by the next chunk
+            done += total;
+        }
+    }
+    barrier();
+    const uint k = min(pc.top_k, s_positive);  // sampler_ref's k
+    const double cut = double(pc.top_p);
+    bool keep = false;
+    if (pc.min_p > 0.0) {
+        // top_k, renormalize, top_p, renormalize, q >= q[0] * min_p (renormalized): needs all k ranks.
+        if (k > sel) {
+            if (t == 0u) stu(pc.work + W_MODE, 0u, kMasked);
+            return;
+        }
+        if (t == 0u) {
+            double total = 0.0LF;
+            for (uint r = 0u; r < sel; ++r) total = total + double(rv[r]);
+            s_total = total;
+        }
+        barrier();
+        if (t < sel) qd[t] = fdiv_rn64(double(rv[t]), s_total);
+        barrier();
+        if (t == 0u) {
+            double before = 0.0LF, kept_total = 0.0LF;
+            uint n = 0u;
+            for (uint r = 0u; r < sel; ++r) {
+                if (before <= cut) {
+                    kept_total = kept_total + qd[r];
+                    n = r + 1u;
+                }
+                before = before + qd[r];
+            }
+            s_n = n;
+            s_threshold = fdiv_rn64(qd[0], kept_total) * double(pc.min_p);
+            s_total = kept_total;
+        }
+        barrier();
+        keep = t < s_n && fdiv_rn64(qd[t], s_total) >= s_threshold;
+    } else {
+        // The joint mask: rank < k and the fp64 mass ranked before <= top_p (monotone in the rank).
+        if (t == 0u) {
+            double before = 0.0LF;
+            uint n = 0u;
+            bool resolved = k <= sel;
+            for (uint r = 0u; r < sel; ++r) {
+                if (!(before <= cut)) { resolved = true; break; }
+                n = r + 1u;
+                before = before + double(rv[r]);
+            }
+            s_n = n;
+            s_mode = resolved ? kResolved : kMasked;
+        }
+        barrier();
+        if (s_mode == kMasked) {
+            if (t == 0u) stu(pc.work + W_MODE, 0u, kMasked);
+            return;
+        }
+        keep = t < s_n;
+    }
+    if (keep) atomicOr(U1(pc.mask + uint64_t((ri[t] >> 5) * 4u)).v, 1u << (ri[t] & 31u));  // collect cleared every word
+    if (t == 0u) stu(pc.work + W_MODE, 0u, kResolved);
+}
+#elif STAGE == 5
+shared uint tie_base[1024];
+struct Above { uint count; double mass; };
+Above above_of(uint vbits) {  // ids with p > v (v a bit pattern, as positive floats order as their patterns) and their fp64 mass
+    uint count = 0u;
+    double mass = 0.0LF;
+    for (uint j = gl_LocalInvocationID.x; j < pc.vocab; j += kThreads) {
+        const uint x = pbits(j);
+        if (positive_bits(x) && x > vbits) {
+            ++count;
+            mass = mass + double(uintBitsToFloat(x));
+        }
+    }
+    Above a;
+    a.count = block_sum_u(count);
+    a.mass = block_sum_d(mass);
+    return a;
+}
+uint least_from(uint vbits) {  // the least probability pattern >= v among positives
+    uint t = kInfBits;
+    for (uint j = gl_LocalInvocationID.x; j < pc.vocab; j += kThreads) {
+        const uint x = pbits(j);
+        if (positive_bits(x) && x >= vbits) t = min(t, x);
+    }
+    return block_min_u(t);
+}
+void main() {
+    const uint t0 = gl_LocalInvocationID.x;
+    if (ldu(pc.work + W_MODE, 0u) != kMasked) return;
+    const uint words = (pc.vocab + 31u) / 32u;
+    const uint per = (words + kThreads - 1u) / kThreads;
+    const uint w0 = min(words, t0 * per);
+    const uint w1 = min(words, w0 + per);
+    const Above positive = above_of(0u);
+    const uint k = min(pc.top_k, positive.count);
+    const double cut = double(pc.top_p);
+    double denom = 1.0LF;
+    if (pc.min_p > 0.0) {
+        // The k-th ranked value t_k (the least value with fewer than k ids above it) and the top-k mass.
+        uint lo = 0u, hi = kInfBits;
+        while (lo < hi) {
+            const uint mid = lo + (hi - lo) / 2u;
+            if (above_of(mid).count < k) hi = mid; else lo = mid + 1u;
+        }
+        const uint tk = least_from(lo);
+        const Above a = above_of(tk);
+        precise double dm = double(k - a.count) * double(uintBitsToFloat(tk));
+        denom = a.mass + dm;
+    }
+    uint lo = 0u, hi = kInfBits;
+    while (lo < hi) {
+        const uint mid = lo + (hi - lo) / 2u;
+        const Above a = above_of(mid);
+        if (a.count < k && a.mass / denom <= cut) hi = mid; else lo = mid + 1u;
+    }
+    const uint tb = least_from(lo);
+    const float t = uintBitsToFloat(tb);
+    const Above a = above_of(tb);
+    uint ties = 0u;
+    for (uint j = gl_LocalInvocationID.x; j < pc.vocab; j += kThreads) ties += pbits(j) == tb ? 1u : 0u;
+    ties = block_sum_u(ties);
+    // Tie j (in id order) has the mass a.mass + j * t ranked before it; j = 0 is kept (t was found so).
+    const double td = double(t);
+    double guess = floor((cut * denom - a.mass) / td) + 1.0LF;
+    guess = min(max(guess, 1.0LF), double(ties));
+    uint fit = uint(guess);
+    while (fit > 1u) {
+        precise double num = a.mass + double(fit - 1u) * td;
+        if (num / denom <= cut) break;
+        --fit;
+    }
+    while (fit < ties) {
+        precise double num = a.mass + double(fit) * td;
+        if (!(num / denom <= cut)) break;
+        ++fit;
+    }
+    const uint m = min(min(ties, k - a.count), fit);
+    double kept_total = 1.0LF, threshold = 0.0LF;
+    if (pc.min_p > 0.0) {
+        uint pmax = 0u;
+        for (uint j = gl_LocalInvocationID.x; j < pc.vocab; j += kThreads) { const uint x = pbits(j); if (positive_bits(x)) pmax = max(pmax, x); }
+        pmax = floatBitsToUint(block_max_f(uintBitsToFloat(pmax)));
+        precise double num = a.mass + double(m) * td;
+        kept_total = num / denom;
+        threshold = ((double(uintBitsToFloat(pmax)) / denom) / kept_total) * double(pc.min_p);
+    }
+    // The tie index of this thread's first id: ties in the words before it.
+    uint mine = 0u;
+    for (uint i = w0 * 32u; i < min(pc.vocab, w1 * 32u); ++i) mine += pbits(i) == tb ? 1u : 0u;
+    tie_base[t0] = mine;
+    barrier();
+    if (t0 == 0u) {
+        uint acc = 0u;
+        for (uint w = 0u; w < kThreads; ++w) {
+            const uint n = tie_base[w];
+            tie_base[w] = acc;
+            acc += n;
+        }
+    }
+    barrier();
+    uint tie = tie_base[t0];
+    for (uint w = w0; w < w1; ++w) {
+        uint word = 0u;
+        for (uint b = 0u; b < 32u; ++b) {
+            const uint i = w * 32u + b;
+            if (i >= pc.vocab) break;
+            const uint x = pbits(i);
+            bool keep = positive_bits(x) && x > tb;
+            if (x == tb) { keep = tie < m; ++tie; }
+            if (keep && pc.min_p > 0.0) keep = ((double(uintBitsToFloat(x)) / denom) / kept_total) >= threshold;
+            word |= uint(keep) << b;
+        }
+        stu(pc.mask, w, word);
+    }
+}
+#endif

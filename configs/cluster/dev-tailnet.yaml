@@ -1,0 +1,34 @@
+# Planning template only; identity enrollment, certificates and live RPC are NOT supplied.
+schema_version: '2'
+cluster_id: lab-cere
+coordinator_id: cere-coordinator
+control_plane:
+  transport: tailscale_grpc
+  rpc_port: 7443
+  heartbeat_interval_ms: 1000
+  suspect_after_ms: 5000
+  lost_after_ms: 15000
+  ssh_usage: bootstrap_recovery_only
+  protocol_version: '2'
+  admission_lease_ms: 4000
+  rpc_timeout_ms: 5000
+  max_control_message_bytes: 1048576
+  max_output_buffer_bytes: 1048576
+  max_inference_message_bytes: 8388608
+scheduling:
+  allow_remote_workers: true
+  sticky_session_routing: true
+  allow_cross_node_state_migration: false
+  allow_cross_node_cooperative_inference: false
+security:
+  require_worker_identity: true
+  require_tailscale_policy: true
+  allow_public_rpc: false
+  application_auth: mtls_bound_principal
+  coordinator_principals:
+  - cere-coordinator
+  worker_bindings:
+    worker-a: cere-worker-a
+    worker-b: cere-worker-b
+data_plane:
+  mode: none

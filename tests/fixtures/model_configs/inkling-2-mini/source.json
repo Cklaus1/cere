@@ -1,0 +1,91 @@
+{
+  "repo": "thinkingmachines/Inkling-2-Mini",
+  "revision": "b85c3cfa615fc413cc9af3379f491b963f3b586a",
+  "url": "https://huggingface.co/thinkingmachines/Inkling-2-Mini/resolve/b85c3cfa615fc413cc9af3379f491b963f3b586a/config.json",
+  "sha256": "a7a349601f0984c4abf999c480ef775d8567d21f5f84b4e8a3e035b44f288dc2",
+  "fetched": "2026-11-22",
+  "why": "The repo tasks/inkling-spec.md section 2 names (owner 2026-11-22; Apache-2.0, not gated). The revision is the hub's main commit when the mirror was fetched (lastModified 2026-11-21T22:23Z). config.json and hf_quant_config.json are committed byte for byte. `files` pins every file at the revision (LFS files by their LFS oid: the weights, and with `lfs` true tokenizer.json and tiktoken/tokenizer.model); `tiktoken/` is the one allowed subdirectory (scripts/native/model_source.py SUBDIRS). `decode_loop` is the reference decode loop, transformers' modeling_inkling2_loop.py at the commit that added the model (released in transformers 5.24.0). The checkpoint ships no remote code (no `code` role).",
+  "files": {
+    ".gitattributes": {
+      "sha256": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930",
+      "bytes": 1570,
+      "role": "doc"
+    },
+    "README.md": {
+      "sha256": "e3b8db13cbe1e3638988a7b26e51a7e2b857c1bbc8ffcaeba251bdbc696e9142",
+      "bytes": 54870,
+      "role": "doc"
+    },
+    "chat_template.jinja": {
+      "sha256": "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc",
+      "bytes": 6868,
+      "role": "tokenizer"
+    },
+    "config.json": {
+      "sha256": "a7a349601f0984c4abf999c480ef775d8567d21f5f84b4e8a3e035b44f288dc2",
+      "bytes": 2722,
+      "role": "config"
+    },
+    "generation_config.json": {
+      "sha256": "a08737c07a65a8fdf69f7cf086576210e5aad4b241437090b26d7b0c4f7905f7",
+      "bytes": 98,
+      "role": "config"
+    },
+    "hf_quant_config.json": {
+      "sha256": "7c656207d3ce37879c7be209a036b0dde43bf01f78159bff06880b868ed57143",
+      "bytes": 67924,
+      "role": "config"
+    },
+    "model-00001-of-00001.safetensors": {
+      "sha256": "65e60f51aa1284d4fb022584908c315270334d991828bb774af60584523539d1",
+      "bytes": 19526019168,
+      "role": "weights"
+    },
+    "model.safetensors.index.json": {
+      "sha256": "c1631065b7b00787993522dddc66a68b3abee869192977fb3dcb796e63bc5838",
+      "bytes": 109300,
+      "role": "config"
+    },
+    "mtp.safetensors": {
+      "sha256": "7c3b651317f01f73bcf4e1dceba66ef8b7e1a1eac6bc171e882e690a4b10a1d2",
+      "bytes": 635801416,
+      "role": "weights"
+    },
+    "processor_config.json": {
+      "sha256": "d7350adce18c8be4b607f261c8f0f7eabbf720bb7aaf648a43d4f8372bbacc2d",
+      "bytes": 461,
+      "role": "config"
+    },
+    "special_tokens_map.json": {
+      "sha256": "c16f44b3594563d82743ddb0417a2be1bfe3e2000dfad2da4b8f32554593e1a0",
+      "bytes": 529,
+      "role": "tokenizer"
+    },
+    "tiktoken/tokenizer.model": {
+      "sha256": "f170372dd655728909228220d77cf6b8104a59f38a91262a7d2c4027906ec0d8",
+      "bytes": 3386494,
+      "role": "tokenizer",
+      "lfs": true
+    },
+    "tokenizer.json": {
+      "sha256": "7f332727f9a3f093dd452a39cc978e6757627e5dad1b0673aa4e75174f236dd6",
+      "bytes": 26178678,
+      "role": "tokenizer",
+      "lfs": true
+    },
+    "tokenizer_config.json": {
+      "sha256": "bf09342d285139fd37ce10c70878af1d52cb390e9901e10248654293a80ee636",
+      "bytes": 13235,
+      "role": "tokenizer"
+    }
+  },
+  "decode_loop": {
+    "repo": "huggingface/transformers",
+    "commit": "046bdb8cc2cee29d233964bb77fe6fd37cfe4aa3",
+    "path": "src/transformers/models/inkling2_loop/modeling_inkling2_loop.py",
+    "file": "modeling_inkling2_loop.py",
+    "url": "https://raw.githubusercontent.com/huggingface/transformers/046bdb8cc2cee29d233964bb77fe6fd37cfe4aa3/src/transformers/models/inkling2_loop/modeling_inkling2_loop.py",
+    "sha256": "1c8e65b45a11c13ecad86c088105acd5e4567123ef6599844a95912d242e9f28",
+    "bytes": 84280
+  }
+}

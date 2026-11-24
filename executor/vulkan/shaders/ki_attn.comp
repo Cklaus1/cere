@@ -1,0 +1,499 @@
+#version 460
+// Inkling S11: the attention core between the post-processed projections and o_proj, bit-equal to
+// executor/ref/inkling/attn_ref.h (InkS2; its header comment is the order, restated only where the lane mapping needs it).
+// One sequence per call: n query rows at positions pos0 .. pos0 + n - 1; the call's new key / value rows k / v (row i =
+// position pos0 + i, row strides ks / vs elements), older keys from the cache kc / vc ([slots][8 * 128] BF16; sliding:
+// slot j % 1024, full: slots[j] (int32) or j when slots == 0).
+// MODE 0 attention, one workgroup per (query row, head): lane i of a 64-key tile scores key 64 t0 + i (reduce_dot<32>
+//   and the rel bias reduce_dot<16>, each lane structure replayed in order in one invocation); every invocation replays
+//   the tile's max / sum lane structure from shared memory (the same bits in all 64); invocation d owns acc[d] and
+//   acc[d + 64]. Tiles -> spans -> groups exactly as ref::attn::attend; the sink and the gate in the epilogue.
+//   q [n][qs] (head h at h * 128), r [n][rs] (h * 16), sink [n][ss], gate [n][gs] BF16, proj BF16 [16][1024];
+//   out BF16 [n][3072].
+// MODE 1 KV store: rows i >= n - 1024 (sliding) / all rows (full) of k / v into the cache, bit copies. Run it AFTER
+//   the call's attention: a ring slot it writes may still hold a key the call's earlier queries read.
+// MODE 2 / 3 split attention (S12; same bits as MODE 0): MODE 2's workgroup (row, head, span k) computes one 256-key
+//   span's partial (the span loop of MODE 0) into part; MODE 3 per (row, head) folds the spans into groups and the
+//   groups into the total in ref order, then MODE 0's epilogue.
+#extension GL_GOOGLE_include_directive : require
+#define WG 64
+#include "ki_common.comp"
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t q, r, proj, sink, gate, o, k, v, kc, vc, slots;
+    uint kind, pos0, n, qs, rs, ss, gs, ks, vs, r0;  // r0: the first query row (row blocks, one submit each)
+} p;
+// MODE 2 / 3 / 4 (the 128-byte push limit): the span partials' buffer rides in a field the mode does not read (MODE 2
+// and 4: o, MODE 3: q) and n carries zs, the partials per (row, head).
+#if MODE == 2 || MODE == 4
+#define PART p.o
+#elif MODE == 3
+#define PART p.q
+#endif
+#define ZS p.n
+
+#define HD 128u
+#define KVROW 1024u
+#define NEG_INF uintBitsToFloat(0xff800000u)
+
+// Never a load through a null `slots` (full layer, identity pool): NIR / lavapipe may speculate the load out of any
+// branch or ?: (host SIGSEGV on lavapipe, ktest attn.full_ident_300x20), so the identity case loads kc's first word,
+// which always exists, and discards it.
+uint slot_of(uint j) {
+    if (p.kind == 0u) return j & 1023u;
+    const bool pool = p.slots != 0ul;
+    const uint s = ldu(pool ? p.slots : p.kc, pool ? j : 0u);
+    return pool ? s : j;
+}
+
+#if MODE != 1
+shared float sh_q[HD];
+shared float sh_r[16];
+shared float sh_s[WG];
+shared float sh_p[WG];
+// The halving tree of ref::reduce_tree_<L> over ln[0 .. L).
+float tree32(inout float ln[32]) {
+    [[unroll]] for (uint o = 16u; o > 0u; o >>= 1)
+        [[unroll]] for (uint i = 0u; i < o; ++i) ln[i] = ki_add(ln[i], ln[i + o]);
+    return ln[0];
+}
+
+// ref::attn::score with rel_bias, key j (KV head g) of the query at pos.
+float score_of(uint j, uint g, uint pos) {
+    const bool fresh = j >= p.pos0;
+    const uint64_t a = fresh ? p.k : p.kc;
+    const uint base = (fresh ? (j - p.pos0) * p.ks : slot_of(j) * KVROW) + g * HD;
+    // Lane chain t: elements t, t + 32, t + 64, t + 96 in order; the row is read as 16 aligned uvec4 of 8 BF16 each
+    // (base % 8 == 0: the host checks ks % 8 and 16-byte k / kc), walked in ascending element order.
+    float ln[32];
+    [[unroll]] for (uint t = 0u; t < 32u; ++t) ln[t] = 0.0;
+    [[unroll]] for (uint c = 0u; c < HD / 8u; ++c) {
+        const uvec4 w = ldu4(a, base / 8u + c);
+        [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+            const uint i = c * 8u + e, x = w[e / 2u];
+            ln[i % 32u] = ki_fma(sh_q[i], bf2f((e & 1u) != 0u ? x >> 16 : x), ln[i % 32u]);
+        }
+    }
+    const float dot = tree32(ln);
+    const uint d = pos - j;
+    float bias = 0.0;
+    if (d < 1024u) {
+        float lr[16];
+        [[unroll]] for (uint e = 0u; e < 16u; ++e) lr[e] = ki_fma(sh_r[e], ldbf(p.proj, e * 1024u + d), 0.0);
+        [[unroll]] for (uint o = 8u; o > 0u; o >>= 1)
+            [[unroll]] for (uint e = 0u; e < o; ++e) lr[e] = ki_add(lr[e], lr[e + o]);
+        bias = round_bf(lr[0]);
+    }
+    return ki_add(ki_mul(dot, uintBitsToFloat(0x3db504f3u)), bias);  // kScale = float(128^-0.5)
+}
+
+// Partial (m, l, acc[t], acc[t + 64]) of one 256-key span from s0 (keys [max(s0, lo), min(s0 + 255, pos)]: never
+// empty for s0 in [lo / 256 * 256, pos]), from its 64-key tiles in order.
+void span(uint s0, uint lo, uint pos, uint g, uint t, out float sm, out float sl, out float sa0, out float sa1) {
+    bool se = true;
+    sm = 0.0; sl = 0.0; sa0 = 0.0; sa1 = 0.0;
+    for (uint t0 = s0; t0 < s0 + 256u && t0 <= pos; t0 += 64u) {
+        if (t0 + 64u <= lo) continue;
+        const uint vlo = lo > t0 ? lo - t0 : 0u;            // valid keys of the tile: [vlo, vhi]
+        const uint vhi = pos - t0 < 63u ? pos - t0 : 63u;
+        const bool ok = t >= vlo && t <= vhi;
+        sh_s[t] = ok ? score_of(t0 + t, g, pos) : 0.0;
+        barrier();
+        float ln[32];
+        [[unroll]] for (uint u = 0u; u < 32u; ++u) {
+            float a = NEG_INF;
+            if (u >= vlo && u <= vhi) a = ki_max(a, sh_s[u]);
+            if (u + 32u >= vlo && u + 32u <= vhi) a = ki_max(a, sh_s[u + 32u]);
+            ln[u] = a;
+        }
+        [[unroll]] for (uint o = 16u; o > 0u; o >>= 1)
+            [[unroll]] for (uint i = 0u; i < o; ++i) ln[i] = ki_max(ln[i], ln[i + o]);
+        const float mn = se ? ln[0] : ki_max(sm, ln[0]);
+        sh_p[t] = ok ? ki_exp(ki_sub(sh_s[t], mn)) : 0.0;
+        barrier();
+        [[unroll]] for (uint u = 0u; u < 32u; ++u) {
+            float a = 0.0;
+            if (u >= vlo && u <= vhi) a = ki_add(a, sh_p[u]);
+            if (u + 32u >= vlo && u + 32u <= vhi) a = ki_add(a, sh_p[u + 32u]);
+            ln[u] = a;
+        }
+        const float ts = tree32(ln);
+        if (se) {
+            sl = ts;
+            sa0 = 0.0;
+            sa1 = 0.0;
+        } else {
+            const float a = ki_exp(ki_sub(sm, mn));
+            sl = ki_add(ki_mul(sl, a), ts);
+            sa0 = ki_mul(sa0, a);
+            sa1 = ki_mul(sa1, a);
+        }
+        se = false;
+        sm = mn;
+        // P x V: the fma chain over keys vlo .. vhi in order; V loads issued 8 keys ahead of their fmas (latency).
+        uint i = vlo;
+        for (; i + 8u <= vhi + 1u; i += 8u) {
+            float v0[8], v1[8];
+            [[unroll]] for (uint u = 0u; u < 8u; ++u) {
+                const uint j = t0 + i + u;
+                const bool fresh = j >= p.pos0;
+                const uint64_t a = fresh ? p.v : p.vc;
+                const uint base = (fresh ? (j - p.pos0) * p.vs : slot_of(j) * KVROW) + g * HD;
+                v0[u] = ldbf(a, base + t);
+                v1[u] = ldbf(a, base + t + 64u);
+            }
+            [[unroll]] for (uint u = 0u; u < 8u; ++u) {
+                const float pj = sh_p[i + u];
+                sa0 = ki_fma(pj, v0[u], sa0);
+                sa1 = ki_fma(pj, v1[u], sa1);
+            }
+        }
+        for (; i <= vhi; ++i) {
+            const uint j = t0 + i;
+            const bool fresh = j >= p.pos0;
+            const uint64_t a = fresh ? p.v : p.vc;
+            const uint base = (fresh ? (j - p.pos0) * p.vs : slot_of(j) * KVROW) + g * HD;
+            const float pj = sh_p[i];
+            sa0 = ki_fma(pj, ldbf(a, base + t), sa0);
+            sa1 = ki_fma(pj, ldbf(a, base + t + 64u), sa1);
+        }
+        barrier();
+    }
+}
+
+// fold(x, y) of ref::attn: x empty -> y; else rescale both to max(xm, ym) and add.
+void fold(inout bool xe, inout float xm, inout float xl, inout float x0, inout float x1, float ym, float yl, float y0, float y1) {
+    if (xe) {
+        xe = false;
+        xm = ym; xl = yl; x0 = y0; x1 = y1;
+    } else {
+        const float mn = ki_max(xm, ym), ca = ki_exp(ki_sub(xm, mn)), cb = ki_exp(ki_sub(ym, mn));
+        xl = ki_add(ki_mul(xl, ca), ki_mul(yl, cb));
+        x0 = ki_add(ki_mul(x0, ca), ki_mul(y0, cb));
+        x1 = ki_add(ki_mul(x1, ca), ki_mul(y1, cb));
+        xm = mn;
+    }
+}
+
+// epilogue: the sink as the last logit (zero value), normalization, BF16, gate, BF16.
+void epilogue(uint row, uint h, uint t, float tm, float tl, float ta0, float ta1) {
+    const float z = ldbf(p.sink, row * p.ss + h);
+    const float mn = ki_max(tm, z), a = ki_exp(ki_sub(tm, mn)), e = ki_exp(ki_sub(z, mn));
+    const float L = ki_add(ki_mul(tl, a), e);
+    const uint ob = row * (24u * HD) + h * HD, gb = row * p.gs + h * HD;
+    const float o0 = round_bf(ki_div(ki_mul(ta0, a), L)), o1 = round_bf(ki_div(ki_mul(ta1, a), L));
+    stbf(p.o, ob + t, ki_mul(o0, ki_sigmoid(ldbf(p.gate, gb + t))));
+    stbf(p.o, ob + t + 64u, ki_mul(o1, ki_sigmoid(ldbf(p.gate, gb + t + 64u))));
+}
+
+uint lo_of(uint pos) { return p.kind == 0u && pos >= 1023u ? pos - 1023u : 0u; }
+
+void load_q(uint row, uint h, uint t) {
+    for (uint i = t; i < HD; i += WG) sh_q[i] = ldbf(p.q, row * p.qs + h * HD + i);
+    if (t < 16u) sh_r[t] = ldbf(p.r, row * p.rs + h * 16u + t);
+    barrier();
+}
+
+#if MODE == 0
+void main() {
+    const uint t = gl_LocalInvocationID.x, row = p.r0 + gl_WorkGroupID.x, h = gl_WorkGroupID.y, g = h / 3u;
+    const uint pos = p.pos0 + row, lo = lo_of(pos);
+    load_q(row, h, t);
+    bool te = true;
+    float tm = 0.0, tl = 0.0, ta0 = 0.0, ta1 = 0.0;
+    for (uint g0 = lo / 4096u * 4096u; g0 <= pos; g0 += 4096u) {
+        bool ge = true;
+        float gm = 0.0, gl_ = 0.0, ga0 = 0.0, ga1 = 0.0;
+        for (uint s0 = g0; s0 < g0 + 4096u && s0 <= pos; s0 += 256u) {
+            if (s0 + 256u <= lo) continue;
+            float sm, sl, sa0, sa1;
+            span(s0, lo, pos, g, t, sm, sl, sa0, sa1);
+            fold(ge, gm, gl_, ga0, ga1, sm, sl, sa0, sa1);  // fold(group, span)
+        }
+        fold(te, tm, tl, ta0, ta1, gm, gl_, ga0, ga1);  // fold(total, group)
+    }
+    epilogue(row, h, t, tm, tl, ta0, ta1);
+}
+#elif MODE == 2  // span k of row (r0 + x), head y -> part[((x * 24 + y) * zs + k)] = {m, l, acc[128]}
+void main() {
+    const uint t = gl_LocalInvocationID.x, x = gl_WorkGroupID.x, row = p.r0 + x, h = gl_WorkGroupID.y, g = h / 3u;
+    const uint pos = p.pos0 + row, lo = lo_of(pos), s0 = (lo / 256u + gl_WorkGroupID.z) * 256u;
+    if (s0 > pos) return;  // workgroup-uniform
+    load_q(row, h, t);
+    float sm, sl, sa0, sa1;
+    span(s0, lo, pos, g, t, sm, sl, sa0, sa1);
+    const uint b = ((x * 24u + h) * ZS + gl_WorkGroupID.z) * 130u;
+    if (t == 0u) { stf(PART, b, sm); stf(PART, b + 1u, sl); }
+    stf(PART, b + 2u + t, sa0);
+    stf(PART, b + 66u + t, sa1);
+}
+#endif
+
+#if MODE == 3
+// Combine: workgroup (row r0 + x, head y) folds MODE 2's span partials (zs per row) in ref order, then the epilogue.
+void main() {
+    const uint t = gl_LocalInvocationID.x, x = gl_WorkGroupID.x, row = p.r0 + x, h = gl_WorkGroupID.y;
+    const uint pos = p.pos0 + row, lo = lo_of(pos), sb = lo / 256u;
+    bool te = true, ge = true;
+    float tm = 0.0, tl = 0.0, ta0 = 0.0, ta1 = 0.0, gm = 0.0, gl_ = 0.0, ga0 = 0.0, ga1 = 0.0;
+    for (uint k = 0u; (sb + k) * 256u <= pos; ++k) {
+        const uint s0 = (sb + k) * 256u;
+        if (k > 0u && s0 % 4096u == 0u) {  // a new group: fold(total, group)
+            fold(te, tm, tl, ta0, ta1, gm, gl_, ga0, ga1);
+            ge = true;
+        }
+        const uint b = ((x * 24u + h) * ZS + k) * 130u;
+        fold(ge, gm, gl_, ga0, ga1, ldf(PART, b), ldf(PART, b + 1u), ldf(PART, b + 2u + t), ldf(PART, b + 66u + t));
+    }
+    fold(te, tm, tl, ta0, ta1, gm, gl_, ga0, ga1);
+    epilogue(row, h, t, tm, tl, ta0, ta1);
+}
+#endif
+
+#if MODE == 4
+// MODE 4 tiled spans (D-I-EPB (a2), prefill): MODE 2's span partials, but the workgroup (rows r0 + RB x .. + RB - 1,
+// KV head y, span z) computes them for RB rows x the KV head's 3 query heads (NQ = 3 RB pairs qh = 3 r + h % 3), so one
+// key load serves NQ scores and one value load NQ fma chains. Span z is absolute: s0 = (lo(first row) / 256 + z) * 256;
+// row r stores it as its span s0 / 256 - lo / 256 (MODE 3's index) when it holds a valid key of the row. Each pair's
+// arithmetic is MODE 2's: lane t scores key t0 + t (score_of's chains and tree, the bias column loaded once per row),
+// lane qh replays the pair's tile max / sum lane structure from shared memory and keeps its m / l, every lane rescales
+// and extends acc[t] / acc[t + 64] of every pair over the pair's valid keys in ascending order. Rows past REND (the
+// call's r0 + rows) take no part. MUT (fail-first, ki_test only): the P x V chain walks a tile's keys in reverse.
+#ifndef RB
+#define RB 4u
+#endif
+#define NQ (3u * RB)
+#define REND p.ss  // the sink stride: MODE 4 reads no sink
+shared float sh_q4[NQ * HD];
+shared float sh_r4[NQ * 16u];
+shared float sh_s4[NQ * WG];
+shared float sh_p4[NQ * WG];
+shared float sh_c4[NQ];  // per pair: the tile's new max, then its rescale factor; at the end m
+shared float sh_l4[NQ];  // per pair at the end: l
+shared uint sh_f4[NQ];   // per pair and tile: 0 not in the tile, 1 the span's first tile, 2 rescale by sh_c4
+
+void main() {
+    const uint t = gl_LocalInvocationID.x, x0 = gl_WorkGroupID.x * RB, g = gl_WorkGroupID.y;
+    const uint pf = p.pos0 + p.r0 + x0, nr = min(RB, REND - (p.r0 + x0));
+    const uint s0 = (lo_of(pf) / 256u + gl_WorkGroupID.z) * 256u;
+    bool sp[RB];  // row r holds a valid key in the span (MODE 2: s0 in [lo / 256 * 256, pos])
+    bool any = false;
+    [[unroll]] for (uint r = 0u; r < RB; ++r) {
+        sp[r] = r < nr && s0 + 256u > lo_of(pf + r) && s0 <= pf + r;
+        any = any || sp[r];
+    }
+    if (!any) return;  // workgroup-uniform
+    for (uint i = t; i < NQ * HD; i += WG) {
+        const uint qh = i / HD, r = qh / 3u;
+        sh_q4[i] = r < nr ? ldbf(p.q, (p.r0 + x0 + r) * p.qs + (g * 3u + qh % 3u) * HD + i % HD) : 0.0;
+    }
+    for (uint i = t; i < NQ * 16u; i += WG) {
+        const uint qh = i / 16u, r = qh / 3u;
+        sh_r4[i] = r < nr ? ldbf(p.r, (p.r0 + x0 + r) * p.rs + (g * 3u + qh % 3u) * 16u + i % 16u) : 0.0;
+    }
+    barrier();
+    bool se = true;  // lane qh: the pair's span partial (m, l)
+    float sm = 0.0, sl = 0.0, mn = 0.0;
+    float sa0[NQ], sa1[NQ];
+    [[unroll]] for (uint q = 0u; q < NQ; ++q) { sa0[q] = 0.0; sa1[q] = 0.0; }
+    for (uint t0 = s0; t0 < s0 + 256u; t0 += 64u) {
+        // Row r's valid keys of the tile: [vlo[r], vhi[r]] when tp[r] (MODE 2's tile loop: t0 <= pos, t0 + 64 > lo).
+        bool tp[RB];
+        uint vlo[RB], vhi[RB];
+        bool tany = false;
+        [[unroll]] for (uint r = 0u; r < RB; ++r) {
+            const uint pos = pf + r, lo = lo_of(pos);
+            tp[r] = sp[r] && t0 <= pos && t0 + 64u > lo;
+            vlo[r] = lo > t0 ? lo - t0 : 0u;
+            vhi[r] = tp[r] ? (pos - t0 < 63u ? pos - t0 : 63u) : 0u;
+            tany = tany || tp[r];
+        }
+        if (!tany) continue;  // workgroup-uniform
+        const uint j = t0 + t;
+        bool kok = false;
+        [[unroll]] for (uint r = 0u; r < RB; ++r) kok = kok || (tp[r] && t >= vlo[r] && t <= vhi[r]);
+        uvec4 kw[HD / 8u];
+        if (kok) {
+            const bool fresh = j >= p.pos0;
+            const uint64_t a = fresh ? p.k : p.kc;
+            const uint base = (fresh ? (j - p.pos0) * p.ks : slot_of(j) * KVROW) + g * HD;
+            [[unroll]] for (uint c = 0u; c < HD / 8u; ++c) kw[c] = ldu4(a, base / 8u + c);
+        }
+        [[unroll]] for (uint r = 0u; r < RB; ++r) {
+            const bool ok = tp[r] && t >= vlo[r] && t <= vhi[r];
+            float pj[16];
+            const uint d = pf + r - j;
+            if (ok && d < 1024u) {
+                [[unroll]] for (uint e = 0u; e < 16u; ++e) pj[e] = ldbf(p.proj, e * 1024u + d);
+            }
+            [[unroll]] for (uint hh = 0u; hh < 3u; ++hh) {
+                const uint qh = 3u * r + hh;
+                float s = 0.0;
+                if (ok) {
+                    float ln[32];
+                    [[unroll]] for (uint u = 0u; u < 32u; ++u) ln[u] = 0.0;
+                    [[unroll]] for (uint c = 0u; c < HD / 8u; ++c)
+                        [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+                            const uint i = c * 8u + e, w = kw[c][e / 2u];
+                            ln[i % 32u] = ki_fma(sh_q4[qh * HD + i], bf2f((e & 1u) != 0u ? w >> 16 : w), ln[i % 32u]);
+                        }
+                    const float dot = tree32(ln);
+                    float bias = 0.0;
+                    if (d < 1024u) {
+                        float lr[16];
+                        [[unroll]] for (uint e = 0u; e < 16u; ++e) lr[e] = ki_fma(sh_r4[qh * 16u + e], pj[e], 0.0);
+                        [[unroll]] for (uint o = 8u; o > 0u; o >>= 1)
+                            [[unroll]] for (uint e = 0u; e < o; ++e) lr[e] = ki_add(lr[e], lr[e + o]);
+                        bias = round_bf(lr[0]);
+                    }
+                    s = ki_add(ki_mul(dot, uintBitsToFloat(0x3db504f3u)), bias);
+                }
+                sh_s4[qh * WG + t] = s;
+            }
+        }
+        barrier();
+        if (t < NQ) {  // the pair's tile max (MODE 2's lane structure)
+            const uint r = t / 3u;
+            if (tp[r]) {
+                const uint lo_ = vlo[r], hi_ = vhi[r];
+                float ln[32];
+                [[unroll]] for (uint u = 0u; u < 32u; ++u) {
+                    float a = NEG_INF;
+                    if (u >= lo_ && u <= hi_) a = ki_max(a, sh_s4[t * WG + u]);
+                    if (u + 32u >= lo_ && u + 32u <= hi_) a = ki_max(a, sh_s4[t * WG + u + 32u]);
+                    ln[u] = a;
+                }
+                [[unroll]] for (uint o = 16u; o > 0u; o >>= 1)
+                    [[unroll]] for (uint i = 0u; i < o; ++i) ln[i] = ki_max(ln[i], ln[i + o]);
+                mn = se ? ln[0] : ki_max(sm, ln[0]);
+                sh_c4[t] = mn;
+            }
+        }
+        barrier();
+        [[unroll]] for (uint r = 0u; r < RB; ++r) {
+            const bool ok = tp[r] && t >= vlo[r] && t <= vhi[r];
+            [[unroll]] for (uint hh = 0u; hh < 3u; ++hh) {
+                const uint qh = 3u * r + hh;
+                sh_p4[qh * WG + t] = ok ? ki_exp(ki_sub(sh_s4[qh * WG + t], sh_c4[qh])) : 0.0;
+            }
+        }
+        barrier();
+        if (t < NQ) {  // the pair's tile sum, then its (m, l) update; sh_c4 = the acc factor
+            const uint r = t / 3u;
+            uint f = 0u;
+            if (tp[r]) {
+                const uint lo_ = vlo[r], hi_ = vhi[r];
+                float ln[32];
+                [[unroll]] for (uint u = 0u; u < 32u; ++u) {
+                    float a = 0.0;
+                    if (u >= lo_ && u <= hi_) a = ki_add(a, sh_p4[t * WG + u]);
+                    if (u + 32u >= lo_ && u + 32u <= hi_) a = ki_add(a, sh_p4[t * WG + u + 32u]);
+                    ln[u] = a;
+                }
+                const float ts = tree32(ln);
+                if (se) {
+                    sl = ts;
+                    f = 1u;
+                } else {
+                    const float a = ki_exp(ki_sub(sm, mn));
+                    sl = ki_add(ki_mul(sl, a), ts);
+                    sh_c4[t] = a;
+                    f = 2u;
+                }
+                se = false;
+                sm = mn;
+            }
+            sh_f4[t] = f;
+        }
+        barrier();
+        uint klo = 63u, khi = 0u;
+        [[unroll]] for (uint q = 0u; q < NQ; ++q) {
+            const uint f = sh_f4[q];
+            if (f == 1u) {
+                sa0[q] = 0.0;
+                sa1[q] = 0.0;
+            } else if (f == 2u) {
+                const float a = sh_c4[q];
+                sa0[q] = ki_mul(sa0[q], a);
+                sa1[q] = ki_mul(sa1[q], a);
+            }
+        }
+        [[unroll]] for (uint r = 0u; r < RB; ++r)
+            if (tp[r]) {
+                klo = min(klo, vlo[r]);
+                khi = max(khi, vhi[r]);
+            }
+        // P x V: per pair the fma chain over its valid keys in ascending order; one value load serves every pair; V
+        // loads issued 8 keys ahead of their fmas (latency).
+#ifndef MUT
+        uint i = klo;
+        for (; i + 8u <= khi + 1u; i += 8u) {
+            float v0[8], v1[8];
+            [[unroll]] for (uint u = 0u; u < 8u; ++u) {
+                const uint jj = t0 + i + u;
+                const bool fresh = jj >= p.pos0;
+                const uint64_t a = fresh ? p.v : p.vc;
+                const uint base = (fresh ? (jj - p.pos0) * p.vs : slot_of(jj) * KVROW) + g * HD;
+                v0[u] = ldbf(a, base + t);
+                v1[u] = ldbf(a, base + t + 64u);
+            }
+            [[unroll]] for (uint u = 0u; u < 8u; ++u)
+                [[unroll]] for (uint r = 0u; r < RB; ++r)
+                    if (tp[r] && i + u >= vlo[r] && i + u <= vhi[r])
+                        [[unroll]] for (uint hh = 0u; hh < 3u; ++hh) {
+                            const uint qh = 3u * r + hh;
+                            const float pj = sh_p4[qh * WG + i + u];
+                            sa0[qh] = ki_fma(pj, v0[u], sa0[qh]);
+                            sa1[qh] = ki_fma(pj, v1[u], sa1[qh]);
+                        }
+        }
+        for (; i <= khi; ++i) {
+#else
+        for (int ii = int(khi); ii >= int(klo); --ii) {
+            const uint i = uint(ii);
+#endif
+            const uint jj = t0 + i;
+            const bool fresh = jj >= p.pos0;
+            const uint64_t a = fresh ? p.v : p.vc;
+            const uint base = (fresh ? (jj - p.pos0) * p.vs : slot_of(jj) * KVROW) + g * HD;
+            const float v0 = ldbf(a, base + t), v1 = ldbf(a, base + t + 64u);
+            [[unroll]] for (uint r = 0u; r < RB; ++r)
+                if (tp[r] && i >= vlo[r] && i <= vhi[r])
+                    [[unroll]] for (uint hh = 0u; hh < 3u; ++hh) {
+                        const uint qh = 3u * r + hh;
+                        const float pj = sh_p4[qh * WG + i];
+                        sa0[qh] = ki_fma(pj, v0, sa0[qh]);
+                        sa1[qh] = ki_fma(pj, v1, sa1[qh]);
+                    }
+        }
+        barrier();
+    }
+    if (t < NQ) {
+        sh_c4[t] = sm;
+        sh_l4[t] = sl;
+    }
+    barrier();
+    [[unroll]] for (uint r = 0u; r < RB; ++r) {
+        if (!sp[r]) continue;
+        const uint z = s0 / 256u - lo_of(pf + r) / 256u;
+        [[unroll]] for (uint hh = 0u; hh < 3u; ++hh) {
+            const uint qh = 3u * r + hh, b = (((x0 + r) * 24u + g * 3u + hh) * ZS + z) * 130u;
+            if (t == 0u) { stf(PART, b, sh_c4[qh]); stf(PART, b + 1u, sh_l4[qh]); }
+            stf(PART, b + 2u + t, sa0[qh]);
+            stf(PART, b + 66u + t, sa1[qh]);
+        }
+    }
+}
+#endif
+
+#else  // MODE 1: KV store, grid x = 1024 / 64 lanes per row, y = rows (the stored ones)
+void main() {
+    const uint c = gl_WorkGroupID.x * WG + gl_LocalInvocationID.x;
+    const uint first = p.kind == 0u && p.n > 1024u ? p.n - 1024u : 0u;
+    const uint i = first + gl_WorkGroupID.y;
+    if (c >= KVROW || i >= p.n) return;
+    const uint slot = slot_of(p.pos0 + i);
+    KH1(p.kc + uint64_t(slot * KVROW + c) * 2ul).v = KH1(p.k + uint64_t(i * p.ks + c) * 2ul).v;
+    KH1(p.vc + uint64_t(slot * KVROW + c) * 2ul).v = KH1(p.v + uint64_t(i * p.vs + c) * 2ul).v;
+}
+#endif

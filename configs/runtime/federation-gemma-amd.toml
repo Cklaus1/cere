@@ -1,0 +1,127 @@
+# AmdAmd lab coordinator profile (amd-amd design note P1-5): the N3 federation shape serving
+# `google/gemma-4-e4b-it` (bf16 GGUF) on AMD's Radeon 8060S through llama.cpp `llama-server` (HIP, gfx1151) behind
+# `cere-llamacpp-shim` (127.0.0.1:18328 on AMD). The remote worker `worker-a` is AMD over the tailnet with mTLS gRPC.
+# Lab only: the local `gpu1` slot is a `cere-mock-sglang` patched in by the live harness (GPU1 serves production), and
+# runs drain it to route to amd. The pins are the shim's /get_server_info (llama.cpp values, never SGLang ones). The
+# PEM paths are placeholders that the live harness patches with its per-run PKI directory outside any checkout.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18395"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "llamacpp-gemma-4-e4b-it-v1"
+base_url = "http://127.0.0.1:18328"
+served_model_name = "gemma-4-e4b-it"
+deployment = "configs/deployments/gemma-4-e4b-it-llamacpp"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+load_endpoint = "/get_load"
+
+# /get_server_info of cere-llamacpp-shim in front of llama-server 162e2bb2e (amd-amd design note P1-4).
+[deployments.expect]
+version = "llamacpp-0.8.0-dev+b12104.g162e2bb2e.hip.gfx1151"
+model_path = "/models/gemma-4-e4b-it-gguf/gemma-4-e4b-it-bf16.gguf"
+tokenizer_path = "/models/gemma-4-e4b-it-gguf/gemma-4-e4b-it-bf16.gguf"
+kv_cache_dtype = "f16"
+reasoning_parser = "llamacpp-auto"
+tool_call_parser = "llamacpp-jinja"
+allow_auto_truncate = false
+enable_cache_report = true
+context_length = 32768
+max_running_requests = 4
+# Recorded evidence only (SHA-256 of the sorted sha256sum lines of llama-server and its shared libraries in
+# build-hip/bin); not reported by the backend.
+image_digest = "sha256:96b67ba1535d558ef204e25e0dcfb8c930db7f3cd4ac0cc57db1d4c12fa5de1c"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu1"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+[api]
+max_request_body_bytes = 8323072
+max_messages = 512
+default_max_output_tokens = 4096
+max_output_tokens = 32768
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# Two workers (gpu1 + worker-a), each capped at min(expect.max_running_requests, max_inflight) = 4.
+[admission]
+max_backend_inflight = 8
+per_scope_inflight = 8
+queue_depth = 64
+
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "dev"
+token_env = "CERE_TOKEN_DEV"
+
+[ledger]
+state_dir = "/var/lib/cere/federation-gemma-amd"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024
+
+[federation]
+cluster_id = "lab-cere"
+coordinator_id = "cere-coordinator"
+listen = "100.72.2.2:7443"
+principal = "cere-coordinator"
+ca_file = "/tmp/cere-fed-PLACEHOLDER/pki/ca.pem"
+cert_file = "/tmp/cere-fed-PLACEHOLDER/pki/coordinator.pem"
+key_file = "/tmp/cere-fed-PLACEHOLDER/pki/coordinator-key.pem"
+heartbeat_interval_ms = 1000
+suspect_after_ms = 5000
+lost_after_ms = 15000
+admission_lease_ms = 4000
+rpc_timeout_ms = 5000
+rpc_quota_per_principal = 64
+
+[[federation.workers]]
+worker_id = "worker-a"
+endpoint = "https://100.73.3.3:7443"
+principal = "cere-worker-a"
+max_inflight = 4
+
+[federation.workers.expect]
+served_model_name = "gemma-4-e4b-it"
+tp_size = 1
+kv_cache_dtype = "f16"

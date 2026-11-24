@@ -1,0 +1,146 @@
+// VulkanAmd P2 K7: helpers shared by the k7_*.comp shaders (included, never compiled on its own; no #version).
+//
+// Arithmetic rules every K7 shader follows (the per-device contract of executor/cuda/src/kernels/k7_moe.h):
+//  * BF16 is decoded exactly (a 16-bit shift) and encoded round-to-nearest-even with the canonical NaN 0x7FFF.
+//  * OCP E4M3 decode is exact without FP32 denormal intermediates (RADV may flush them); encode is satfinite RNE.
+//  * E2M1 encode is the software round-to-nearest-even of executor/hip/gen_hip.py (ties to even codes, sign kept).
+//  * exp_acc: Cody-Waite reduction + a degree-6 polynomial in explicit FMAs (~1 ulp); cdiv: a / b refined by one
+//    FMA Newton step from the hardware reciprocal (correctly rounded for normal operands in practice). Results marked
+//    `precise` so no shader contracts or reorders them: every K7 shader computes the same expression with the same
+//    bits, which is what makes the GEMV and the cooperative-matrix paths bit-identical.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U32 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer I32 { int v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F32 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer U16 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer U8 { uint8_t v; };
+
+// 64-bit base + zero-extended 32-bit byte offset (every tensor lives in one <= 4 GiB buffer; P1's rule).
+uvec4 ld16(uint64_t b, uint o) { return V4(b + uint64_t(o)).v; }
+uvec2 ld8(uint64_t b, uint o) { return V2(b + uint64_t(o)).v; }
+uint ld4(uint64_t b, uint o) { return U32(b + uint64_t(o)).v; }
+int ldi(uint64_t b, uint o) { return I32(b + uint64_t(o)).v; }
+float ldf(uint64_t b, uint o) { return F32(b + uint64_t(o)).v; }
+uint ld2(uint64_t b, uint o) { return uint(U16(b + uint64_t(o)).v); }
+uint ld1(uint64_t b, uint o) { return uint(U8(b + uint64_t(o)).v); }
+void st16(uint64_t b, uint o, uvec4 v) { V4(b + uint64_t(o)).v = v; }
+void st8(uint64_t b, uint o, uvec2 v) { V2(b + uint64_t(o)).v = v; }
+void st4(uint64_t b, uint o, uint v) { U32(b + uint64_t(o)).v = v; }
+void sti(uint64_t b, uint o, int v) { I32(b + uint64_t(o)).v = v; }
+void stf(uint64_t b, uint o, float v) { F32(b + uint64_t(o)).v = v; }
+void st2(uint64_t b, uint o, uint v) { U16(b + uint64_t(o)).v = uint16_t(v); }
+void st1(uint64_t b, uint o, uint v) { U8(b + uint64_t(o)).v = uint8_t(v); }
+
+float bf_lo(uint u) { return uintBitsToFloat(u << 16); }
+float bf_hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+float bf2f(uint h) { return uintBitsToFloat(h << 16); }
+uint f2bf(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+float rbf(float f) { return bf2f(f2bf(f)); }
+
+// OCP E4M3 byte -> float, exact; 0x7F / 0xFF -> NaN.
+float e4m3_to_float(uint b) {
+    const uint a = b & 0x7Fu;
+    const float v = a == 0x7Fu ? uintBitsToFloat(0x7FC00000u)
+                    : (a >= 8u ? uintBitsToFloat((a << 20) + (120u << 23)) : float(a) * (1.0 / 512.0));
+    return uintBitsToFloat(floatBitsToUint(v) | ((b & 0x80u) << 24));
+}
+
+// float -> OCP E4M3, satfinite (|x| > 448 -> 448), round to nearest even, NaN -> 0x7F.
+uint float_to_e4m3(float x) {
+    if (isnan(x)) return 0x7Fu;
+    const uint s = (floatBitsToUint(x) >> 24) & 0x80u;
+    const float a = min(abs(x), 448.0);
+    uint code;
+    if (a < 0.015625) {  // below 2^-6: the subnormal grid 2^-9 (a * 512 is exact)
+        code = uint(roundEven(a * 512.0));
+    } else {
+        const uint u = floatBitsToUint(a);
+        const uint ex = (u >> 23) - 120u;  // (unbiased exponent) + 7
+        uint keep = (u >> 20) & 7u;
+        const uint rem = u & 0xFFFFFu;
+        if (rem > 0x80000u || (rem == 0x80000u && (keep & 1u) == 1u)) keep += 1u;
+        code = (ex << 3) + keep;  // a carry out of the mantissa moves into the exponent
+    }
+    return code | s;
+}
+
+// float -> E2M1 code (bit 3 the sign of x, so -0 for small negatives), round to nearest even, satfinite, NaN -> 7.
+uint float_to_e2m1(float x) {
+    const uint sign = (floatBitsToUint(x) >> 28) & 8u;
+    const float a = abs(x);
+    uint c;
+    if (!(a == a)) c = 7u;
+    else if (a <= 0.25) c = 0u;
+    else if (a < 0.75) c = 1u;
+    else if (a <= 1.25) c = 2u;
+    else if (a < 1.75) c = 3u;
+    else if (a <= 2.5) c = 4u;
+    else if (a < 3.5) c = 5u;
+    else if (a <= 5.0) c = 6u;
+    else c = 7u;
+    return sign | c;
+}
+
+// E2M1 code -> int8 2 * e2m1 (exact integers {0, ±1, ±2, ±3, ±4, ±6, ±8, ±12}; code 8 -> 0) as a byte.
+uint e2m1_to_s8(uint c) {
+    const uint i = c & 7u;
+    const uint mag = i < 2u ? i : (2u + (i & 1u)) << ((i >> 1) - 1u);
+    return (c & 8u) != 0u ? ((0u - mag) & 0xFFu) : mag;
+}
+
+// One code byte (2 codes, element 2j low nibble) -> two int8 in the low 16 bits (low code in byte 0).
+uint e2m1_pair(uint byte) { return e2m1_to_s8(byte & 15u) | (e2m1_to_s8(byte >> 4) << 8); }
+
+// exp(x) in FP32, ~1 ulp: n = round(x / ln2), r = x - n ln2 (two-part ln2), Cephes' expf polynomial, * 2^n.
+float exp_acc(float x) {
+    if (isnan(x)) return x;
+    if (x > 88.72283935546875) return uintBitsToFloat(0x7F800000u);
+    if (x < -103.972084045410) return 0.0;
+    precise float n = roundEven(x * 1.44269502162933349609375);
+    precise float r = fma(n, -0.693359375, x);
+    r = fma(n, 2.12194440e-4, r);
+    precise float p = 1.9875691500e-4;
+    p = fma(p, r, 1.3981999507e-3);
+    p = fma(p, r, 8.3334519073e-3);
+    p = fma(p, r, 4.1665795894e-2);
+    p = fma(p, r, 1.6666665459e-1);
+    p = fma(p, r, 5.0000001201e-1);
+    precise float z = r * r;
+    precise float y = fma(p, z, r) + 1.0;
+    const int ni = int(n);
+    // 2^n in two exact factors so neither over/underflows on its own for n in [-150, 128]
+    const int n1 = ni / 2, n2 = ni - n1;
+    precise float res = y * uintBitsToFloat(uint(n1 + 127) << 23);
+    res = res * uintBitsToFloat(uint(n2 + 127) << 23);
+    return res;
+}
+
+// a / b: the hardware reciprocal, one FMA Newton correction of the quotient.
+float cdiv(float a, float b) {
+    precise float rc = 1.0 / b;
+    precise float q = a * rc;
+    precise float r = fma(-b, q, a);
+    precise float q2 = fma(r, rc, q);
+    // non-finite or zero operands: the plain quotient (the correction would make NaN of a valid inf / 0 result)
+    return (isinf(q) || isnan(q2) || q == 0.0) ? q : q2;
+}
+
+// SiLU(g) * u in FP32: g / (1 + exp(-g)) * u.
+float silu_mul(float g, float u) {
+    precise float d = 1.0 + exp_acc(-g);
+    precise float s = cdiv(g, d);
+    precise float v = s * u;
+    return v;
+}

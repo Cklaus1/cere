@@ -1,0 +1,119 @@
+// VulkanAmd P2 K9: shared GLSL of the QSA shaders (included by k9_*.comp after their #version and
+// #extension GL_GOOGLE_include_directive lines; never compiled alone).
+//
+// Buffer-reference accessors (unsigned 32-bit byte offsets from a 64-bit base, P1's rule), float controls (denormals,
+// signed zeros, Inf and NaN preserved: the prep mirrors the host's IEEE arithmetic bit for bit), BF16 / E4M3 exact
+// decode, BF16 RNE (NaN 0x7FFF), fast_topk's order-preserving key, and two correctly rounded helpers the prep's 1-ulp
+// mirror depends on: fdiv_rn32 (a copy of shaders/k12_common.comp's, which is not includable here without its sampler
+// state) and sqrt_rn32 (FP32 square root, correctly rounded by an exact FP64 midpoint test).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+// SPV_KHR_float_controls: SignedZeroInfNanPreserve (cap 4466, mode 4461) and DenormPreserve (cap 4464, mode 4459), fp32.
+spirv_execution_mode(capabilities = [4466], 4461, 32);
+spirv_execution_mode(capabilities = [4464], 4459, 32);
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer I1 { int v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer F2 { vec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer F4 { vec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer L1 { int64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) buffer B1 { uint8_t v; };
+
+float f_ninf() { return uintBitsToFloat(0xff800000u); }
+float bflo(uint u) { return uintBitsToFloat(u << 16); }
+float bfhi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+float bf(uint16_t h) { return uintBitsToFloat(uint(h) << 16); }
+uint bf16_rne(float x) {
+    const uint u = floatBitsToUint(x);
+    return (u & 0x7fffffffu) > 0x7f800000u ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+float rb(float x) { return uintBitsToFloat(bf16_rne(x) << 16); }
+
+// OCP E4M3 -> FP32, exact, no FP32 denormal intermediate (k6_decode.comp's): normal bytes by exponent rebias,
+// subnormals as an exact int * 2^-9, magnitude 0x7F NaN, sign OR-ed in.
+float e4m3(uint b) {
+    const uint a = b & 0x7Fu;
+    const float v = a == 0x7Fu ? uintBitsToFloat(0x7FC00000u)
+                  : a >= 8u    ? uintBitsToFloat((a << 20) + (120u << 23))
+                               : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v) | ((b & 0x80u) << 24));
+}
+
+// fast_topk.cuh convert_to_uint32: order-preserving key of a float (-0 < +0).
+uint order_key(float x) {
+    const uint b = floatBitsToUint(x);
+    return (b & 0x80000000u) != 0u ? ~b : (b | 0x80000000u);
+}
+
+// Correctly rounded fp32 a / b (copy of k12_common.comp fdiv_rn32): reciprocal + two Newton/Markstein steps accepted
+// only when the exact residual proves the nearest float; otherwise the fp64 residual selection among three neighbours.
+float fdiv_rn32(float a, float b) {
+    const uint ba = floatBitsToUint(a), bb = floatBitsToUint(b);
+    const uint ea = (ba >> 23) & 255u, eb = (bb >> 23) & 255u;
+    if (ea == 0u || ea == 255u || eb == 0u || eb == 255u) return a / b;
+    if (ea >= 100u && ea <= 154u && eb >= 100u && eb <= 154u) {
+        precise float y = 1.0 / b;
+        precise float q = a * y;
+        precise float e = fma(-b, q, a);
+        q = fma(e, y, q);
+        e = fma(-b, q, a);
+        q = fma(e, y, q);
+        const float e1 = fma(-b, q, a);
+        const uint eq = (floatBitsToUint(q) >> 23) & 255u;
+        if (eq > 30u && eq < 220u) {
+            const float ulp = uintBitsToFloat((eq - 23u) << 23);
+            if (abs(e1) < 0.49f * abs(b) * ulp) return q;
+        }
+    }
+    const double da = abs(double(a)), db = abs(double(b));
+    const uint sgn = (ba ^ bb) & 0x80000000u;
+    const double q = da / db;
+    uint bfq = q < 1.1754943508222875e-38LF ? uint(roundEven(q * 7.1362384635297994e44LF)) : floatBitsToUint(float(q));
+    if (bfq >= 0x7f800000u) return uintBitsToFloat(0x7f800000u | sgn);
+    const double tiny = packDouble2x32(uvec2(0u, 0x36A00000u));  // 2^-149
+    const uint cands[3] = uint[3](bfq > 0u ? bfq - 1u : bfq, bfq, bfq + 1u);
+    uint best = bfq; double rbest = 1.0e300LF;
+    const uint order[3] = uint[3](bfq, cands[0], cands[2]);
+    for (int k = 0; k < 3; ++k) {
+        const uint c = order[k];
+        const uint ec = c >> 23;
+        const double cd = ec == 0u ? double(c & 0x7fffffu) * tiny : double(uintBitsToFloat(c));
+        const double r = abs(fma(-cd, db, da));
+        if (r < rbest || (r == rbest && (c & 1u) == 0u && (best & 1u) != 0u)) { rbest = r; best = c; }
+    }
+    return uintBitsToFloat(best | sgn);
+}
+
+// Correctly rounded fp32 sqrt of a positive normal x (the norm's argument: a sum of squares + eps > 0): a candidate
+// from the fp64 square root, then the exact midpoint test m^2 vs x in fp64 (m has 25 significant bits, m^2 <= 50:
+// exact; m^2 == x is impossible, so there is no tie) moves it by at most one ulp per step. Other inputs: sqrt(x).
+float sqrt_rn32(float x) {
+    const uint bx = floatBitsToUint(x);
+    if (bx == 0u || bx >= 0x7f800000u || bx < 0x00800000u) return sqrt(x);
+    const double dx = double(x);
+    uint s = floatBitsToUint(float(sqrt(dx)));
+    [[unroll]] for (int it = 0; it < 2; ++it) {
+        const double sd = double(uintBitsToFloat(s));
+        const double up = double(uintBitsToFloat(s + 1u));
+        const double dn = double(uintBitsToFloat(s - 1u));
+        const double mu = (sd + up) * 0.5LF, md = (sd + dn) * 0.5LF;  // exact (25 bits)
+        if (mu * mu < dx) s = s + 1u;
+        else if (md * md > dx) s = s - 1u;
+    }
+    return uintBitsToFloat(s);
+}

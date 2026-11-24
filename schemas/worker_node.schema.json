@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/worker_node.schema.json",
+  "title": "CERE worker_node",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "worker_id",
+    "worker_epoch",
+    "node_name",
+    "lifecycle_state",
+    "protocol_version",
+    "transport",
+    "resource_graph_name",
+    "resource_ids",
+    "backend_profile_ids",
+    "artifact_ids",
+    "model_instance_ids",
+    "heartbeat",
+    "labels",
+    "coordinator_term",
+    "desired_state",
+    "reconciled"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "worker_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "node_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "joining",
+        "ready",
+        "draining",
+        "suspect",
+        "lost"
+      ]
+    },
+    "protocol_version": {
+      "const": "2"
+    },
+    "transport": {
+      "type": "string",
+      "enum": [
+        "local",
+        "tailscale_grpc"
+      ]
+    },
+    "resource_graph_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "resource_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "backend_profile_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "artifact_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "model_instance_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "last_seen_ns",
+        "interval_ms",
+        "clock_domain",
+        "sequence"
+      ],
+      "properties": {
+        "last_seen_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "interval_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "clock_domain": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      }
+    },
+    "coordinator_term": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "desired_state": {
+      "enum": [
+        "ready",
+        "draining"
+      ]
+    },
+    "reconciled": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "producer": {
+    "name": "modelopt",
+    "version": "0.46.0"
+  },
+  "quantization": {
+    "exclude_modules": [
+      "lm_head",
+      "mtp.*",
+      "*.ple.*"
+    ],
+    "group_size": 16,
+    "quant_algo": "NVFP4"
+  }
+}

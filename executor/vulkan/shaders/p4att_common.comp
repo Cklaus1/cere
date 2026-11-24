@@ -1,0 +1,105 @@
+// VulkanAmd P4-A: shared GLSL of the cooperative-matrix prefill attention kernels (p4att_dense.comp = K6's, p4att_sparse.comp
+// = K9's; included after their #version line, never compiled alone).
+//
+// RADV exposes FP16 x FP16 -> FP32 16x16x16 cooperative matrices only (spec P0-3), no BF16. The operands are carried in
+// FP16 as follows (every choice is a fixed function of one q row or one key's 256 values, so a row's bits never
+// depend on the call's other rows: the row-partition invariance the FP32 kernels have):
+//   q row (one query head, 256 dims):   q' = fp16(q * 2^sq), sq = 141 - E, E = the BF16 exponent field of max |q|
+//                                       (the row maximum lands in [2^14, 2^15));
+//   key j, K (256 dims of a KV head):   k' = fp16(k * 2^sk), sk the same rule (FP8 cache: sk = -8: the E4M3 byte moved
+//                                       into FP16 position is exactly k * 2^-8, subnormals included);
+//   scores:                             s = ldexp(acc, -(sq + sk)) * (scale log2 e), acc = the FP32 coopmat sum of
+//                                       the exact FP16 x FP16 products (exact operands for every value within 2^-28
+//                                       of its row's maximum; smaller ones are FP16 subnormals, bounded error);
+//   key j, V:                           v' = fp16(v * 2^bv), bv = min(141 - E_v, C - A_MIN) (FP8: bv = 6, the byte
+//                                       moved into FP16 position times 2^14, exact);
+//   probabilities:                      p' = fp16(p * 2^av) (RNE), av = C - bv in [A_MIN, 15], so p' <= 2^15;
+//   output:                             o = ldexp(acc_pv, -C) * (1 / l), one reciprocal per row (the same two
+//                                       instructions in both kernels), l = the FP32 sum of the unrounded p.
+// So every product p' v' = fp16-rounded(p) * v * 2^C: one constant scale for all keys of a row, any V magnitude below
+// 2^(30 - C) = 2^16 (the key is "bad" above: FP16's own range), any V row small or large: av = C - 14 + (exponent of
+// the V row maximum), clamped to >= A_MIN, so p' is FP16-normal for p >= 2^-(14 + av) and an FP16 subnormal (absolute
+// error <= 2^-25 in p', i.e. 2^-(25 + av) in p) below; the device keeps FP16 subnormals in conversions and in the
+// matrix unit (vkk6::coopmat_probe, printed by k6_test; on a device that flushed them the loss would be p < 2^-(14 + av)
+// per key). The only rounding the FP32 kernels do not have: p to 11 bits (HIP's P4 rounds p to 8 bits, BF16) and the
+// fixed hardware summation order of the coopmat dot products.
+// Partially valid 16-key chunks (measured, k6_test "p4 probe2"): on this device a coopMatMulAdd result depends on B
+// values that meet zeros of A (about 1 in 8 results changed when only those B rows changed), while an all-zero A row
+// leaves C exactly unchanged. So "p = 0" alone does not make a key past a row's position a no-op. The sparse kernel's
+// invalid entries have p' = 0 AND V' = 0, so a row's products there are a function of its own entries. The dense kernel
+// matches that per row: a row's chunk is full (all 16 keys valid: the tile product), empty (its p' row zero: an exact
+// no-op) or partial (the chunk holding its position): the tile product sees it zero, and one extra product per token
+// takes that token's p' rows alone (the other rows zero: exact no-ops) times V' with the keys past its position zero.
+// So both kernels compute every row with the same products in the same order: the bytes do not depend on the kernel,
+// the tile or the call's other rows.
+// Bad inputs (any non-finite q / K / V value, an FP8 NaN byte, a V row whose maximum is >= 2^(30 - C)) are never fed to
+// the matrix unit: their FP16 copies are zero and every row that reads one is flagged; the caller's FP32 fallback
+// dispatch (the k6_prefill / k9_attn kernels built with FALLBACK 1) recomputes exactly the flagged rows, so their bits
+// are the FP32 path's.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define MatA coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA>
+#define MatB coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define MatC coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>
+
+#define P4_C 14       // the constant P.V scale exponent
+#define P4_AMIN 0     // the smallest p scale exponent
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer P4V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer P4I1 { int v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer P4L1 { int64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer P4W1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) writeonly buffer P4H1 { uint16_t v; };
+
+float p4_ninf() { return uintBitsToFloat(0xFF800000u); }
+float p4_lo(uint u) { return uintBitsToFloat(u << 16); }
+float p4_hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint p4_bf16_rne(float x) {
+    const uint u = floatBitsToUint(x);
+    return isnan(x) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+// max of the magnitudes (bits & 0x7FFF) of the 8 BF16 in v (integer order == magnitude order for BF16)
+uint p4_mag8(uvec4 v) {
+    const uvec4 lo = v & 0x7FFFu, hi = (v >> 16) & 0x7FFFu;
+    const uvec4 m = max(lo, hi);
+    return max(max(m.x, m.y), max(m.z, m.w));
+}
+// E4M3: true when one of the 16 bytes is a NaN (magnitude 0x7F: only it carries into bit 7 when 1 is added)
+bool p4_nan16(uvec4 v) {
+    const uvec4 c = ((v & 0x7F7F7F7Fu) + 0x01010101u) & 0x80808080u;
+    return (c.x | c.y | c.z | c.w) != 0u;
+}
+// the shift for a row whose largest BF16 magnitude is `mag` (exponent field E = mag >> 7; E = 0: zero or subnormal)
+int p4_shift(uint mag) { return 141 - int(max(mag >> 7, 1u)); }
+// 8 BF16 (uvec4) * 2^s -> 8 FP16 (uvec4); exact for every value the carrying keeps exact, a fixed rounding of the
+// (subnormal-range) rest; z: zeros instead
+uvec4 p4_cvt8(uvec4 v, int s, bool z) {
+    uvec4 r;
+    [[unroll]] for (int i = 0; i < 4; ++i) r[i] = packHalf2x16(vec2(ldexp(p4_lo(v[i]), s), ldexp(p4_hi(v[i]), s)));
+    return z ? uvec4(0u) : r;
+}
+// two E4M3 bytes (bits 0..7 and 8..15 of w) -> two FP16 equal to them times 2^-8, exactly (sign to bit 15, the 7
+// magnitude bits to bits 7..13: E4M3's exponent field is FP16's minus 8 at the same mantissa width, subnormals included)
+uint p4_e4m3x2(uint w) {
+    return ((w & 0x7Fu) << 7) | ((w & 0x80u) << 8) | ((w & 0x7F00u) << 15) | ((w & 0x8000u) << 16);
+}
+// 16 E4M3 bytes (uvec4) -> 16 FP16 (two uvec4): times 2^-8 (v14 false) or 2^6 (v14 true), exact; z: zeros
+void p4_cvt16(uvec4 v, bool v14, bool z, out uvec4 a, out uvec4 b) {
+    uint o[8];
+    [[unroll]] for (int i = 0; i < 4; ++i) { o[2 * i] = p4_e4m3x2(v[i]); o[2 * i + 1] = p4_e4m3x2(v[i] >> 16); }
+    if (v14) [[unroll]] for (int i = 0; i < 8; ++i) o[i] = packFloat2x16(unpackFloat2x16(o[i]) * float16_t(16384.0));
+    a = z ? uvec4(0u) : uvec4(o[0], o[1], o[2], o[3]);
+    b = z ? uvec4(0u) : uvec4(o[4], o[5], o[6], o[7]);
+}
+// V shift (BF16) from the row maximum; bad when the row's maximum is >= 2^(30 - C) or non-finite
+int p4_vshift(uint mag) { return min(p4_shift(mag), P4_C - P4_AMIN); }
+bool p4_vbad(uint mag) { return (mag >> 7) >= 0xFFu || int(mag >> 7) - 127 > 29 - P4_C; }

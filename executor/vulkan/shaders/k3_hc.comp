@@ -1,0 +1,118 @@
+#version 460
+// VulkanAmd P2 K3: the element-wise and reduction kernels of the hyper-connection (executor/cuda/src/kernels/k3_hc.h,
+// k3_hc_math.cuh), selected by -DMODE. All reductions have one fixed order that depends on the row alone (never on the
+// number of rows in the call or on how the row is split over workgroups), so a row's bits are independent of m.
+//   MODE 0  act:     t[i] = bf16(silu(raw[i] / hc)),  raw f32, i < count (count even); two elements per thread.
+//   MODE 1  gate:    mixed[r, j] = bf16(sum_g sigmoid(u[r, g, j]) * normed[r, g, j] / hc), g ascending, fma chain; two j per thread.
+//   MODE 2  combine: out[r, g, j] = bf16(hyper + a[r, g] * block_out[r, j]), a[r, g] = 2 * sigmoid(dot(normed[r], w_inject[g]) / hc).
+//           One workgroup (256 threads, subgroup 32) per (row, part): it computes the row's four dots in one fixed order
+//           (thread t: 8-element chunks t, t + 256, ... ascending, fma chain; xor tree over 32 lanes; warp partials in order
+//           from 0.0), then applies the combine to the chunks [part * span, (part + 1) * span). The dot is recomputed by every
+//           part of the row (identical bits), so no scratch buffer is needed and `out` may alias `hyper`.
+// hc is 4 (the compiled stream count). BF16 <-> FP32: decode exact, encode RNE with NaN 0x7FFF. sigmoid is 1 / (1 + exp(-x)) with
+// GLSL exp and division (not correctly rounded on RADV; the contract rows for these kernels are FP64-bounded, the bit rows
+// compare the kernel with itself).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+float sigmoid(float x) { return 1.0 / (1.0 + exp(-x)); }
+
+#ifndef MODE
+#define MODE 0
+#endif
+layout(local_size_x = 256) in;
+
+#if MODE == 0
+layout(push_constant, std430) uniform PC { uint64_t raw, t; uint count; } pc;
+void main() {
+    const uint i = gl_GlobalInvocationID.x * 2u;
+    if (i >= pc.count) return;
+    const vec2 r = uintBitsToFloat(V2(pc.raw + uint64_t(i * 4u)).v);
+    const float a0 = r.x * 0.25, a1 = r.y * 0.25;
+    U1(pc.t + uint64_t(i * 2u)).v = pack2(a0 * sigmoid(a0), a1 * sigmoid(a1));
+}
+#elif MODE == 1
+layout(push_constant, std430) uniform PC { uint64_t u, normed, mixed; uint m, hidden; } pc;
+void main() {
+    const uint i = gl_GlobalInvocationID.x * 2u;            // output element (r, j), j even
+    if (i >= pc.m * pc.hidden) return;
+    const uint r = i / pc.hidden;
+    const uint j = i - r * pc.hidden;
+    const uint row = r * 4u * pc.hidden + j;                // element offset of (r, 0, j)
+    float acc0 = 0.0, acc1 = 0.0;
+    [[unroll]] for (uint g = 0u; g < 4u; ++g) {
+        const uint e = row + g * pc.hidden;
+        const vec2 uu = uintBitsToFloat(V2(pc.u + uint64_t(e * 4u)).v);
+        const uint nn = U1(pc.normed + uint64_t(e * 2u)).v;
+        acc0 = fma(sigmoid(uu.x), lo(nn), acc0);
+        acc1 = fma(sigmoid(uu.y), hi(nn), acc1);
+    }
+    U1(pc.mixed + uint64_t((r * pc.hidden + j) * 2u)).v = pack2(acc0 * 0.25, acc1 * 0.25);
+}
+#else
+layout(push_constant, std430) uniform PC { uint64_t block_out, hyper, normed, w_inject, out_; uint hidden, span, m; } pc;
+shared float partial[4][8];
+void main() {
+    const uint row = gl_WorkGroupID.x, part = gl_WorkGroupID.y, tid = gl_LocalInvocationID.x;
+    const uint width = 4u * pc.hidden;
+    const uint vecs = width / 8u;
+    const uint64_t nrow = pc.normed + uint64_t(row * width * 2u);
+    precise float acc[4] = float[4](0.0, 0.0, 0.0, 0.0);
+    for (uint v = tid; v < vecs; v += 256u) {
+        const uvec4 q = V4(nrow + uint64_t(v * 16u)).v;
+        const float n8[8] = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+        [[unroll]] for (uint g = 0u; g < 4u; ++g) {
+            const uvec4 wq = V4(pc.w_inject + uint64_t((g * width + v * 8u) * 2u)).v;
+            const float w8[8] = float[8](lo(wq.x), hi(wq.x), lo(wq.y), hi(wq.y), lo(wq.z), hi(wq.z), lo(wq.w), hi(wq.w));
+            [[unroll]] for (int i = 0; i < 8; ++i) acc[g] = fma(n8[i], w8[i], acc[g]);
+        }
+    }
+    const uint warp = tid >> 5;
+    [[unroll]] for (uint g = 0u; g < 4u; ++g) {
+        precise float v = acc[g];
+        [[unroll]] for (uint o = 16u; o > 0u; o >>= 1) { precise float s2 = v + subgroupShuffleXor(v, o); v = s2; }
+        if ((tid & 31u) == 0u) partial[g][warp] = v;
+    }
+    barrier();
+    float a[4];
+    [[unroll]] for (uint g = 0u; g < 4u; ++g) {
+        precise float total = 0.0;
+        for (uint w = 0u; w < 8u; ++w) { precise float t2 = total + partial[g][w]; total = t2; }
+        a[g] = 2.0 / (1.0 + exp(-total * 0.25));
+    }
+    const uint per = pc.hidden / 8u;                        // 8-element chunks per stream
+    const uint end = min(vecs, (part + 1u) * pc.span);
+    for (uint c = part * pc.span + tid; c < end; c += 256u) {
+        const uint g = c / per;
+        const uint j = (c - g * per) * 8u;
+        const uint eo = (row * width + g * pc.hidden + j) * 2u;
+        const uvec4 hq = V4(pc.hyper + uint64_t(eo)).v;
+        const uvec4 yq = V4(pc.block_out + uint64_t((row * pc.hidden + j) * 2u)).v;
+        const float gate = g == 0u ? a[0] : g == 1u ? a[1] : g == 2u ? a[2] : a[3];
+        const float h8[8] = float[8](lo(hq.x), hi(hq.x), lo(hq.y), hi(hq.y), lo(hq.z), hi(hq.z), lo(hq.w), hi(hq.w));
+        const float y8[8] = float[8](lo(yq.x), hi(yq.x), lo(yq.y), hi(yq.y), lo(yq.z), hi(yq.z), lo(yq.w), hi(yq.w));
+        float o8[8];
+        [[unroll]] for (int i = 0; i < 8; ++i) o8[i] = fma(gate, y8[i], h8[i]);
+        V4(pc.out_ + uint64_t(eo)).v = uvec4(pack2(o8[0], o8[1]), pack2(o8[2], o8[3]), pack2(o8[4], o8[5]), pack2(o8[6], o8[7]));
+    }
+}
+#endif

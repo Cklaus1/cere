@@ -1,0 +1,14 @@
+{
+  "schema_version": "3",
+  "cluster_id": "lab-cere",
+  "coordinator_id": "cere-coordinator",
+  "coordinator_term": 1,
+  "worker_id": "worker-a",
+  "worker_epoch": 7,
+  "scope_id": "test-scope",
+  "operation_id": "op-1",
+  "method": "load",
+  "model_generation": 1,
+  "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "remaining_budget_ms": 1000
+}

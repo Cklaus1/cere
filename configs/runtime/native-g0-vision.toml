@@ -1,0 +1,104 @@
+# Native vision profile (m213 design note D9, Q2 b): native-g0.toml on the vision artifact (relabelled to
+# rtxpro6000bw-plehost-vision-v1, the vision tower on the device) with sidecar feature `image`; native-g0.toml stays
+# text-only. cered with the in-process CERE executor (libcere_executor.so) on GPU0, inside the `cere-native-g0`
+# container (m22 design note Q10, Q15). Paths under [deployments.native] are the container's: the repository at /src
+# (read-only), the executor build at /opt/cere, the prepared artifact at its host path.
+# Separate bind port and state_dir from the SGLang profiles, so it never collides with them; the same bind and
+# container as native-g0 (one GPU0 native backend at a time), its own ledger state_dir.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18309"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-g0-qwen38-flash-next-v6"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next-native-vision"
+shared_backend_tenancy = "exclusive"
+# The executor has no prefix cache, so nothing is shared across scopes.
+allow_cross_scope_prefix_cache = false
+
+# library_sha256 equals the deployment lock's backend_build_sha256;
+# `scripts/native/lock_native.py` updates both, with native-g0's pair (one library for every native profile).
+[deployments.native]
+library = "/opt/cere/libcere_executor.so"
+library_sha256 = "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453"
+artifact_dir = "/var/lib/cere/artifacts/qwen38-flash-next-nvfp4-7d8860431751e888"
+expected_manifest_sha256 = "7d8860431751e88843683049587e1892574f0ebc5cb368d3e0b46ede572727d0"
+device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"
+max_context_tokens = 2048
+# The KV pool is the one session's context (m25 design note D4, D6); 0 or absent would derive the same pool.
+kv_pool_tokens = 2048
+# `--feature image` (sidecar feature `image`, m213 design note D8); cered appends `--max-request-bytes`.
+sidecar = ["python3", "/src/scripts/native/tokenizer_sidecar.py", "--artifact", "/var/lib/cere/artifacts/qwen38-flash-next-nvfp4-7d8860431751e888", "--feature", "image"]
+# Recorded evidence only: the image that provides CUDA user space and the tokenizer libraries.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt (image tokens included) plus max_tokens must fit the 2,048-token context (m213 design note D5); output
+# stays capped at 2,048.
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 1024
+max_output_tokens = 2048
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# One executor row (the profile's decode_batch_max; native image rows 1, m213 design note D14, ledger CR19).
+[admission]
+max_backend_inflight = 1
+per_scope_inflight = 1
+queue_depth = 16
+
+[[auth.scopes]]
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[[auth.scopes]]
+scope_id = "native-b"
+token_env = "CERE_TOKEN_NATIVE_B"
+
+[ledger]
+state_dir = "/var/lib/cere/native-g0-vision"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

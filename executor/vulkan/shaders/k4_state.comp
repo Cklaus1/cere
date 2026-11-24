@@ -1,0 +1,44 @@
+#version 460
+// VulkanAmd P2 K4: PLE state jobs (k4_ple.cu commit_history_kernel, conv_state_at_kernel, the conv state conv_kernel
+// leaves, forward's Capture and forward_rows' saves, as one rule). Job {hist_src, hist_dst, conv_src, conv_dst, first,
+// r}: the state as of r tokens into the segment that starts at row `first` of the call:
+//   hist_dst[k] = position r - 2 + k of [hist_src (2) | tokens[first ..]]       (k = 0, 1)
+//   conv_dst[c, j] = position r - 9 + j of [conv_src[c] (9) | gn[first .., c]]  (j = 0 .. 8)
+// Each invocation reads all 9 (or 2) source values before writing, so src == dst (the commit) updates in place.
+// Grid (80 channel blocks of 128, jobs).
+#include "k4_common.comp"
+
+layout(local_size_x = 128) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { uvec4 job[]; };
+layout(push_constant, std430) uniform PC {
+    uint64_t jobs, tokens, gn;
+} pc;
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x;
+    const uint jb = gl_WorkGroupID.y;
+    Jobs J = Jobs(pc.jobs);
+    const uvec4 h = J.job[3u * jb];       // hist_src, hist_dst
+    const uvec4 cv = J.job[3u * jb + 1u]; // conv_src, conv_dst
+    const uvec4 m = J.job[3u * jb + 2u];  // first, r
+    const uint first = m.x;
+    const int r = int(m.y);
+    if (c == 0u) {
+        const uint64_t hs = packUint2x32(h.xy), hd = packUint2x32(h.zw);
+        int64_t v[2];
+        [[unroll]] for (int k = 0; k < 2; ++k) {
+            const int p = r - 2 + k;
+            v[k] = p >= 0 ? I64(pc.tokens + uint64_t(first + uint(p)) * 8ul).v : I64(hs + uint64_t(2 + p) * 8ul).v;
+        }
+        I64(hd).v = v[0];
+        I64(hd + 8ul).v = v[1];
+    }
+    const uint64_t cs = packUint2x32(cv.xy), cd = packUint2x32(cv.zw);
+    uint16_t v9[9];
+    [[unroll]] for (int j = 0; j < 9; ++j) {
+        const int p = r - 9 + j;
+        v9[j] = p >= 0 ? H1(pc.gn + (uint64_t(first + uint(p)) * uint64_t(kChannels) + uint64_t(c)) * 2ul).v
+                       : H1(cs + uint64_t(c * 9u + uint(9 + p)) * 2ul).v;
+    }
+    [[unroll]] for (int j = 0; j < 9; ++j) H1(cd + uint64_t(c * 9u + uint(j)) * 2ul).v = v9[j];
+}

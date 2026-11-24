@@ -1,0 +1,329 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-cuda",
+  "profile_id": "native-g0-qwen38-flash-next-v22",
+  "artifact_sha256": "dedc7dba9bc84493aa0c7a6e29edcd34c2636fe662af86f5d23cb7564bdde058",
+  "execution_mode": "native",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "verify",
+    "cancel"
+  ],
+  "native_decode_batch": true,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 200000,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": true,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text",
+    "tool_calls",
+    "json_schema",
+    "regex",
+    "ebnf",
+    "tool_calls_constrained"
+  ],
+  "json_schema_dialect": "json-schema-2020-12/xgrammar-0.2.1",
+  "json_schema_keywords": [
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "prefixItems",
+    "enum",
+    "const",
+    "anyOf",
+    "$ref",
+    "$defs",
+    "minItems",
+    "maxItems",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "title",
+    "description",
+    "default"
+  ],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "max_top_logprobs": 20,
+  "sampling_params": [
+    "top_k",
+    "min_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "logit_bias"
+  ],
+  "thinking_toggle": true,
+  "token_controls": [
+    "stop_token_ids",
+    "ignore_eos"
+  ],
+  "vocab_size": 248320,
+  "notes": "The S3 headroom profile -v22, opt-in since the DraftTrain flip (tasks/v29default-spec.md VD-03) and the default speculation profile from the FP4-Local flip (owner decision 2026-10-17, tasks/fp4local-spec.md FL-31; build/fp4-flip) until then: the S3 profile native-g0-qwen38-flash-next-v21 (same levers, MTP speculation, artifact and capabilities; tasks/m210-spec.md D15''''' O112, Headroom) with 32 prefix state slots, prefix end states on and a 300,032-token KV pool, which the GPU0 memory S3 frees pays for. Capabilities are declared from -v21, not measured.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "json_schema",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "regex",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "regex",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "ebnf",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "ebnf",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls_constrained",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls_constrained",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 200000
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 200000
+    }
+  ]
+}

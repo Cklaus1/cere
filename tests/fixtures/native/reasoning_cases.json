@@ -1,0 +1,4677 @@
+{
+ "schema": "cere-reasoning-cases-v1",
+ "parser": "qwen3",
+ "force_reasoning": false,
+ "cases": [
+  {
+   "name": "plain",
+   "text": "The answer is forty-two.",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": "The answer is forty-two."
+   },
+   "streams": [
+    {
+     "chunks": [
+      "The answer is forty-two."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "The answer is forty-two."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "T",
+      "h",
+      "e",
+      " ",
+      "a",
+      "n",
+      "s",
+      "w",
+      "e",
+      "r",
+      " ",
+      "i",
+      "s",
+      " ",
+      "f",
+      "o",
+      "r",
+      "t",
+      "y",
+      "-",
+      "t",
+      "w",
+      "o",
+      "."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "T"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "h"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "w"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "f"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "y"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "-"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "w"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "The",
+      " an",
+      "swe",
+      "r i",
+      "s f",
+      "ort",
+      "y-t",
+      "wo."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "The"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " an"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "swe"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s f"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ort"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "y-t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "wo."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "empty",
+   "text": "",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": ""
+   },
+   "streams": [
+    {
+     "chunks": [
+      ""
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "full_block",
+   "text": "<think>\nCount the beads twice.\n</think>\n\nThere are nine beads.",
+   "non_stream": {
+    "reasoning_text": "\nCount the beads twice.\n",
+    "normal_text": "\n\nThere are nine beads."
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>\nCount the beads twice.\n</think>\n\nThere are nine beads."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "\nCount the beads twice.\n",
+       "normal_text": "\n\nThere are nine beads."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "C",
+      "o",
+      "u",
+      "n",
+      "t",
+      " ",
+      "t",
+      "h",
+      "e",
+      " ",
+      "b",
+      "e",
+      "a",
+      "d",
+      "s",
+      " ",
+      "t",
+      "w",
+      "i",
+      "c",
+      "e",
+      ".",
+      "\n",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "\n",
+      "T",
+      "h",
+      "e",
+      "r",
+      "e",
+      " ",
+      "a",
+      "r",
+      "e",
+      " ",
+      "n",
+      "i",
+      "n",
+      "e",
+      " ",
+      "b",
+      "e",
+      "a",
+      "d",
+      "s",
+      "."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "C",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "o",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "u",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "b",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "d",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "w",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "i",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "c",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": ".",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "T"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "h"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "b"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "d"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">\nC",
+      "oun",
+      "t t",
+      "he ",
+      "bea",
+      "ds ",
+      "twi",
+      "ce.",
+      "\n</",
+      "thi",
+      "nk>",
+      "\n\nT",
+      "her",
+      "e a",
+      "re ",
+      "nin",
+      "e b",
+      "ead",
+      "s."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\nC",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "oun",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "he ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "bea",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "ds ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "twi",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "ce.",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n\nT"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "her"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "re "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e b"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ead"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>\nCount the beads twice.\n</",
+      "thi",
+      "nk>\n\nThere are nine beads."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\nCount the beads twice.\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n\nThere are nine beads."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "block_no_newlines",
+   "text": "<think>short</think>tail",
+   "non_stream": {
+    "reasoning_text": "short",
+    "normal_text": "tail"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>short</think>tail"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "short",
+       "normal_text": "tail"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "s",
+      "h",
+      "o",
+      "r",
+      "t",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "t",
+      "a",
+      "i",
+      "l"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "o",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "r",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">sh",
+      "ort",
+      "</t",
+      "hin",
+      "k>t",
+      "ail"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "sh",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "ort",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ail"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>short</",
+      "thi",
+      "nk>tail"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "short",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "tail"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "close_without_open",
+   "text": "silent reasoning</think>\n\nvisible answer",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": "silent reasoning</think>\n\nvisible answer"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "silent reasoning</think>\n\nvisible answer"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "silent reasoning</think>\n\nvisible answer"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "s",
+      "i",
+      "l",
+      "e",
+      "n",
+      "t",
+      " ",
+      "r",
+      "e",
+      "a",
+      "s",
+      "o",
+      "n",
+      "i",
+      "n",
+      "g",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "\n",
+      "v",
+      "i",
+      "s",
+      "i",
+      "b",
+      "l",
+      "e",
+      " ",
+      "a",
+      "n",
+      "s",
+      "w",
+      "e",
+      "r"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "v"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "b"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "w"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "sil",
+      "ent",
+      " re",
+      "aso",
+      "nin",
+      "g</",
+      "thi",
+      "nk>",
+      "\n\nv",
+      "isi",
+      "ble",
+      " an",
+      "swe",
+      "r"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "sil"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ent"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " re"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "aso"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g</"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "thi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nk>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n\nv"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "isi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ble"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " an"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "swe"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "silent reasoning</",
+      "thi",
+      "nk>\n\nvisible answer"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "silent reasoning</"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "thi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nk>\n\nvisible answer"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "open_unterminated",
+   "text": "<think>\nthis reasoning was cut off by the length lim",
+   "non_stream": {
+    "reasoning_text": "\nthis reasoning was cut off by the length lim",
+    "normal_text": ""
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>\nthis reasoning was cut off by the length lim"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "\nthis reasoning was cut off by the length lim",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "t",
+      "h",
+      "i",
+      "s",
+      " ",
+      "r",
+      "e",
+      "a",
+      "s",
+      "o",
+      "n",
+      "i",
+      "n",
+      "g",
+      " ",
+      "w",
+      "a",
+      "s",
+      " ",
+      "c",
+      "u",
+      "t",
+      " ",
+      "o",
+      "f",
+      "f",
+      " ",
+      "b",
+      "y",
+      " ",
+      "t",
+      "h",
+      "e",
+      " ",
+      "l",
+      "e",
+      "n",
+      "g",
+      "t",
+      "h",
+      " ",
+      "l",
+      "i",
+      "m"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "i",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "r",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "o",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "i",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "g",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "w",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "c",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "u",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "o",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "f",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "f",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "b",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "y",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "g",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "i",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "m",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">\nt",
+      "his",
+      " re",
+      "aso",
+      "nin",
+      "g w",
+      "as ",
+      "cut",
+      " of",
+      "f b",
+      "y t",
+      "he ",
+      "len",
+      "gth",
+      " li",
+      "m"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\nt",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "his",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " re",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "aso",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "nin",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "g w",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "as ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "cut",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " of",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "f b",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "y t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "he ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "len",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "gth",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " li",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "m",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>\nthis reasoning was cut off by the length lim"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\nthis reasoning was cut off by the length lim",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "double_open",
+   "text": "<think><think>nested start</think>after",
+   "non_stream": {
+    "reasoning_text": "nested start",
+    "normal_text": "after"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think><think>nested start</think>after"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "<think>nested start",
+       "normal_text": "after"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "n",
+      "e",
+      "s",
+      "t",
+      "e",
+      "d",
+      " ",
+      "s",
+      "t",
+      "a",
+      "r",
+      "t",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "a",
+      "f",
+      "t",
+      "e",
+      "r"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "<think>",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "d",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "s",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "r",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "f"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      "><t",
+      "hin",
+      "k>n",
+      "est",
+      "ed ",
+      "sta",
+      "rt<",
+      "/th",
+      "ink",
+      ">af",
+      "ter"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "<think>n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "est",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "ed ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "sta",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "rt",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "af"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ter"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k><t",
+      "hin",
+      "k>nested start</",
+      "thi",
+      "nk>after"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "<think>nested start",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "after"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "empty_block",
+   "text": "<think>\n\n</think>\n\nOnly content.",
+   "non_stream": {
+    "reasoning_text": "\n\n",
+    "normal_text": "\n\nOnly content."
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>\n\n</think>\n\nOnly content."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "\n\n",
+       "normal_text": "\n\nOnly content."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "\n",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "\n",
+      "\n",
+      "O",
+      "n",
+      "l",
+      "y",
+      " ",
+      "c",
+      "o",
+      "n",
+      "t",
+      "e",
+      "n",
+      "t",
+      "."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "O"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "y"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "c"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">\n\n",
+      "</t",
+      "hin",
+      "k>\n",
+      "\nOn",
+      "ly ",
+      "con",
+      "ten",
+      "t."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\nOn"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ly "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "con"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ten"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>\n\n</",
+      "thi",
+      "nk>\n\nOnly content."
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "\n\n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n\nOnly content."
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "late_block",
+   "text": "preface text <think>late thought</think> trailing words",
+   "non_stream": {
+    "reasoning_text": "preface text <think>late thought",
+    "normal_text": " trailing words"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "preface text <think>late thought</think> trailing words"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "preface text late thought",
+       "normal_text": " trailing words"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "p",
+      "r",
+      "e",
+      "f",
+      "a",
+      "c",
+      "e",
+      " ",
+      "t",
+      "e",
+      "x",
+      "t",
+      " ",
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "l",
+      "a",
+      "t",
+      "e",
+      " ",
+      "t",
+      "h",
+      "o",
+      "u",
+      "g",
+      "h",
+      "t",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      " ",
+      "t",
+      "r",
+      "a",
+      "i",
+      "l",
+      "i",
+      "n",
+      "g",
+      " ",
+      "w",
+      "o",
+      "r",
+      "d",
+      "s"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "p"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "f"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "c"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "x"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "e",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "o",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "u",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "g",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "h",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "t",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "w"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "d"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "pre",
+      "fac",
+      "e t",
+      "ext",
+      " <t",
+      "hin",
+      "k>l",
+      "ate",
+      " th",
+      "oug",
+      "ht<",
+      "/th",
+      "ink",
+      "> t",
+      "rai",
+      "lin",
+      "g w",
+      "ord",
+      "s"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "pre"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "fac"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ext"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " <t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "hin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "k>l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ate"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " th"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "oug"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ht<"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "/th"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ink"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "> t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "rai"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "lin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g w"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ord"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "preface text <t",
+      "hin",
+      "k>late thought</",
+      "thi",
+      "nk> trailing words"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "preface text <t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "hin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "k>late thought</"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "thi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nk> trailing words"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool_in_reasoning",
+   "text": "<think>plan a call<tool_call>\n{\"name\": \"f\"}\n</tool_call>",
+   "non_stream": {
+    "reasoning_text": "plan a call",
+    "normal_text": "<tool_call>\n{\"name\": \"f\"}\n</tool_call>"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>plan a call<tool_call>\n{\"name\": \"f\"}\n</tool_call>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "plan a call",
+       "normal_text": "<tool_call>\n{\"name\": \"f\"}\n</tool_call>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "p",
+      "l",
+      "a",
+      "n",
+      " ",
+      "a",
+      " ",
+      "c",
+      "a",
+      "l",
+      "l",
+      "<",
+      "t",
+      "o",
+      "o",
+      "l",
+      "_",
+      "c",
+      "a",
+      "l",
+      "l",
+      ">",
+      "\n",
+      "{",
+      "\"",
+      "n",
+      "a",
+      "m",
+      "e",
+      "\"",
+      ":",
+      " ",
+      "\"",
+      "f",
+      "\"",
+      "}",
+      "\n",
+      "<",
+      "/",
+      "t",
+      "o",
+      "o",
+      "l",
+      "_",
+      "c",
+      "a",
+      "l",
+      "l",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "p",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "n",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "c",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "l",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<tool_call>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "{"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "m"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "e"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ":"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "f"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "}"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</to"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "_"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "c"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ">"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">pl",
+      "an ",
+      "a c",
+      "all",
+      "<to",
+      "ol_",
+      "cal",
+      "l>\n",
+      "{\"n",
+      "ame",
+      "\": ",
+      "\"f\"",
+      "}\n<",
+      "/to",
+      "ol_",
+      "cal",
+      "l>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "pl",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "an ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a c",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "all",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<tool_call>\n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "{\"n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ame"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\": "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "\"f\""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "}\n<"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "/to"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ol_"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "cal"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>plan a call<t",
+      "ool",
+      "_call>\n{\"name\": \"f\"}\n</tool_call>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "plan a call",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<tool_call>\n{\"name\": \"f\"}\n</tool_call>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "tool_without_think",
+   "text": "Call: <tool_call>{}</tool_call>",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": "Call: <tool_call>{}</tool_call>"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "Call: <tool_call>{}</tool_call>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "Call: <tool_call>{}</tool_call>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "C",
+      "a",
+      "l",
+      "l",
+      ":",
+      " ",
+      "<",
+      "t",
+      "o",
+      "o",
+      "l",
+      "_",
+      "c",
+      "a",
+      "l",
+      "l",
+      ">",
+      "{",
+      "}",
+      "<",
+      "/",
+      "t",
+      "o",
+      "o",
+      "l",
+      "_",
+      "c",
+      "a",
+      "l",
+      "l",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "C"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ":"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<tool_call>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "{"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "}"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</to"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "_"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "c"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ">"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "Cal",
+      "l: ",
+      "<to",
+      "ol_",
+      "cal",
+      "l>{",
+      "}</",
+      "too",
+      "l_c",
+      "all",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "Cal"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l: "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<tool_call>{"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "}</"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "too"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "l_c"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "all"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ">"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "Call: <t",
+      "ool",
+      "_call>{}</tool_call>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "Call: <t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ool"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "_call>{}</tool_call>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "two_closes",
+   "text": "<think>a</think>b</think>c",
+   "non_stream": {
+    "reasoning_text": "a",
+    "normal_text": "b</think>c"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>a</think>b</think>c"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "a",
+       "normal_text": "b</think>c"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "a",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "b",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "c"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "b"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "c"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">a<",
+      "/th",
+      "ink",
+      ">b<",
+      "/th",
+      "ink",
+      ">c"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "b<"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "/th"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ink"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ">c"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>a</",
+      "thi",
+      "nk>b</",
+      "thi",
+      "nk>c"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "a",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "b</"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "thi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nk>c"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "unicode",
+   "text": "<think>思考 é 😀</think>答え ü",
+   "non_stream": {
+    "reasoning_text": "思考 é 😀",
+    "normal_text": "答え ü"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>思考 é 😀</think>答え ü"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "思考 é 😀",
+       "normal_text": "答え ü"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "思",
+      "考",
+      " ",
+      "é",
+      " ",
+      "😀",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">",
+      "答",
+      "え",
+      " ",
+      "ü"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "思",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "考",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "é",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "😀",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "答"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "え"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ü"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">思考",
+      " é ",
+      "😀</",
+      "thi",
+      "nk>",
+      "答え ",
+      "ü"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "思考",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": " é ",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "😀",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "答え "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ü"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>思考 é 😀</",
+      "thi",
+      "nk>答え ü"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "思考 é 😀",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "答え ü"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "angle_brackets",
+   "text": "<thin> is not a tag, nor </thinking> or <think",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": "<thin> is not a tag, nor </thinking> or <think"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<thin> is not a tag, nor </thinking> or <think"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "<thin> is not a tag, nor </thinking> or <think"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      ">",
+      " ",
+      "i",
+      "s",
+      " ",
+      "n",
+      "o",
+      "t",
+      " ",
+      "a",
+      " ",
+      "t",
+      "a",
+      "g",
+      ",",
+      " ",
+      "n",
+      "o",
+      "r",
+      " ",
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      "i",
+      "n",
+      "g",
+      ">",
+      " ",
+      "o",
+      "r",
+      " ",
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<thin>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "i"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "s"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ","
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</thinki"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "n"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ">"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "o"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "r"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": "<think"
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "in>",
+      " is",
+      " no",
+      "t a",
+      " ta",
+      "g, ",
+      "nor",
+      " </",
+      "thi",
+      "nki",
+      "ng>",
+      " or",
+      " <t",
+      "hin",
+      "k"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "<thin>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " is"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " no"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "t a"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " ta"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "g, "
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nor"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " </"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "thi"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "nki"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "ng>"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " or"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": " <t"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "hin"
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "k"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "close_only",
+   "text": "</think>",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": "</think>"
+   },
+   "streams": [
+    {
+     "chunks": [
+      "</think>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "/",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "</t",
+      "hin",
+      "k>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "</",
+      "thi",
+      "nk>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": "</think>"
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  },
+  {
+   "name": "open_only",
+   "text": "<think>",
+   "non_stream": {
+    "reasoning_text": "",
+    "normal_text": ""
+   },
+   "streams": [
+    {
+     "chunks": [
+      "<think>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<",
+      "t",
+      "h",
+      "i",
+      "n",
+      "k",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<th",
+      "ink",
+      ">"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    },
+    {
+     "chunks": [
+      "<t",
+      "hin",
+      "k>"
+     ],
+     "deltas": [
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      },
+      {
+       "reasoning_text": "",
+       "normal_text": ""
+      }
+     ],
+     "finish": {
+      "reasoning_text": "",
+      "normal_text": ""
+     }
+    }
+   ]
+  }
+ ]
+}

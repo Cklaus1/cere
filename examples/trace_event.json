@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "event_id": "e0",
+  "clock_domain": "synthetic-clock",
+  "ts_mono_ns": 0,
+  "event": "request_accepted",
+  "scope_id": "test-scope",
+  "session_id": null,
+  "request_id": "r1",
+  "worker_epoch": 1,
+  "config_sha256": null,
+  "artifact_sha256": null,
+  "counters": {},
+  "privacy": "metadata_only",
+  "run_id": "synthetic-run",
+  "attempt": 1,
+  "trial_id": "trial-1",
+  "work_unit_id": null,
+  "worker_id": "synthetic-worker"
+}

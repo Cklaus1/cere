@@ -1,0 +1,144 @@
+# M5 real multi-model profile (m5 design note D12): two deployments behind one cered, no federation. Entry A is
+# sglang-bench-g0.toml's: `Qwen3.8-Flash-Next` on `cere-bench-g0` (GPU0, 127.0.0.1:18308, scripts/live/bench_backend.py);
+# entry B is federation-gemma.toml's: `gemma-4-e4b-it` on the GPU1 twin `cere-gemma-g1` (127.0.0.1:18328,
+# scripts/live/gemma_backend.py). Only scripts/live/multimodel_live.py --backend real uses it; CERE never restarts or
+# reconfigures either backend outside that harness. Own bind port and state_dir.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18397"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "sglang-t4-qwen38-flash-next-v1"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+# Scopes share each backend radix cache; a per-scope cache_salt keeps their prefixes apart. Equal on both entries (D2(g)).
+prefix_cache_isolation = "cache_salt"
+
+# Pinned GET http://127.0.0.1:18308/get_server_info values (sglang-bench-g0.toml). chat_template is omitted because the
+# backend reports null.
+[deployments.expect]
+version = "0.5.19.dev3+gd4689328e"
+model_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+tokenizer_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+quantization = "modelopt_fp4"
+kv_cache_dtype = "fp8_e4m3"
+speculative_algorithm = "EAGLE"
+speculative_num_steps = 3
+speculative_eagle_topk = 1
+speculative_num_draft_tokens = 4
+reasoning_parser = "qwen3"
+tool_call_parser = "qwen3_coder"
+allow_auto_truncate = false
+enable_cache_report = true
+context_length = 200000
+max_running_requests = 4
+# Recorded evidence only (docker image digest); not reported by the backend.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[[deployments.replicas]]
+device = "gpu0"
+base_url = "http://127.0.0.1:18308"
+load_endpoint = "/get_load"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "sglang-gemma-4-e4b-it-v1"
+served_model_name = "gemma-4-e4b-it"
+deployment = "configs/deployments/gemma-4-e4b-it"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+prefix_cache_isolation = "cache_salt"
+
+# /get_server_info of the Gemma launch (scripts/live/gemma_deploy.py EXPECT). Absent quantization/speculative/
+# chat_template pins mean the backend must report null.
+[deployments.expect]
+version = "0.5.19.dev3+gd4689328e"
+model_path = "/models/gemma-4-e4b-it-hf/snapshots/d6436b3d62967e1af08bbb046c6300b2a9ae8e85"
+tokenizer_path = "/models/gemma-4-e4b-it-hf/snapshots/d6436b3d62967e1af08bbb046c6300b2a9ae8e85"
+kv_cache_dtype = "auto"
+reasoning_parser = "gemma4"
+tool_call_parser = "gemma4"
+allow_auto_truncate = false
+enable_cache_report = true
+context_length = 32768
+max_running_requests = 4
+# Recorded evidence only (docker image digest); not reported by the backend.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[[deployments.replicas]]
+device = "gpu1"
+base_url = "http://127.0.0.1:18328"
+load_endpoint = "/get_load"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0", "gpu1"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 4096
+max_output_tokens = 32768
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+# 8 concurrent streams x the default resume_buffer_bytes (4 MiB).
+resume_buffer_total_bytes = 33554432
+
+# Shared by both entries (D6); the D2(j) cap is 4 (gpu0) + 4 (gpu1).
+[admission]
+max_backend_inflight = 8
+per_scope_inflight = 8
+queue_depth = 32
+
+# The operator token enables the migrate route (operator.rs), which mm_migrate exercises.
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "dev"
+token_env = "CERE_TOKEN_DEV"
+
+[ledger]
+state_dir = "/var/lib/cere/multimodel-g0g1"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

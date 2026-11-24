@@ -1,0 +1,181 @@
+#version 460
+// VulkanAmd P2 K7: the W4A4 grouped GEMM as a GEMV for decode and verify calls (moe_block's default at m <= 16), the
+// executor/hip/src/k7_small_gemv.inc role. One workgroup per (COLS output columns, tile); the tile's <= MR
+// activation rows (int8 2 * e2m1 + FP32 block scales) staged in shared memory for the whole k.
+//
+// Arithmetic per output element (the contract's, and bit-identical to k7_gemm.comp's cooperative-matrix form):
+//   acc = 0; for each 16-element NVFP4 block b in increasing k: acc = acc + t_b,
+//   t_b = float(isum_b) * (a_scale_b * w_scale_b), isum_b = the exact integer dot of the 16 (2 e2m1) x (2 e2m1) pairs;
+//   out = BF16(BF16((acc * 0.25) * alpha) ...) as k7_common's epilogue (GLU: SiLU(gate) * up, both BF16 first).
+// t_b is exact in FP32 (|isum| <= 2,304 < 2^12, the E4M3 x E4M3 scale product has <= 8 significant bits), so the only
+// rounding is the add, and the order is the block order alone: any mapping of lanes to blocks gives the same bits.
+//
+// Tiles: an active expert's <= MR rows (row_tiles 0), or one sorted row (row_tiles 1: MR 1; an expert with several
+// rows is read once per row, from the caches when its workgroups run together).
+// Mapping: G lanes per column (4 or 8, chosen from k by the host: speed only), lane j of a group loads 16 code bytes
+// = blocks 2 j, 2 j + 1 of each step of 2 G blocks (one uvec4 + one 16-bit scale load), forms both blocks' isum with
+// packed 4x8 int8 dot products (SPV_KHR_integer_dot_product) and their exact terms, writes them to shared memory; then
+// lane j of the group adds the step's terms of row j to its chain in block order (so m rows chain in parallel).
+// U steps of weight loads are issued before their math. Subgroup size 32 required.
+#extension GL_EXT_spirv_intrinsics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#include "k7_common.comp"
+
+#ifndef GLU
+#define GLU 0
+#endif
+#ifndef MR
+#define MR 1
+#endif
+#ifndef G
+#define G 8
+#endif
+#ifndef KMAX
+#define KMAX 2560
+#endif
+#ifndef U
+#define U 1  // steps of weight loads issued before their math (VulkanAutotune stage 1: 1 beat 5 by 12 % at m 1)
+#endif
+#define WG 256
+#define COLS (WG / G)
+#define SPB (2 * G)
+#define NW (1 + GLU)
+
+spirv_instruction(extensions = ["SPV_KHR_integer_dot_product"], capabilities = [6019, 6018], id = 4450)
+int sdot4x8(uint a, uint b, spirv_literal int fmt);
+
+layout(local_size_x = WG) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t a_codes, a_scales, perm, w0, s0, w1, s1, alphas, grp, out_, ids;
+    uint a_div, n, k, e, row_tiles, pad;
+} pc;
+
+shared uint lut[256];
+shared uint a_s8[MR * (KMAX / 4)];
+shared float a_sf[MR * (KMAX / 16)];
+shared int a_row[MR];
+shared float tb[COLS * MR * NW * SPB];
+
+uint unpack_lo(uint w) { return lut[w & 0xFFu] | (lut[(w >> 8) & 0xFFu] << 16); }
+uint unpack_hi(uint w) { return lut[(w >> 16) & 0xFFu] | (lut[w >> 24] << 16); }
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x, tile = gl_WorkGroupID.y, E = pc.e;
+    uint e, seg0, rows;
+    if (pc.row_tiles != 0u) {  // one sorted row per workgroup (grid y = the row count): MR 1, any m
+        seg0 = tile;
+        rows = 1u;
+        e = uint(ldi(pc.ids, uint(ldi(pc.perm, tile * 4u)) * 4u));
+    } else {  // one active expert's rows per workgroup (the host guarantees <= MR of them)
+        if (int(tile) >= ldi(pc.grp, (E + 1u) * 4u)) return;  // workgroup-uniform
+        e = uint(ldi(pc.grp, (E + 2u + tile) * 4u));
+        seg0 = uint(ldi(pc.grp, e * 4u));
+        rows = min(uint(ldi(pc.grp, (e + 1u) * 4u)) - seg0, uint(MR));
+    }
+    const uint k = pc.k, n = pc.n, blocks = k / 16u;
+    const uint j = lid % G, gc = lid / G;
+    const uint col = gl_WorkGroupID.x * COLS + gc;  // n % 64 == 0: every column exists
+    const uint w_row = e * n + col;
+    const uint wb = w_row * (k / 2u), sb = w_row * (k / 16u);
+
+    lut[lid] = e2m1_pair(lid);
+    if (lid < MR) {
+        int src = 0;
+        if (lid < rows) src = pc.a_div != 0u ? ldi(pc.perm, (seg0 + lid) * 4u) / int(pc.a_div) : int(seg0 + lid);
+        a_row[lid] = src;
+    }
+    barrier();
+    const uint kw = k / 8u;  // code words (8 codes) per activation row
+    for (uint idx = lid; idx < rows * kw; idx += WG) {
+        const uint r = idx / kw, wd = idx % kw;
+        const uint w = ld4(pc.a_codes, uint(a_row[r]) * (k / 2u) + wd * 4u);
+        a_s8[r * (KMAX / 4) + 2u * wd] = unpack_lo(w);
+        a_s8[r * (KMAX / 4) + 2u * wd + 1u] = unpack_hi(w);
+    }
+    for (uint idx = lid; idx < rows * blocks; idx += WG) {
+        const uint r = idx / blocks, b = idx % blocks;
+        a_sf[r * (KMAX / 16) + b] = e4m3_to_float(ld1(pc.a_scales, uint(a_row[r]) * (k / 16u) + b));
+    }
+    barrier();
+
+    precise float acc0 = 0.0, acc1 = 0.0;  // row j's chains (gate, up)
+    const uint nsteps = (blocks + SPB - 1u) / SPB;
+    for (uint s0 = 0u; s0 < nsteps; s0 += U) {
+        uvec4 q0[U], q1[U];
+        uint c0[U], c1[U];
+        [[unroll]] for (uint u = 0u; u < U; ++u) {
+            const uint blk = (s0 + u) * SPB + 2u * j;
+            q0[u] = uvec4(0u); q1[u] = uvec4(0u); c0[u] = 0u; c1[u] = 0u;
+            if (s0 + u < nsteps && blk < blocks) {
+                q0[u] = ld16(pc.w0, wb + blk * 8u);
+                c0[u] = ld2(pc.s0, sb + blk);
+#if GLU
+                q1[u] = ld16(pc.w1, wb + blk * 8u);
+                c1[u] = ld2(pc.s1, sb + blk);
+#endif
+            }
+        }
+        [[unroll]] for (uint u = 0u; u < U; ++u) {
+            const uint s = s0 + u;
+            if (s >= nsteps) break;  // uniform
+            const uint blk = s * SPB + 2u * j;
+            const bool valid = blk < blocks;
+            uint w0[8], w1[8];
+            w0[0] = unpack_lo(q0[u].x); w0[1] = unpack_hi(q0[u].x); w0[2] = unpack_lo(q0[u].y); w0[3] = unpack_hi(q0[u].y);
+            w0[4] = unpack_lo(q0[u].z); w0[5] = unpack_hi(q0[u].z); w0[6] = unpack_lo(q0[u].w); w0[7] = unpack_hi(q0[u].w);
+            const float ws0a = e4m3_to_float(c0[u] & 0xFFu), ws0b = e4m3_to_float(c0[u] >> 8);
+#if GLU
+            w1[0] = unpack_lo(q1[u].x); w1[1] = unpack_hi(q1[u].x); w1[2] = unpack_lo(q1[u].y); w1[3] = unpack_hi(q1[u].y);
+            w1[4] = unpack_lo(q1[u].z); w1[5] = unpack_hi(q1[u].z); w1[6] = unpack_lo(q1[u].w); w1[7] = unpack_hi(q1[u].w);
+            const float ws1a = e4m3_to_float(c1[u] & 0xFFu), ws1b = e4m3_to_float(c1[u] >> 8);
+#endif
+            if (valid) {
+                [[unroll]] for (uint r = 0u; r < MR; ++r) {
+                    if (r < rows) {
+                        const uint ab = r * (KMAX / 4) + blk * 4u;
+                        const int ia = sdot4x8(w0[0], a_s8[ab], 0) + sdot4x8(w0[1], a_s8[ab + 1u], 0) +
+                                       sdot4x8(w0[2], a_s8[ab + 2u], 0) + sdot4x8(w0[3], a_s8[ab + 3u], 0);
+                        const int ib = sdot4x8(w0[4], a_s8[ab + 4u], 0) + sdot4x8(w0[5], a_s8[ab + 5u], 0) +
+                                       sdot4x8(w0[6], a_s8[ab + 6u], 0) + sdot4x8(w0[7], a_s8[ab + 7u], 0);
+                        const float asa = a_sf[r * (KMAX / 16) + blk], asb = a_sf[r * (KMAX / 16) + blk + 1u];
+                        const uint tbase = ((gc * MR + r) * NW) * SPB + 2u * j;
+                        tb[tbase] = float(ia) * (asa * ws0a);
+                        tb[tbase + 1u] = float(ib) * (asb * ws0b);
+#if GLU
+                        const int ja = sdot4x8(w1[0], a_s8[ab], 0) + sdot4x8(w1[1], a_s8[ab + 1u], 0) +
+                                       sdot4x8(w1[2], a_s8[ab + 2u], 0) + sdot4x8(w1[3], a_s8[ab + 3u], 0);
+                        const int jb = sdot4x8(w1[4], a_s8[ab + 4u], 0) + sdot4x8(w1[5], a_s8[ab + 5u], 0) +
+                                       sdot4x8(w1[6], a_s8[ab + 6u], 0) + sdot4x8(w1[7], a_s8[ab + 7u], 0);
+                        tb[tbase + SPB] = float(ja) * (asa * ws1a);
+                        tb[tbase + SPB + 1u] = float(jb) * (asb * ws1b);
+#endif
+                    }
+                }
+            }
+            subgroupMemoryBarrierShared();
+            subgroupBarrier();
+            if (j < rows) {
+                const uint nb = min(uint(SPB), blocks - s * SPB);
+                const uint tbase = ((gc * MR + j) * NW) * SPB;
+                for (uint q = 0u; q < nb; ++q) {
+                    acc0 = acc0 + tb[tbase + q];
+#if GLU
+                    acc1 = acc1 + tb[tbase + SPB + q];
+#endif
+                }
+            }
+            subgroupMemoryBarrierShared();
+            subgroupBarrier();
+        }
+    }
+    if (j < rows) {
+        const float alpha = ldf(pc.alphas, e * 4u);
+        precise float g0 = rbf((acc0 * 0.25) * alpha);
+        float res = g0;
+#if GLU
+        precise float up = rbf((acc1 * 0.25) * alpha);
+        res = silu_mul(g0, up);
+#endif
+        st2(pc.out_, ((seg0 + j) * n + col) * 2u, f2bf(res));
+    }
+}

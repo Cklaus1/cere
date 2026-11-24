@@ -1,0 +1,109 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#if STAGE == 0
+#define WG 1024
+#else
+#define WG 256
+#endif
+#include "k12_common.comp"
+// VulkanAmd P2 K12 draw (D4 inverse CDF over the kept ids in id order), STAGE 0 = the chunk prefix (one 1024-thread workgroup:
+// fp64 kept mass of each of the 1024 contiguous id chunks in id order, then prefix[c] = the chunks before c added in chunk
+// order; prefix[1024] = S, last kept id), STAGE 1 = the draws (one thread each: u from `us` (fp64) or, SEEDED, the murmur counter
+// u = uniform(first_seed + j, key, 0, 1); target = u * S; the last chunk whose prefix <= target, then the fp64 running sum in id
+// order against target; the first id exceeding it, else the last kept id). Only IEEE adds / one multiply: equal to sampler_ref::draw.
+#if STAGE == 0
+layout(local_size_x = 1024) in;
+#else
+layout(local_size_x = 256) in;
+#endif
+layout(push_constant, std430) uniform PC {
+    uint64_t probs, mask, scratch, us, ids, first_seed;
+    uint vocab, key, n, pad;
+} pc;
+uint chunk_len() { return (pc.vocab + kChunks - 1u) / kChunks; }
+#if STAGE == 0
+shared double sums[1024];
+shared double cum[1025];
+shared uint order_[1024];
+shared uint warp_n[32];
+shared uint last_kept;
+void main() {
+    const uint c = gl_LocalInvocationID.x;
+    const uint lane = c & 31u;
+    if (c == 0u) last_kept = 0u;
+    const uint len = chunk_len();
+    const uint i0 = min(pc.vocab, c * len);
+    const uint i1 = min(pc.vocab, i0 + len);
+    double s = 0.0LF;
+    uint l = NONE;
+    for (uint i = i0; i < i1;) {  // id order; an empty mask word is skipped whole
+        const uint word = ldu(pc.mask, i >> 5);
+        if (word == 0u) { i = (i | 31u) + 1u; continue; }
+        if (((word >> (i & 31u)) & 1u) != 0u) {
+            s = s + double(ldf(pc.probs, i));
+            l = i;
+        }
+        ++i;
+    }
+    sums[c] = s;
+    const bool nonempty = s != 0.0LF;
+    const uvec4 bal = subgroupBallot(nonempty);
+    if (lane == 0u) warp_n[c >> 5] = uint(bitCount(bal.x));
+    barrier();
+    if (l != NONE) atomicMax(last_kept, l);
+    uint before = uint(bitCount(bal.x & ((1u << lane) - 1u)));
+    uint count = 0u;
+    for (uint x = 0u; x < 32u; ++x) {
+        if (x < (c >> 5)) before += warp_n[x];
+        count += warp_n[x];
+    }
+    if (nonempty) order_[before] = c;
+    barrier();
+    if (c == 0u) {
+        double acc = 0.0LF;
+        cum[0] = acc;
+        for (uint j = 0u; j < count; ++j) {
+            acc = acc + sums[order_[j]];
+            cum[j + 1u] = acc;
+        }
+    }
+    barrier();
+    std_(pc.scratch, c, cum[before]);
+    if (c == 0u) {
+        std_(pc.scratch, kChunks, cum[count]);
+        stu(pc.scratch + uint64_t(D_LAST), 0u, last_kept);
+    }
+}
+#else
+void main() {
+    const uint j = gl_GlobalInvocationID.x;
+    if (j >= pc.n) return;
+#if SEEDED
+    const double u = uniform_u(pc.first_seed + uint64_t(j), pc.key, 0u, 1u);
+#else
+    const double u = ldd(pc.us, j);
+#endif
+    const double target = u * ldd(pc.scratch, kChunks);
+    // The last chunk whose kept mass before it is <= target: no earlier id can exceed target.
+    uint lo = 0u, hi = kChunks - 1u;
+    while (lo < hi) {
+        const uint mid = (lo + hi + 1u) / 2u;
+        if (ldd(pc.scratch, mid) <= target) lo = mid; else hi = mid - 1u;
+    }
+    const uint len = chunk_len();
+    for (uint c = lo; c < kChunks; ++c) {
+        double acc = ldd(pc.scratch, c);
+        const uint i1 = min(pc.vocab, (c + 1u) * len);
+        for (uint i = c * len; i < i1;) {  // id order; an empty mask word is skipped whole
+            const uint word = ldu(pc.mask, i >> 5);
+            if (word == 0u) { i = (i | 31u) + 1u; continue; }
+            if (((word >> (i & 31u)) & 1u) != 0u) {
+                acc = acc + double(ldf(pc.probs, i));
+                if (acc > target) { stu(pc.ids, j, i); return; }
+            }
+            ++i;
+        }
+    }
+    stu(pc.ids, j, ldu(pc.scratch + uint64_t(D_LAST), 0u));  // u * S at or above the scanned total
+}
+#endif

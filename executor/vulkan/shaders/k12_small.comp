@@ -1,0 +1,24 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define WG 64
+#include "k12_common.comp"
+// VulkanAmd P2 K12: finalize (STAGE 0, one invocation), count_commit (STAGE 1: counts[ids[i]] += 1 for i < n).
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC { uint64_t a, b, c, d; uint n; } pc;
+void main() {
+#if STAGE == 0
+    // a = processed, b = top2 ids, c = drawn (0 = none), d = cere_token_score out (id, runner_up, logit, runner_up_logit)
+    if (gl_GlobalInvocationID.x != 0u) return;
+    const uint top0 = ldu(pc.b, 0u), top1 = ldu(pc.b, 1u);
+    const uint id = pc.c != 0ul ? ldu(pc.c, 0u) : top0;
+    const uint ru = id == top0 ? top1 : top0;
+    stu(pc.d, 0u, id);
+    stu(pc.d, 1u, ru);
+    stf(pc.d, 2u, ldf(pc.a, id));
+    stf(pc.d, 3u, ldf(pc.a, ru));
+#else
+    // a = counts, b = ids
+    const uint i = gl_GlobalInvocationID.x;
+    if (i < pc.n) atomicAdd(U1(pc.a + uint64_t(ldu(pc.b, i) * 4u)).v, 1u);
+#endif
+}

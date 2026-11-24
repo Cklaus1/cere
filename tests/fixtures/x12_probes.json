@@ -1,0 +1,61 @@
+{
+  "about": "The validator probes of X12, the fail-closed phase of scripts/live/native_parity.py (tasks/m22-spec.md X12; O34, O51): each sets `fields` on the harness's parity request (model, messages, max_tokens, temperature 0, stream false) and must get HTTP 400 with `code` at `param` from the native profile's validator, leaving native_submissions unchanged. The harness sends them in this order, then its over-length probe (context_length_exceeded). Each probe is outside the native subset today; `outside` names the validate.rs check and the capabilities field that keep it there. Checked against the real validator on configs/runtime/native-g0.toml and the snapshot profile (crates/cere-runtime/tests/back_validate.rs x12_probes_are_refused_by_the_shipped_native_profiles) and against their capabilities files (tests/test_native_parity.py test_x12_probes_each_set_a_field_the_capabilities_do_not_serve).",
+  "probes": [
+    {
+      "name": "n_17",
+      "fields": {"n": 17},
+      "code": "unsupported_parameter",
+      "param": "n",
+      "outside": "n above the profile's rows: ChatPolicy max_choices = decode_batch_max (16 since tasks/m23-spec.md P8; the snapshot profile 1), m26 D11"
+    },
+    {
+      "name": "top_logprobs_21",
+      "fields": {"logprobs": true, "top_logprobs": 21},
+      "code": "invalid_value",
+      "param": "top_logprobs",
+      "outside": "top_logprobs above max_top_logprobs (20), M2.7 D12"
+    },
+    {
+      "name": "min_tokens_1",
+      "fields": {"min_tokens": 1},
+      "code": "unsupported_parameter",
+      "param": "min_tokens",
+      "outside": "min_tokens: not in token_controls, and refused on every native profile (ChatPolicy::min_tokens, M2.12 D10)"
+    },
+    {
+      "name": "response_format_structural_tag",
+      "fields": {"response_format": {"type": "structural_tag", "structures": [], "triggers": []}},
+      "code": "unsupported_parameter",
+      "param": "response_format.type",
+      "outside": "structural_tag: not in structured_outputs (constraint::response_format, M2.8 D3)"
+    },
+    {
+      "name": "json_schema_pattern_properties",
+      "fields": {"response_format": {"type": "json_schema", "json_schema": {"name": "x12", "schema": {"type": "object", "patternProperties": {}}}}},
+      "code": "invalid_value",
+      "param": "response_format.json_schema.schema",
+      "outside": "patternProperties: not in json_schema_keywords (constraint::walk_schema, M2.8 D5)"
+    },
+    {
+      "name": "image_url_part",
+      "fields": {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:,"}}]}]},
+      "code": "unsupported_parameter",
+      "param": "messages[0].content[0]",
+      "outside": "image input: modalities [text], no image decode combination (ImageBudget::admit, m213 D5)"
+    },
+    {
+      "name": "input_audio_part",
+      "fields": {"messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": "", "format": "wav"}}]}]},
+      "code": "unsupported_parameter",
+      "param": "messages[0].content[0].type",
+      "outside": "audio input: modalities [text]; content part types are text and image_url (content_part, m213 D2)"
+    },
+    {
+      "name": "functions",
+      "fields": {"functions": [{"name": "x12", "parameters": {"type": "object"}}]},
+      "code": "unsupported_parameter",
+      "param": "functions",
+      "outside": "a deprecated OpenAI field validate.rs refuses with its remedy (REJECTED_FIELDS; `user` is inert since tasks/api-lenient-spec.md D1)"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P4-A: what the cooperative-matrix prefill attention relies on, measured on the device (k6_test prints it):
+//  out[0]: the FP16 bits of f16(2^-20) converted in the shader (0x0010 when FP16 subnormals survive the conversion);
+//  out[1]: float bits of coopMatMulAdd(A = 2^-20 everywhere, B = 1, 0)[element 0] (16 * 2^-20 = 2^-16 when the matrix
+//          unit keeps FP16 subnormal operands, 0 when it flushes them);
+//  out[2]: float bits of the same with A = 2^-14 (the smallest normal; 2^-10 expected);
+//  out[3]: the accumulator's length() (8 on a subgroup of 32).
+#include "p4att_common.comp"
+
+layout(local_size_x = 32) in;
+layout(push_constant, std430) uniform PC { uint64_t out_; } pc;
+shared uvec4 AS[32];
+shared uvec4 BS[32];
+
+void main() {
+    const uint l = gl_SubgroupInvocationID;
+    const float sub = ldexp(1.0, -20), nrm = ldexp(1.0, -14);
+    const uint hs = packFloat2x16(f16vec2(sub, sub)), hn = packFloat2x16(f16vec2(nrm, nrm)), h1 = packFloat2x16(f16vec2(1.0, 1.0));
+    AS[l] = uvec4(hs);
+    BS[l] = uvec4(h1);
+    memoryBarrierShared();
+    barrier();
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> a;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> b;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    coopMatLoad(a, AS, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(b, BS, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    c = coopMatMulAdd(a, b, c);
+    const float r1 = c[0];
+    barrier();
+    AS[l] = uvec4(hn);
+    memoryBarrierShared();
+    barrier();
+    coopMatLoad(a, AS, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    c = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+    c = coopMatMulAdd(a, b, c);
+    if (l == 0u) {
+        P4W1(pc.out_).v = hs & 0xFFFFu;
+        P4W1(pc.out_ + 4ul).v = floatBitsToUint(r1);
+        P4W1(pc.out_ + 8ul).v = floatBitsToUint(c[0]);
+        P4W1(pc.out_ + 12ul).v = uint(c.length());
+    }
+}

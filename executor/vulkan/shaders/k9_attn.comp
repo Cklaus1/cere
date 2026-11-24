@@ -1,0 +1,322 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: sparse GQA (contract executor/cuda/src/kernels/k9_qsa.h qsa_attention), per device:
+//   out[t, h] = softmax_j(q[t, h] . K[indices[t, j]] * scale) V[indices[t, j]] over the valid (>= 0) entries j of the
+//   row's 2,051 entries, zeros for a row without one; KV head h / 12; FP32 scores, softmax and accumulation.
+// K/V: BF16 rows (FP8 0; position j at row j; row strides in bytes) or the FP8 E4M3 cache (FP8 1; scale 1.0; position
+// j at row slots[j], j when slots is 0), both decoded exactly to FP32 in the shader.
+//
+// The row's entries are cut into fixed tiles of TS = 64 entries at offsets 0, 64, .., 2,048 (33 tiles; the last holds
+// 3). Per tile (12 query heads of KV head g, 256 threads):
+//   rows:    entry e -> its K/V row (-1 for an invalid entry: never read);
+//   scores:  thread (entry tid % 64, heads 3 (tid / 64) ..): dot = FMA chain over d ascending from 0, s = dot * (scale
+//            * log2 e) (one rounding), -inf for an invalid entry;
+//   softmax: per head, 16 lanes x 4 entries: mx = tile max (exact), then
+//            SPLIT 1: m = mx, p = exp2(s - m), l = sum p (16 lanes in entry order, then the xor butterfly 8, 4, 2, 1);
+//            SPLIT 0: m_new = max(m, mx), alpha = exp2(m - m_new), p = exp2(s - m_new), l = fma(l, alpha, sum p);
+//   P.V:     thread (DPT dims, PVH heads; PVH x DPT = 12): acc *= alpha (SPLIT 0), then acc = fma(p_j, v_j, acc) over
+//            the tile's valid entries ascending (invalid entries are skipped: no V read); p is kept [entry][head].
+// FP8 rows path with a decoded copy (k9_kvcopy.comp, cap > 0): positions below cap read the BF16 copy, the others the
+// E4M3 cache; both decode to the same FP32 values, so the bits do not depend on the copy.
+// A tile without a valid entry is skipped (SPLIT 0: a no-op; SPLIT 1: partial (o 0, m -inf, l 0)).
+// SPLIT 1 (calls of <= 16 rows: decode, verify, MTP extend): workgroup (tile s, KV head g, row t) writes the partial
+//   (o, m, l) of tile s; k9_combine.comp merges the 33 tiles in ascending order. The tiles are fixed offsets of the
+//   row's own entry list, so a row's bits depend on its q row and its entries only: a verify chain's row t equals the
+//   one-row call on row t, and any partition of a call's rows gives the same bytes.
+// SPLIT 0 (calls of > 16 rows: prefill): workgroup (row t, KV head g) runs the 33 tiles in order with the online
+//   softmax above; out = bf16(acc / l). Per-row by construction too (a row's bits never depend on other rows).
+// FALLBACK 1 (with SPLIT 0; P4-A, the exact fallback of the cooperative-matrix path p4att_sparse.comp): a workgroup
+// whose flag words (t * 2 + g) * 3 + 0..2 are all 0 returns at once; the others run unchanged, so a flagged row's bits are this path's.
+// PVH (3, 6, 12) only changes which thread owns which (head, dim) accumulator: every accumulator's FMA sequence is the
+// same, so every PVH writes the same bytes (qsa_attention_heads' rows_heads).
+#include "k9_common.comp"
+
+#ifndef FP8
+#define FP8 0
+#endif
+#ifndef SPLIT
+#define SPLIT 1
+#endif
+#ifndef PVH
+#define PVH 3
+#endif
+#ifndef FALLBACK
+#define FALLBACK 0
+#endif
+#define NT 256
+#define D 256
+#define GROUP 12
+#define QHEADS 24
+#ifndef TS
+#define TS 64
+#endif
+#define RW 2051
+#define NTILES ((RW + TS - 1) / TS)   // 33
+#define HPT (GROUP * TS / NT)         // 3 heads per thread in the score phase
+#define PER (TS / 16)                 // entries per lane in the softmax phase
+#define DPT (GROUP / PVH)             // dims per thread in the P.V phase
+#define HG (GROUP / PVH)              // ... and head groups: NT / (D / DPT) == HG
+#if (NT / (D / DPT)) != (GROUP / PVH)
+#error "unsupported PVH"
+#endif
+
+layout(local_size_x = NT) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, idx, k, v, slots, out_or_po, pml;  // SPLIT 1: partials (o at po, (m, l) at pml); SPLIT 0: BF16 out
+    uint64_t kb, vb;                                  // FP8: the call's decoded BF16 K / V copy [position, 512] (k9_kvcopy.comp)
+    uint q_stride, out_stride, kstride, vstride;      // q/out strides in elements, K/V row strides in bytes
+    float sl2;                                        // scale * log2(e)
+    uint cap;                                         // FP8: positions < cap read the copy (0: no copy)
+#if FALLBACK
+    uint64_t flags;                                   // P4-A: the coopmat path's per (row, KV head) flags
+#endif
+} pc;
+
+shared float QS[GROUP * D];
+shared float SS[GROUP * TS];
+shared float PS[GROUP * TS];  // the probabilities [entry][head] (a thread's P.V heads contiguous)
+shared int ROWS[TS];
+shared float ALPHA[GROUP];
+shared uint ANY;
+shared uint MIXED;  // FP8: some valid entry of the tile reads the E4M3 cache (not the copy)
+
+// Entry codes in ROWS: -1 invalid; >= 0 a row of the K/V source; FP8 only: <= -2 position -code - 2 of the call's
+// decoded BF16 copy (the same exact values as the E4M3 decode, so the same bits whichever source an entry takes).
+void bf16x16(uint64_t a, out float f[16]) {
+    const uvec4 r0 = V4(a).v, r1 = V4(a + 16ul).v;
+    f = float[16](bflo(r0.x), bfhi(r0.x), bflo(r0.y), bfhi(r0.y), bflo(r0.z), bfhi(r0.z), bflo(r0.w), bfhi(r0.w),
+                  bflo(r1.x), bfhi(r1.x), bflo(r1.y), bfhi(r1.y), bflo(r1.z), bfhi(r1.z), bflo(r1.w), bfhi(r1.w));
+}
+// K elements 16 c .. 16 c + 15 of KV head g of entry `row`
+void k16(int row, uint g, uint c, bool mixed, out float kf[16]) {
+#if FP8
+    if (mixed && row >= 0) {
+        const uvec4 r = V4(pc.k + uint64_t(uint(row) * pc.kstride + g * D + c * 16u)).v;
+        const uint wv[4] = uint[4](r.x, r.y, r.z, r.w);
+        [[unroll]] for (int e = 0; e < 16; ++e) kf[e] = e4m3((wv[e / 4] >> (8 * (e % 4))) & 0xFFu);
+    } else {
+        bf16x16(pc.kb + uint64_t((uint(-row - 2) * (2u * D) + g * D + c * 16u) * 2u), kf);
+    }
+#else
+    bf16x16(pc.k + uint64_t(uint(row) * pc.kstride + (g * D + c * 16u) * 2u), kf);
+#endif
+}
+// V elements d0 .. d0 + DPT - 1 of KV head g of entry `row`
+void vdpt(int row, uint g, uint d0, bool mixed, out float vf[DPT]) {
+#if FP8
+    if (mixed && row >= 0) {
+        const uint64_t a = pc.v + uint64_t(uint(row) * pc.vstride + g * D + d0);
+#if DPT == 4
+        const uint r = U1(a).v;
+        vf = float[4](e4m3(r & 0xFFu), e4m3((r >> 8) & 0xFFu), e4m3((r >> 16) & 0xFFu), e4m3(r >> 24));
+#elif DPT == 2
+        const uint r = uint(H1(a).v);
+        vf = float[2](e4m3(r & 0xFFu), e4m3(r >> 8));
+#else
+        vf = float[1](e4m3(uint(B1(a).v)));
+#endif
+        return;
+    }
+    const uint64_t a = pc.vb + uint64_t((uint(-row - 2) * (2u * D) + g * D + d0) * 2u);
+#else
+    const uint64_t a = pc.v + uint64_t(uint(row) * pc.vstride + (g * D + d0) * 2u);
+#endif
+#if DPT == 4
+    const uvec2 r = V2(a).v;
+    vf = float[4](bflo(r.x), bfhi(r.x), bflo(r.y), bfhi(r.y));
+#elif DPT == 2
+    const uint r = U1(a).v;
+    vf = float[2](bflo(r), bfhi(r));
+#else
+    vf = float[1](bf(H1(a).v));
+#endif
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+#if SPLIT
+    const uint s0 = gl_WorkGroupID.x, g = gl_WorkGroupID.y, t = gl_WorkGroupID.z;
+#else
+    const uint t = gl_WorkGroupID.x, g = gl_WorkGroupID.y;
+#endif
+#if FALLBACK
+    {
+        const uint64_t fa = pc.flags + uint64_t((t * 2u + g) * 12u);
+        if ((U1(fa).v | U1(fa + 4ul).v | U1(fa + 8ul).v) == 0u) return;  // uniform
+    }
+#endif
+    const uint64_t irow = pc.idx + uint64_t(t * RW * 4u);
+    // q rows of the 12 heads (exact BF16 widening), 8 per load
+    for (uint i = tid; i < GROUP * D / 8u; i += NT) {
+        const uint h = i / (D / 8u), c = (i % (D / 8u)) * 8u;
+        const uvec4 r = V4(pc.q + uint64_t((t * pc.q_stride + (g * GROUP + h) * D + c) * 2u)).v;
+        const uint o = h * D + c;
+        QS[o + 0] = bflo(r.x); QS[o + 1] = bfhi(r.x); QS[o + 2] = bflo(r.y); QS[o + 3] = bfhi(r.y);
+        QS[o + 4] = bflo(r.z); QS[o + 5] = bfhi(r.z); QS[o + 6] = bflo(r.w); QS[o + 7] = bfhi(r.w);
+    }
+    // P.V thread layout and accumulators
+    const uint dg = tid % (D / DPT), hq = tid / (D / DPT);
+    float acc[PVH][DPT];
+    [[unroll]] for (int i = 0; i < PVH; ++i) [[unroll]] for (int e = 0; e < DPT; ++e) acc[i][e] = 0.0;
+#if !SPLIT
+    float m_run = f_ninf(), l_run = 0.0;  // softmax state of head tid / 16 (threads < 192), held by its 16 lanes
+#endif
+    float m_out = f_ninf(), l_out = 0.0;
+
+#if SPLIT
+    for (uint s = s0; s == s0; ++s) {
+#else
+    for (uint s = 0u; s < NTILES; ++s) {
+#endif
+        const uint e0 = s * TS, n = min(uint(RW) - e0, uint(TS));
+        if (tid == 0u) { ANY = 0u; MIXED = 0u; }
+        memoryBarrierShared();
+        barrier();
+        if (tid < TS) {
+            int row = -1;
+            if (tid < n) {
+                const int j = I1(irow + uint64_t((e0 + tid) * 4u)).v;
+                if (j >= 0) {
+#if FP8
+                    row = uint(j) < pc.cap ? -j - 2 : pc.slots != 0ul ? int(L1(pc.slots + uint64_t(uint(j) * 8u)).v) : j;
+                    if (row >= 0) MIXED = 1u;
+#else
+                    row = j;
+#endif
+                    ANY = 1u;
+                }
+            }
+            ROWS[tid] = row;
+        }
+        memoryBarrierShared();
+        barrier();
+        if (ANY == 0u) continue;  // uniform: no valid entry in this tile
+        const bool mixed = MIXED != 0u;  // uniform: false when the copy serves every valid entry
+
+        {   // scores: thread (entry j, heads 3 hg .. 3 hg + 2)
+            const uint j = tid % TS, hg = tid / TS;
+            const int row = ROWS[j];
+            float dot[HPT];
+            [[unroll]] for (int i = 0; i < HPT; ++i) dot[i] = 0.0;
+            if (row != -1) {
+                [[unroll]] for (uint c = 0; c < D / 16u; ++c) {
+                    float kf[16];
+                    k16(row, g, c, mixed, kf);
+                    [[unroll]] for (int i = 0; i < HPT; ++i) {
+                        precise float a = dot[i];
+                        const uint qo = (hg * HPT + uint(i)) * D + c * 16u;
+                        [[unroll]] for (int e = 0; e < 16; ++e) a = fma(QS[qo + e], kf[e], a);
+                        dot[i] = a;
+                    }
+                }
+            }
+            [[unroll]] for (int i = 0; i < HPT; ++i) {
+                precise float sc = dot[i] * pc.sl2;
+                SS[(hg * HPT + uint(i)) * TS + j] = row != -1 ? sc : f_ninf();
+            }
+        }
+        memoryBarrierShared();
+        barrier();
+
+        if (tid < GROUP * 16u) {  // softmax of head h: 16 lanes x PER entries
+            const uint h = tid / 16u, sub = tid % 16u, j0 = h * TS + sub * PER;
+            float mx = f_ninf();
+            [[unroll]] for (int i = 0; i < PER; ++i) mx = max(mx, SS[j0 + i]);
+            [[unroll]] for (uint o = 8u; o >= 1u; o /= 2u) mx = max(mx, subgroupShuffleXor(mx, o));
+#if SPLIT
+            const float mn = mx;
+#else
+            const float mn = max(m_run, mx);  // finite: the tile has a valid entry
+            precise float dm = m_run - mn;
+            const float alpha = exp2(dm);     // m_run -inf (first tile): 0
+#endif
+            precise float sum = 0.0;
+            [[unroll]] for (int i = 0; i < PER; ++i) {
+                precise float d = SS[j0 + i] - mn;
+                const float p = exp2(d);  // invalid entries: exp2(-inf) = 0
+                PS[(sub * PER + uint(i)) * GROUP + h] = p;
+                sum = sum + p;
+            }
+            [[unroll]] for (uint o = 8u; o >= 1u; o /= 2u) {
+                precise float x = sum + subgroupShuffleXor(sum, o);
+                sum = x;
+            }
+#if SPLIT
+            m_out = mn; l_out = sum;
+#else
+            l_run = fma(l_run, alpha, sum);
+            m_run = mn;
+            if (sub == 0u) ALPHA[h] = alpha;
+            m_out = m_run; l_out = l_run;
+#endif
+        }
+        memoryBarrierShared();
+        barrier();
+
+        {   // P.V: thread (dims dg * DPT .., heads hq * PVH ..), valid entries ascending
+#if !SPLIT
+            [[unroll]] for (int i = 0; i < PVH; ++i) {
+                const float al = ALPHA[hq * PVH + i];
+                [[unroll]] for (int e = 0; e < DPT; ++e) {
+                    precise float a = acc[i][e] * al;
+                    acc[i][e] = a;
+                }
+            }
+#endif
+            for (uint j = 0u; j < n; ++j) {
+                const int row = ROWS[j];
+                if (row == -1) continue;  // uniform (shared)
+                float vf[DPT];
+                vdpt(row, g, dg * DPT, mixed, vf);
+                [[unroll]] for (int i = 0; i < PVH; ++i) {
+                    const float p = PS[j * GROUP + hq * PVH + uint(i)];
+                    [[unroll]] for (int e = 0; e < DPT; ++e) {
+                        precise float a = fma(p, vf[e], acc[i][e]);
+                        acc[i][e] = a;
+                    }
+                }
+            }
+        }
+#if !SPLIT
+        memoryBarrierShared();
+        barrier();  // SS / ROWS / ALPHA are rewritten by the next tile
+#endif
+    }
+
+#if SPLIT
+    // partials of tile s0: o [row t][head][tile][256] F32, (m, l) [row t][head][tile]; an empty tile: (0, -inf, 0)
+    const bool empty = ANY == 0u;
+    if (tid < GROUP * 16u && tid % 16u == 0u) {
+        const uint h = g * GROUP + tid / 16u;
+        F2(pc.pml + uint64_t((((t * QHEADS + h) * NTILES + s0) * 2u) * 4u)).v = empty ? vec2(f_ninf(), 0.0) : vec2(m_out, l_out);
+    }
+    [[unroll]] for (int i = 0; i < PVH; ++i) {
+        const uint h = g * GROUP + hq * PVH + uint(i);
+        const uint64_t po = pc.out_or_po + uint64_t((((t * QHEADS + h) * NTILES + s0) * D + dg * DPT) * 4u);
+        [[unroll]] for (int e = 0; e < DPT; ++e) F1(po + uint64_t(e * 4u)).v = empty ? 0.0 : acc[i][e];
+    }
+#else
+    // out = bf16(acc / l), 0 for a row without valid entries (l of head h is read from its softmax lanes via shared)
+    if (tid < GROUP * 16u && tid % 16u == 0u) SS[tid / 16u] = l_out;
+    memoryBarrierShared();
+    barrier();
+    [[unroll]] for (int i = 0; i < PVH; ++i) {
+        const uint hl = hq * PVH + uint(i);
+        const float l = SS[hl];
+        uint ob[DPT];
+        [[unroll]] for (int e = 0; e < DPT; ++e) {
+            precise float r = l > 0.0 ? acc[i][e] / l : 0.0;
+            ob[e] = bf16_rne(r);
+        }
+        const uint64_t oa = pc.out_or_po + uint64_t((t * pc.out_stride + (g * GROUP + hl) * D + dg * DPT) * 2u);
+#if DPT == 4
+        V2(oa).v = uvec2(ob[0] | (ob[1] << 16), ob[2] | (ob[3] << 16));
+#elif DPT == 2
+        U1(oa).v = ob[0] | (ob[1] << 16);
+#else
+        H1(oa).v = uint16_t(ob[0]);
+#endif
+    }
+#endif
+}

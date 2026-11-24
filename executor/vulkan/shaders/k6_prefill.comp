@@ -1,0 +1,278 @@
+#version 460
+// VulkanAmd P2 K6: dense causal GQA for calls of more than 16 rows (prefill), FP32 (no cooperative matrix).
+// Contract: executor/cuda/src/kernels/k6_attention.h (k6::attention), as k6_decode.comp; K/V BF16 rows (FP8 0) or the
+// FP8 E4M3 cache (FP8 1), decoded exactly to FP32.
+//
+// Workgroup (KV head g, tile of 4 tokens; the longest causal tiles first): 48 rows r = token * 12 + head, keys in steps
+// of 32 at absolute offsets 0, 32, 64, ... up to the tile's last key, K then V of a step staged in one FP32 buffer.
+// Arithmetic per (row, key) and (row, output dim), the same for every row of every call:
+//   dot = fma chain over d ascending from 0; s = dot * (scale log2 e), -inf for a key past the row's position;
+//   per step: tile max over the step's 32 keys (exact), m_new = max(m, tile max), alpha = exp2(m - m_new) (1 when
+//   m_new is -inf), p = exp2(s - m_new), sum = (p_key + p_key+16) then the xor butterfly 8, 4, 2, 1 over the 16 key
+//   lanes, l = fma(l, alpha, sum); acc = acc * alpha, then acc = fma(p_j, v_j, acc) for j ascending up to the row's
+//   last key; out = bf16(acc / l) (RNE, NaN 0x7FFF).
+// Row-partition invariance: a step past the row's last key leaves m and l exactly unchanged (tile max -inf, alpha
+// exp2(0) = 1, p 0, l = fma(l, 1, 0) = l) and its P.V is skipped; inside the row's last step the P.V loop stops at the
+// row's last key. So a row's bits are a function of its position, its q row and the keys only: the rows [a, b) of a
+// call equal the call of those rows alone at pos0 + a (the class pin), whatever the tile they share.
+// Shared memory: Q as BF16 pairs (24 KB), K/V FP32 [32][260] (33 KB), P [32][52] (6.5 KB): 64,896 B of 65,536.
+// FALLBACK 1 (P4-A, the exact fallback of the cooperative-matrix path p4att_dense.comp): the same kernel, except that
+// a workgroup none of whose tokens is flagged (flags words (t * 2 + g) * 3 + 0..2, any non-zero) returns at once and
+// only flagged tokens' rows are stored. A row's arithmetic is unchanged, so a flagged row's bits are this path's.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#ifndef FP8
+#define FP8 0
+#endif
+#ifndef FALLBACK
+#define FALLBACK 0
+#endif
+#define NT 256
+#define D 256
+#define GROUP 12
+#define QHEADS 24
+#define QW (QHEADS * D)
+#define TT 4                 // tokens per workgroup
+#define R (TT * GROUP)       // 48 rows
+#define KT 32                // keys per step
+#define KV4S 65              // padded K/V row stride in vec4 (260 floats)
+#define PS4S 13              // padded P row stride in vec4 (52 floats)
+#ifndef PVU
+#define PVU 4                // keys per P.V iteration (speed only)
+#endif
+
+layout(local_size_x = NT) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer I64 { int64_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) writeonly buffer W2 { uvec2 v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, k, v, slots, dst;
+    uint tokens, pos0, kstride, vstride;  // K/V row strides in bytes
+    float sl2;
+    uint pad;
+#if FALLBACK
+    uint64_t flags;
+#endif
+} pc;
+#if FALLBACK
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v; };
+bool flagged(uint t, uint g) {
+    const uint64_t a = pc.flags + uint64_t((t * 2u + g) * 12u);
+    return (U1(a).v | U1(a + 4ul).v | U1(a + 8ul).v) != 0u;
+}
+#endif
+
+shared uvec4 QS4[R * (D / 8)];   // q row r, dims 8 i .. 8 i + 7 as BF16 bits
+shared vec4 KV4[KT * KV4S];      // K or V of the step, FP32
+shared vec4 PS4[KT * PS4S];      // p[key][row]
+shared float AL[R];              // alpha of the step per row
+shared float LS[R];              // final l per row
+
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+float e4m3(uint b) {  // exact (see k6_decode.comp)
+    const uint a = b & 0x7Fu;
+    const float v = a == 0x7Fu ? uintBitsToFloat(0x7FC00000u)
+                  : a >= 8u    ? uintBitsToFloat((a << 20) + (120u << 23))
+                               : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v) | ((b & 0x80u) << 24));
+}
+uint bf16_rne(float x) {
+    const uint u = floatBitsToUint(x);
+    return isnan(x) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+
+#if FP8
+#define NW 2   // uvec4 per thread per step: 32 FP8 bytes
+#else
+#define NW 4   // 32 BF16
+#endif
+
+// This thread's 32 dims of key `key` (zeros at or past key_end).
+void load_kv(uint64_t base, uint stride, uint key, uint key_end, uint g, uint dc, out uvec4 r[NW]) {
+    [[unroll]] for (int i = 0; i < NW; ++i) r[i] = uvec4(0u);
+    if (key < key_end) {
+        const uint row = pc.slots != 0ul ? uint(I64(pc.slots + uint64_t(key) * 8ul).v) : key;
+#if FP8
+        const uint off = row * stride + g * D + dc;
+        [[unroll]] for (int i = 0; i < NW; ++i) r[i] = V4(base + uint64_t(off + 16u * i)).v;
+#else
+        const uint off = row * stride + (g * D + dc) * 2u;
+        [[unroll]] for (int i = 0; i < NW; ++i) r[i] = V4(base + uint64_t(off + 16u * i)).v;
+#endif
+    }
+}
+
+void store_kv(uint lk, uint dc, uvec4 r[NW]) {
+    const uint o = lk * KV4S + dc / 4u;
+#if FP8
+    [[unroll]] for (int i = 0; i < NW; ++i) {
+        const uint w[4] = uint[4](r[i].x, r[i].y, r[i].z, r[i].w);
+        [[unroll]] for (int c = 0; c < 4; ++c)
+            KV4[o + 4 * i + c] = vec4(e4m3(w[c] & 0xFFu), e4m3((w[c] >> 8) & 0xFFu), e4m3((w[c] >> 16) & 0xFFu), e4m3(w[c] >> 24));
+    }
+#else
+    [[unroll]] for (int i = 0; i < NW; ++i) {
+        KV4[o + 2 * i] = vec4(lo(r[i].x), hi(r[i].x), lo(r[i].y), hi(r[i].y));
+        KV4[o + 2 * i + 1] = vec4(lo(r[i].z), hi(r[i].z), lo(r[i].w), hi(r[i].w));
+    }
+#endif
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint g = gl_WorkGroupID.x;
+    const uint t0 = (gl_NumWorkGroups.y - 1u - gl_WorkGroupID.y) * TT;
+    const uint last_token = min(t0 + TT, pc.tokens) - 1u;
+    const uint key_end = pc.pos0 + last_token + 1u;
+    const float NEG_INF = uintBitsToFloat(0xFF800000u);
+#if FALLBACK
+    {
+        bool any = false;
+        for (uint t = t0; t <= last_token; ++t) any = any || flagged(t, g);
+        if (!any) return;  // uniform
+    }
+#endif
+
+    const uint lk = tid / 8u, dc = (tid % 8u) * 32u;  // loader: key lk of the step, dims dc .. dc + 31
+    uvec4 kr[NW], vr[NW];
+    load_kv(pc.k, pc.kstride, lk, key_end, g, dc, kr);
+    load_kv(pc.v, pc.vstride, lk, key_end, g, dc, vr);
+
+    for (uint i = tid; i < R * (D / 8); i += NT) {  // q tile (rows past the last token repeat it; never stored)
+        const uint r = i / (D / 8), c = (i % (D / 8)) * 8u;
+        const uint t = min(t0 + r / GROUP, last_token);
+        QS4[i] = V4(pc.q + uint64_t((t * QW + (g * GROUP + r % GROUP) * D + c) * 2u)).v;
+    }
+
+    // score thread: rows lrg + 16 m (m 0..2), keys kg and kg + 16 of the step
+    const uint lrg = tid / 16u, kg = tid % 16u;
+    uint rpos[3];
+    [[unroll]] for (int m = 0; m < 3; ++m) rpos[m] = pc.pos0 + min(t0 + (lrg + 16u * m) / GROUP, last_token);
+    float mrow[3], lrow[3];
+    [[unroll]] for (int m = 0; m < 3; ++m) { mrow[m] = NEG_INF; lrow[m] = 0.0; }
+    // P.V thread: the 12 rows of token tq (= its 12 heads), dims 4 dq .. 4 dq + 3
+    const uint tq = tid / 64u, dq = tid % 64u;
+    const bool pv_live = t0 + tq < pc.tokens;
+    const uint pv_last = pc.pos0 + t0 + tq;  // this token's last key
+    float acc[GROUP][4];
+    [[unroll]] for (int i = 0; i < GROUP; ++i) [[unroll]] for (int e = 0; e < 4; ++e) acc[i][e] = 0.0;
+
+    for (uint key0 = 0; key0 < key_end; key0 += KT) {
+        const bool more = key0 + KT < key_end;
+        memoryBarrierShared();
+        barrier();  // the previous step's P.V reads of KV4 are done
+        store_kv(lk, dc, kr);
+        if (more) load_kv(pc.k, pc.kstride, key0 + KT + lk, key_end, g, dc, kr);
+        memoryBarrierShared();
+        barrier();
+
+        {   // scores and the online softmax of rows lrg + 16 m
+            float dot[3][2];
+            [[unroll]] for (int m = 0; m < 3; ++m) { dot[m][0] = 0.0; dot[m][1] = 0.0; }
+            for (uint d0 = 0; d0 < D; d0 += 8u) {
+                const vec4 ka0 = KV4[kg * KV4S + d0 / 4u], ka1 = KV4[kg * KV4S + d0 / 4u + 1u];
+                const vec4 kb0 = KV4[(kg + 16u) * KV4S + d0 / 4u], kb1 = KV4[(kg + 16u) * KV4S + d0 / 4u + 1u];
+                const float ka[8] = float[8](ka0.x, ka0.y, ka0.z, ka0.w, ka1.x, ka1.y, ka1.z, ka1.w);
+                const float kb[8] = float[8](kb0.x, kb0.y, kb0.z, kb0.w, kb1.x, kb1.y, kb1.z, kb1.w);
+                [[unroll]] for (int m = 0; m < 3; ++m) {
+                    const uvec4 qr = QS4[(lrg + 16u * m) * (D / 8) + d0 / 8u];
+                    const float qf[8] = float[8](lo(qr.x), hi(qr.x), lo(qr.y), hi(qr.y), lo(qr.z), hi(qr.z), lo(qr.w), hi(qr.w));
+                    precise float a0 = dot[m][0], a1 = dot[m][1];
+                    [[unroll]] for (int e = 0; e < 8; ++e) { a0 = fma(qf[e], ka[e], a0); a1 = fma(qf[e], kb[e], a1); }
+                    dot[m][0] = a0; dot[m][1] = a1;
+                }
+            }
+            [[unroll]] for (int m = 0; m < 3; ++m) {
+                const uint r = lrg + 16u * m;
+                precise float sc0 = dot[m][0] * pc.sl2, sc1 = dot[m][1] * pc.sl2;
+                const float s0 = key0 + kg <= rpos[m] ? sc0 : NEG_INF;
+                const float s1 = key0 + kg + 16u <= rpos[m] ? sc1 : NEG_INF;
+                float tmax = max(s0, s1);
+                [[unroll]] for (uint o = 8; o >= 1u; o /= 2u) tmax = max(tmax, subgroupShuffleXor(tmax, o));
+                const float m_new = max(mrow[m], tmax);
+                const bool empty = m_new == NEG_INF;
+                precise float d0 = s0 - m_new, d1 = s1 - m_new, dm = mrow[m] - m_new;
+                const float p0 = empty ? 0.0 : exp2(d0);
+                const float p1 = empty ? 0.0 : exp2(d1);
+                const float alpha = empty ? 1.0 : exp2(dm);
+                precise float sum = p0 + p1;
+                [[unroll]] for (uint o = 8; o >= 1u; o /= 2u) {
+                    precise float x = sum + subgroupShuffleXor(sum, o);
+                    sum = x;
+                }
+                precise float ln = fma(lrow[m], alpha, sum);
+                lrow[m] = ln;
+                mrow[m] = m_new;
+                PS4[kg * PS4S + r / 4u][r % 4u] = p0;
+                PS4[(kg + 16u) * PS4S + r / 4u][r % 4u] = p1;
+                if (kg == 0u) AL[r] = alpha;
+            }
+        }
+        memoryBarrierShared();
+        barrier();
+        store_kv(lk, dc, vr);  // V over K
+        if (more) load_kv(pc.v, pc.vstride, key0 + KT + lk, key_end, g, dc, vr);
+        memoryBarrierShared();
+        barrier();
+
+        if (pv_live && key0 <= pv_last) {  // uniform per subgroup (64 threads per token)
+            const uint nk = min(uint(KT), pv_last - key0 + 1u);
+            [[unroll]] for (int i = 0; i < GROUP; ++i) {
+                const float a = AL[tq * GROUP + i];
+                [[unroll]] for (int e = 0; e < 4; ++e) {
+                    precise float x = acc[i][e] * a;
+                    acc[i][e] = x;
+                }
+            }
+            uint j = 0;
+            // PVU keys per iteration: their LDS loads first, then the FMAs in key order (a one-key loop's order)
+            for (; j + PVU <= nk; j += PVU) {
+                vec4 vv[PVU], p4[PVU][3];
+                [[unroll]] for (uint u = 0; u < PVU; ++u) {
+                    vv[u] = KV4[(j + u) * KV4S + dq];
+                    [[unroll]] for (uint c = 0; c < 3u; ++c) p4[u][c] = PS4[(j + u) * PS4S + tq * 3u + c];
+                }
+                [[unroll]] for (uint u = 0; u < PVU; ++u)
+                    [[unroll]] for (int i = 0; i < GROUP; ++i) {
+                        const float p = p4[u][i / 4][i % 4];
+                        precise float a0 = fma(p, vv[u].x, acc[i][0]), a1 = fma(p, vv[u].y, acc[i][1]);
+                        precise float a2 = fma(p, vv[u].z, acc[i][2]), a3 = fma(p, vv[u].w, acc[i][3]);
+                        acc[i][0] = a0; acc[i][1] = a1; acc[i][2] = a2; acc[i][3] = a3;
+                    }
+            }
+            for (; j < nk; ++j) {
+                const vec4 vv = KV4[j * KV4S + dq];
+                const vec4 p4[3] = vec4[3](PS4[j * PS4S + tq * 3u], PS4[j * PS4S + tq * 3u + 1u], PS4[j * PS4S + tq * 3u + 2u]);
+                [[unroll]] for (int i = 0; i < GROUP; ++i) {
+                    const float p = p4[i / 4][i % 4];
+                    precise float a0 = fma(p, vv.x, acc[i][0]), a1 = fma(p, vv.y, acc[i][1]);
+                    precise float a2 = fma(p, vv.z, acc[i][2]), a3 = fma(p, vv.w, acc[i][3]);
+                    acc[i][0] = a0; acc[i][1] = a1; acc[i][2] = a2; acc[i][3] = a3;
+                }
+            }
+        }
+    }
+    if (kg == 0u) [[unroll]] for (int m = 0; m < 3; ++m) LS[lrg + 16u * m] = lrow[m];
+    memoryBarrierShared();
+    barrier();
+    if (!pv_live) return;
+    const uint t = t0 + tq;
+#if FALLBACK
+    if (!flagged(t, g)) return;
+#endif
+    [[unroll]] for (int i = 0; i < GROUP; ++i) {
+        const float l = LS[tq * GROUP + i];
+        uint b[4];
+        [[unroll]] for (int e = 0; e < 4; ++e) {
+            precise float o = acc[i][e] / l;
+            b[e] = bf16_rne(o);
+        }
+        W2(pc.dst + uint64_t((t * QW + (g * GROUP + i) * D + dq * 4u) * 2u)).v = uvec2(b[0] | (b[1] << 16), b[2] | (b[3] << 16));
+    }
+}

@@ -1,0 +1,897 @@
+[
+  {
+    "name": "agent_listen_wildcard",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "0.0.0.0:7443"
+    },
+    "expect": "invalid",
+    "reason": "wildcard listen host"
+  },
+  {
+    "name": "agent_listen_ipv6_wildcard",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "[::]:7443"
+    },
+    "expect": "invalid",
+    "reason": "IPv6 wildcard listen host"
+  },
+  {
+    "name": "agent_listen_public",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "8.8.8.8:7443"
+    },
+    "expect": "invalid",
+    "reason": "public listen host"
+  },
+  {
+    "name": "agent_listen_link_local",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "169.254.10.1:7443"
+    },
+    "expect": "invalid",
+    "reason": "link-local is not a bridge or tailnet address"
+  },
+  {
+    "name": "agent_listen_hostname",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "node-b:7443"
+    },
+    "expect": "invalid",
+    "reason": "hostnames are not literals"
+  },
+  {
+    "name": "agent_listen_port_zero",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "listen": "100.71.1.1:0"
+    },
+    "expect": "invalid",
+    "reason": "port 0"
+  },
+  {
+    "name": "agent_endpoint_http",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "coordinator": {
+        "endpoint": "http://100.72.2.2:7443"
+      }
+    },
+    "expect": "invalid",
+    "reason": "coordinator endpoint must be https"
+  },
+  {
+    "name": "agent_endpoint_rfc1918",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "coordinator": {
+        "endpoint": "https://192.168.1.2:7443"
+      }
+    },
+    "expect": "invalid",
+    "reason": "coordinator endpoint host must be tailnet or loopback"
+  },
+  {
+    "name": "agent_endpoint_hostname",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "coordinator": {
+        "endpoint": "https://gpumaster:7443"
+      }
+    },
+    "expect": "invalid",
+    "reason": "coordinator endpoint host must be a literal"
+  },
+  {
+    "name": "agent_endpoint_no_port",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "coordinator": {
+        "endpoint": "https://100.72.2.2"
+      }
+    },
+    "expect": "invalid",
+    "reason": "explicit port"
+  },
+  {
+    "name": "agent_principal_is_coordinator",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "principal": "cere-coordinator"
+    },
+    "expect": "invalid",
+    "reason": "the agent's principal is not the coordinator's"
+  },
+  {
+    "name": "agent_principal_pattern",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "principal": "Worker_A"
+    },
+    "expect": "invalid",
+    "reason": "principal is a lowercase DNS name"
+  },
+  {
+    "name": "agent_worker_id_pattern",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "worker_id": "-a"
+    },
+    "expect": "invalid",
+    "reason": "id pattern"
+  },
+  {
+    "name": "agent_retry_horizon_below_work_cap",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "journal": {
+        "retry_horizon_ms": 599999
+      }
+    },
+    "expect": "invalid",
+    "reason": "retry_horizon_ms >= 600000 (Q12)"
+  },
+  {
+    "name": "agent_max_operations_zero",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "journal": {
+        "max_operations": 0
+      }
+    },
+    "expect": "invalid",
+    "reason": "journal bound minimum"
+  },
+  {
+    "name": "agent_output_stall_above_lost",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "output_stall_ms": 15001
+      }
+    },
+    "expect": "invalid",
+    "reason": "output_stall_ms <= lost_after_ms (Q14)"
+  },
+  {
+    "name": "agent_default_output_stall_above_lost",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "output_stall_ms": null,
+        "rpc_timeout_ms": 20000
+      }
+    },
+    "expect": "invalid",
+    "reason": "the default output_stall_ms (= rpc_timeout_ms) is above lost_after_ms"
+  },
+  {
+    "name": "agent_heartbeat_not_below_lost",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "heartbeat_interval_ms": 15000
+      }
+    },
+    "expect": "invalid",
+    "reason": "heartbeat < lost"
+  },
+  {
+    "name": "agent_output_buffer_above_1mib",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "output_buffer_bytes": 1048577
+      }
+    },
+    "expect": "invalid",
+    "reason": "per-operation output buffer <= 1 MiB (Q14)"
+  },
+  {
+    "name": "agent_control_quota_zero",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "control_quota": 0
+      }
+    },
+    "expect": "invalid",
+    "reason": "unary control pool minimum"
+  },
+  {
+    "name": "agent_pem_relative",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "ca_file": "pki/ca.pem"
+    },
+    "expect": "invalid",
+    "reason": "PEM path must be absolute"
+  },
+  {
+    "name": "agent_pem_dotdot",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "ca_file": "/tmp/../etc/ca.pem"
+    },
+    "expect": "invalid",
+    "reason": "no .. components"
+  },
+  {
+    "name": "agent_pem_in_checkout",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "cert_file": "${REPO_ROOT}/pki/worker-a.pem"
+    },
+    "expect": "invalid",
+    "reason": "PEM path inside the checkout"
+  },
+  {
+    "name": "agent_pem_under_state_dir",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "key_file": "/var/lib/cere-worker/worker-a/pki/worker-a-key.pem"
+    },
+    "expect": "invalid",
+    "reason": "PEM path under state_dir"
+  },
+  {
+    "name": "agent_state_dir_in_checkout",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "state_dir": "${REPO_ROOT}/state"
+    },
+    "expect": "invalid",
+    "reason": "agent state_dir inside the checkout"
+  },
+  {
+    "name": "agent_state_dir_is_checkout",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "state_dir": "${REPO_ROOT}"
+    },
+    "expect": "invalid",
+    "reason": "agent state_dir is the checkout"
+  },
+  {
+    "name": "agent_backend_not_loopback",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "backend": {
+        "base_url": "http://100.71.1.1:18317"
+      }
+    },
+    "expect": "invalid",
+    "reason": "the backend loopback rule is reused unchanged"
+  },
+  {
+    "name": "agent_backend_https",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "backend": {
+        "base_url": "https://127.0.0.1:18317"
+      }
+    },
+    "expect": "invalid",
+    "reason": "the backend loopback rule is reused unchanged"
+  },
+  {
+    "name": "agent_backend_trailing_slash",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "backend": {
+        "base_url": "http://127.0.0.1:18317/"
+      }
+    },
+    "expect": "invalid",
+    "reason": "the backend loopback rule is reused unchanged"
+  },
+  {
+    "name": "agent_load_endpoint_pattern",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "backend": {
+        "load_endpoint": "get_load"
+      }
+    },
+    "expect": "invalid",
+    "reason": "load path pattern"
+  },
+  {
+    "name": "agent_missing_cluster_id",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "cluster_id": null
+    },
+    "expect": "invalid",
+    "reason": "cluster_id is required"
+  },
+  {
+    "name": "agent_missing_coordinator_id",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "coordinator": {
+        "coordinator_id": null
+      }
+    },
+    "expect": "invalid",
+    "reason": "coordinator_id is required"
+  },
+  {
+    "name": "agent_unknown_key",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "stream_pool": 8
+    },
+    "expect": "invalid",
+    "reason": "no stream-pool key (harness H1)"
+  },
+  {
+    "name": "agent_unknown_limits_key",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "limits": {
+        "stream_pool": 8
+      }
+    },
+    "expect": "invalid",
+    "reason": "no stream-pool key (harness H1)"
+  },
+  {
+    "name": "agent_launch_without_lock",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "lock_sha256": null
+      }
+    },
+    "expect": "invalid",
+    "reason": "[backend.launch] needs the approved lock_sha256 (Q3)"
+  },
+  {
+    "name": "agent_lock_without_launch",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": null
+      }
+    },
+    "expect": "invalid",
+    "reason": "attached mode has no lock (Q7)"
+  },
+  {
+    "name": "agent_lock_uppercase",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "lock_sha256": "EB182556781D898EB7A0CD8780CE20000586EB10F8114C6CD81393381EC236EC"
+      }
+    },
+    "expect": "invalid",
+    "reason": "lock hex must be lowercase"
+  },
+  {
+    "name": "agent_lock_short",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "lock_sha256": "eb182556781d898eb7a0cd8780ce20000586eb10f8114c6cd81393381ec236e"
+      }
+    },
+    "expect": "invalid",
+    "reason": "63 hex chars"
+  },
+  {
+    "name": "agent_launch_argv_empty",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": []
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "empty argv"
+  },
+  {
+    "name": "agent_launch_argv_relative",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "bin/cere-mock-sglang"
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "argv[0] must be absolute"
+  },
+  {
+    "name": "agent_launch_argv_too_many",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x",
+            "x"
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "65 argv entries"
+  },
+  {
+    "name": "agent_launch_argv_nul",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang",
+            "--port\u0000"
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "NUL in an argv entry"
+  },
+  {
+    "name": "agent_launch_argv0_nul",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang\u0000",
+            "--port"
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "NUL in argv[0] (prefixItems, not items, governs it)"
+  },
+  {
+    "name": "agent_launch_argv_too_long",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "argv entry above 4096 bytes"
+  },
+  {
+    "name": "agent_launch_argv_empty_entry",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "argv": [
+            "/var/lib/cere/fed-PLACEHOLDER/bin/cere-mock-sglang",
+            ""
+          ]
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "empty argv entry"
+  },
+  {
+    "name": "agent_launch_env_too_many",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "env": {
+            "V0": "1",
+            "V1": "1",
+            "V2": "1",
+            "V3": "1",
+            "V4": "1",
+            "V5": "1",
+            "V6": "1",
+            "V7": "1",
+            "V8": "1",
+            "V9": "1",
+            "V10": "1",
+            "V11": "1",
+            "V12": "1",
+            "V13": "1",
+            "V14": "1",
+            "V15": "1",
+            "V16": "1",
+            "V17": "1",
+            "V18": "1",
+            "V19": "1",
+            "V20": "1",
+            "V21": "1",
+            "V22": "1",
+            "V23": "1",
+            "V24": "1",
+            "V25": "1",
+            "V26": "1",
+            "V27": "1",
+            "V28": "1",
+            "V29": "1",
+            "V30": "1",
+            "V31": "1",
+            "V32": "1",
+            "V33": "1",
+            "V34": "1",
+            "V35": "1",
+            "V36": "1",
+            "V37": "1",
+            "V38": "1",
+            "V39": "1",
+            "V40": "1",
+            "V41": "1",
+            "V42": "1",
+            "V43": "1",
+            "V44": "1",
+            "V45": "1",
+            "V46": "1",
+            "V47": "1",
+            "V48": "1",
+            "V49": "1",
+            "V50": "1",
+            "V51": "1",
+            "V52": "1",
+            "V53": "1",
+            "V54": "1",
+            "V55": "1",
+            "V56": "1",
+            "V57": "1",
+            "V58": "1",
+            "V59": "1",
+            "V60": "1",
+            "V61": "1",
+            "V62": "1",
+            "V63": "1",
+            "V64": "1"
+          }
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "65 env entries"
+  },
+  {
+    "name": "agent_launch_env_key_pattern",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "env": {
+            "1BAD": "1"
+          }
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "env key must be an identifier"
+  },
+  {
+    "name": "agent_launch_env_path",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "env": {
+            "PATH": "/usr/bin"
+          }
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "the child's PATH is fixed (Q3)"
+  },
+  {
+    "name": "agent_launch_env_value_too_long",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "env": {
+            "X": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "env value above 4096 bytes"
+  },
+  {
+    "name": "agent_launch_env_value_nul",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "env": {
+            "X": "a\u0000b"
+          }
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "NUL in an env value"
+  },
+  {
+    "name": "agent_launch_startup_timeout_low",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "startup_timeout_ms": 999
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "startup timeout below 1 s"
+  },
+  {
+    "name": "agent_launch_startup_timeout_high",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "startup_timeout_ms": 3600001
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "startup timeout above 1 h"
+  },
+  {
+    "name": "agent_launch_stop_timeout_low",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "stop_timeout_ms": 99
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "stop timeout below 100 ms"
+  },
+  {
+    "name": "agent_launch_stop_timeout_high",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "stop_timeout_ms": 600001
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "stop timeout above 600 s"
+  },
+  {
+    "name": "agent_launch_uid_zero",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "uid": 0
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "uid 0 (root) child"
+  },
+  {
+    "name": "agent_launch_uid_max",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "uid": 4294967295
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "uid -1 sentinel"
+  },
+  {
+    "name": "agent_launch_gid_zero",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "gid": 0
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "gid 0 (root) child"
+  },
+  {
+    "name": "agent_launch_gid_max",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "gid": 4294967295
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "gid -1 sentinel"
+  },
+  {
+    "name": "agent_launch_uid_without_gid",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "gid": null
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "uid and gid together"
+  },
+  {
+    "name": "agent_launch_gid_without_uid",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "uid": null
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "uid and gid together"
+  },
+  {
+    "name": "agent_launch_unknown_key",
+    "base": "configs/worker/node-b-managed.toml",
+    "patch": {
+      "backend": {
+        "launch": {
+          "cwd": "/tmp"
+        }
+      }
+    },
+    "expect": "invalid",
+    "reason": "unknown [backend.launch] key"
+  },
+  {
+    "name": "agent_owner_pattern",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner": "Alice"
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: owner is a person scope id"
+  },
+  {
+    "name": "agent_owner_smoke_scope",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner": "cere-smoke"
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: the readiness smoke scope owns nothing"
+  },
+  {
+    "name": "agent_owner_only_without_owner",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner_only": ["Mon-Fri 09:00-17:00 UTC"]
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: owner_only needs an owner"
+  },
+  {
+    "name": "agent_owner_only_empty",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner": "alice",
+      "owner_only": []
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: 1..16 windows"
+  },
+  {
+    "name": "agent_owner_only_bad_time",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner": "alice",
+      "owner_only": ["Mon-Fri 9:00-17:00 UTC"]
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: times are HH:MM"
+  },
+  {
+    "name": "agent_owner_only_unknown_zone",
+    "base": "configs/worker/node-b-mock.toml",
+    "patch": {
+      "owner": "alice",
+      "owner_only": ["Sat,Sun 00:00-24:00 Mars/Olympus"]
+    },
+    "expect": "invalid",
+    "reason": "S6 C19: the zone must exist in the system database"
+  }
+]

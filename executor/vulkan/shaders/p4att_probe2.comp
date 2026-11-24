@@ -1,0 +1,29 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P4-A: does a coopMatMulAdd result depend on B values that only meet zeros of A? Workgroup w (one subgroup
+// of 32) loads A [16 x 16] FP16, B1 and B2 [16 x 16] FP16 and C [16 x 16] FP32 and writes D1 = A B1 + C and D2 = A B2 + C.
+// The host (k6_test "p4 probe2") makes A[r][k] = 0 for k >= n_r (n_r = 3 or 0 on the rows it compares) and B2 = B1 except
+// B2[k][c] = 0 for k >= 3, then counts the rows with n_r = 3 where D1 != D2 (mathematically equal) and the rows with n_r = 0
+// where D != C. Measured on AMD: the first count is about 1 in 8, the second 0 (p4att_common.comp's partial chunks).
+#include "p4att_common.comp"
+
+layout(local_size_x = 32) in;
+layout(push_constant, std430) uniform PC { uint64_t a, b1, b2, c, d1, d2; } pc;
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer HA { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer FA { float v[]; };
+
+void main() {
+    const uint w = gl_WorkGroupID.x;
+    MatA a;
+    MatB b1;
+    MatB b2;
+    MatC c;
+    coopMatLoad(a, HA(pc.a + uint64_t(w) * 512ul).v, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(b1, HA(pc.b1 + uint64_t(w) * 512ul).v, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(b2, HA(pc.b2 + uint64_t(w) * 512ul).v, 0, 2, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(c, FA(pc.c + uint64_t(w) * 1024ul).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    MatC d1 = coopMatMulAdd(a, b1, c);
+    MatC d2 = coopMatMulAdd(a, b2, c);
+    coopMatStore(d1, FA(pc.d1 + uint64_t(w) * 1024ul).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatStore(d2, FA(pc.d2 + uint64_t(w) * 1024ul).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

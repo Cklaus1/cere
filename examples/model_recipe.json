@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "recipe_id": "primary-coder",
+  "model_ref": "local://models/approved-coder",
+  "backend_profile_id": "sglang-pinned-profile",
+  "context_tokens": 131072,
+  "required_operations": ["chat","infill"],
+  "adapters": [],
+  "residency": {"priority": 900, "keep_warm_seconds": 1800, "pinned": false},
+  "sampling_defaults": {"temperature": 0.2, "top_p": 0.95, "max_new_tokens": 8192}
+}

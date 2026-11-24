@@ -1,0 +1,185 @@
+{
+  "groups": {
+    "nvfp4_group_size": 16,
+    "ple_index_members": [
+      "layer_multipliers",
+      "ngram_heads_offsets",
+      "ngram_heads_vocab_sizes"
+    ],
+    "ple_module_members": [
+      "conv1d.weight",
+      "key_proj.weight",
+      "norm_conv.weight",
+      "norm_key.weight",
+      "norm_query.weight",
+      "value_proj.weight"
+    ],
+    "ple_table_shards": 128
+  },
+  "rules": [
+    {
+      "component": "target",
+      "dtype": "U8",
+      "family": "target_nvfp4_weight",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight",
+      "placement": "device",
+      "role": "nvfp4_weight",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "F8_E4M3",
+      "family": "target_nvfp4_block_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight_scale",
+      "placement": "device",
+      "role": "nvfp4_block_scale",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_nvfp4_global_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.weight_scale_2",
+      "placement": "device",
+      "role": "nvfp4_global_scale",
+      "shape_rule": "rank:0"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_nvfp4_input_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.mlp\\.experts\\.[0-9]+\\.(gate|up|down)_proj\\.input_scale",
+      "placement": "device",
+      "role": "nvfp4_input_scale",
+      "shape_rule": "rank:0"
+    },
+    {
+      "component": "target",
+      "dtype": "F8_E4M3",
+      "family": "target_mxfp8_weight",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.(linear_attn\\.(in_proj_(qkv|z|a|b)|out_proj)|self_attn\\.([qkvo]_proj|indexer\\.index_qk_proj)|mlp\\.shared_expert\\.(gate|up|down)_proj)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "U8",
+      "family": "target_mxfp8_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.(linear_attn\\.(in_proj_(qkv|z|a|b)|out_proj)|self_attn\\.([qkvo]_proj|indexer\\.index_qk_proj)|mlp\\.shared_expert\\.(gate|up|down)_proj)\\.weight_scale",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_dense",
+      "pattern": "lm_head\\.weight|model\\.language_model\\.(embed_tokens\\.weight|hyper_connection_mixer\\.[a-z_]+\\.weight|layers\\.[0-9]+\\.((attn|mlp)_hyper_connection\\.[a-z_]+\\.weight|linear_attn\\.(A_log|dt_bias|(conv1d|norm)\\.weight)|self_attn\\.([qk]_norm|indexer\\.[qk]_layernorm)\\.weight|mlp\\.(gate|shared_expert_gate)\\.weight))",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "any"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_ple_module",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.(key_proj|value_proj|conv1d|norm_conv|norm_key|norm_query)\\.weight",
+      "placement": "device",
+      "role": "ple_module",
+      "shape_rule": "any"
+    },
+    {
+      "component": "target",
+      "dtype": "U8",
+      "family": "target_ple_table",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.ngram_embedding\\.shard_[0-9]+\\.weight",
+      "placement": "host_pinned",
+      "role": "ple_table",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "F8_E4M3",
+      "family": "target_ple_shard_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.ngram_embedding\\.shard_[0-9]+\\.weight_scale",
+      "placement": "host_pinned",
+      "role": "ple_scale",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "F32",
+      "family": "target_ple_scale",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.ngram_embedding\\.weight_scale_2",
+      "placement": "host_pinned",
+      "role": "ple_scale",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "I64",
+      "family": "target_ple_index",
+      "pattern": "model\\.language_model\\.layers\\.[0-9]+\\.ple\\.ple_embedding\\.(layer_multipliers|ngram_heads_offsets|ngram_heads_vocab_sizes)",
+      "placement": "host_pinned",
+      "role": "ple_index",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "draft",
+      "dtype": "BF16",
+      "family": "draft_mtp",
+      "pattern": "mtp\\.((fc_embedding|fc_hidden|pre_fc_norm_embedding|pre_fc_norm_hidden|hyper_connection_mixer\\.[a-z_]+)\\.weight|layers\\.[0-9]+\\.((attn|mlp)_hyper_connection\\.[a-z_]+|self_attn\\.[a-z_.]+|mlp\\.(gate|shared_expert_gate|shared_expert\\.(gate|up|down)_proj))\\.weight)",
+      "placement": "device",
+      "role": "draft",
+      "shape_rule": "any"
+    },
+    {
+      "component": "draft",
+      "dtype": "U8",
+      "family": "draft_mtp_nvfp4_weight",
+      "pattern": "mtp\\.layers\\.[0-9]+\\.mlp\\.experts\\.(gate_up|down)_proj",
+      "placement": "device",
+      "role": "draft",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "draft",
+      "dtype": "F8_E4M3",
+      "family": "draft_mtp_nvfp4_block_scale",
+      "pattern": "mtp\\.layers\\.[0-9]+\\.mlp\\.experts\\.(gate_up|down)_proj_scale",
+      "placement": "device",
+      "role": "draft",
+      "shape_rule": "rank:3"
+    },
+    {
+      "component": "draft",
+      "dtype": "F32",
+      "family": "draft_mtp_nvfp4_gate_up_global_scale",
+      "pattern": "mtp\\.layers\\.[0-9]+\\.mlp\\.experts\\.gate_up_proj_scale_2",
+      "placement": "device",
+      "role": "draft",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "draft",
+      "dtype": "F32",
+      "family": "draft_mtp_nvfp4_down_global_scale",
+      "pattern": "mtp\\.layers\\.[0-9]+\\.mlp\\.experts\\.down_proj_scale_2",
+      "placement": "device",
+      "role": "draft",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "vision",
+      "dtype": "BF16",
+      "family": "vision",
+      "pattern": "model\\.visual\\..+",
+      "placement": "unused",
+      "role": "vision",
+      "shape_rule": "any"
+    }
+  ],
+  "rules_id": "qwen4_exp-nvfp4-plenvfp4-mxfp8-v1",
+  "schema_version": "1"
+}

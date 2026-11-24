@@ -1,0 +1,19 @@
+#version 460
+// VulkanAmd P2 K7: the cooperative-matrix accumulator layout probe k7_gemm.comp depends on. One subgroup of 32 loads
+// a 16x16 int32 accumulator whose element (r, c) holds r * 16 + c and writes, per lane, length() and its elements.
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#include "k7_common.comp"
+
+layout(local_size_x = 32) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer IA { int v[]; };
+layout(push_constant, std430) uniform PC { uint64_t idx, out_; } pc;
+
+void main() {
+    const uint l = gl_SubgroupInvocationID;
+    coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c;
+    coopMatLoad(c, IA(pc.idx).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    sti(pc.out_, (32u * 16u + l) * 4u, c.length());
+    for (int i = 0; i < c.length() && i < 16; ++i) sti(pc.out_, (l * 16u + uint(i)) * 4u, c[i]);
+}

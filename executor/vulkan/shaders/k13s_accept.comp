@@ -1,0 +1,148 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#if STAGE == 0
+#define WG 1024
+#elif STAGE == 1
+#define WG 128
+#else
+#define WG 32
+#endif
+#include "k12_common.comp"
+// VulkanAmd P2 K13S: speculative accept / resample (SGLang's target-only rule, thresholds 1.0), as k13s_spec_accept.cu.
+//   STAGE 0 prefix: block r (1024 threads) builds row r's RowPrefix from the K12 probabilities and keep mask: the fp64 kept mass of
+//     each of the 1024 id chunks in id order twice (with the draft: `total`; without it: the resample's prefix), the chunks added
+//     in chunk order by thread 0 (an empty chunk adds +0.0, which changes nothing), the last kept id other than the draft.
+//   STAGE 1 decide: trial t (row t, or row 0 for row_trials): u = uniform(seed, key, 4, 5); accept the draft iff it is kept and
+//     u < fp64(p[d]) / total (the division correctly rounded: fdiv_rn64, so equal to the host's); else the inverse CDF draw of
+//     u' = uniform(seed, key, 6, 7) over the kept ids other than d (the chunk search, then the fp64 running sum in id order).
+//   STAGE 2 commit: one invocation resolves the chain (the accepted drafts, then the resampled id or the bonus id).
+// RowPrefix (bytes): f64 prefix[1025] @0, f64 total @8200, u32 last_kept @8208; stride 8216.
+#if STAGE == 0
+layout(local_size_x = 1024) in;
+#elif STAGE == 1
+layout(local_size_x = 128) in;
+#else
+layout(local_size_x = 32) in;
+#endif
+layout(push_constant, std430) uniform PC {
+    uint64_t probs, masks, drafts, rows, ids, accepted, first_seed, seed_step, bonus, committed, count;
+    uint vocab, draft, key0, key_step, trials, per_row, n;
+} pc;
+const uint ROW_STRIDE = 8216u;
+uint chunk_len() { return (pc.vocab + kChunks - 1u) / kChunks; }
+uint64_t row_probs(uint r) { return pc.probs + uint64_t(r) * uint64_t(pc.vocab) * 4ul; }
+uint64_t row_mask(uint r) { return pc.masks + uint64_t(r) * uint64_t((pc.vocab + 31u) / 32u) * 4ul; }
+uint64_t row_pref(uint r) { return pc.rows + uint64_t(r) * uint64_t(ROW_STRIDE); }
+uint draft_of(uint r) { return pc.drafts != 0ul ? ldu(pc.drafts, r) : pc.draft; }
+
+#if STAGE == 0
+shared double sums[1024];
+shared double rest[1024];
+shared double cum[1025];
+shared uint order_[1024];
+shared uint warp_n[32];
+shared uint last_kept;
+void main() {
+    const uint r = gl_WorkGroupID.x;
+    const uint64_t p = row_probs(r), mask = row_mask(r), out_ = row_pref(r);
+    const uint d = draft_of(r);
+    const uint c = gl_LocalInvocationID.x;
+    const uint lane = c & 31u;
+    if (c == 0u) last_kept = 0u;
+    const uint len = chunk_len();
+    const uint i0 = min(pc.vocab, c * len);
+    const uint i1 = min(pc.vocab, i0 + len);
+    double s = 0.0LF, s_rest = 0.0LF;
+    uint l = NONE;
+    for (uint i = i0; i < i1;) {
+        const uint word = ldu(mask, i >> 5);
+        if (word == 0u) { i = (i | 31u) + 1u; continue; }
+        if (((word >> (i & 31u)) & 1u) != 0u) {
+            const double x = double(ldf(p, i));
+            s = s + x;
+            if (i != d) { s_rest = s_rest + x; l = i; }
+        }
+        ++i;
+    }
+    sums[c] = s;
+    rest[c] = s_rest;
+    const bool nonempty = s != 0.0LF;
+    const uvec4 bal = subgroupBallot(nonempty);
+    if (lane == 0u) warp_n[c >> 5] = uint(bitCount(bal.x));
+    barrier();
+    if (l != NONE) atomicMax(last_kept, l);
+    uint before = uint(bitCount(bal.x & ((1u << lane) - 1u)));
+    uint count = 0u;
+    for (uint x = 0u; x < 32u; ++x) {
+        if (x < (c >> 5)) before += warp_n[x];
+        count += warp_n[x];
+    }
+    if (nonempty) order_[before] = c;
+    barrier();
+    if (c == 0u) {
+        double acc = 0.0LF, acc_rest = 0.0LF;
+        cum[0] = acc_rest;
+        for (uint j = 0u; j < count; ++j) {
+            acc = acc + sums[order_[j]];
+            acc_rest = acc_rest + rest[order_[j]];
+            cum[j + 1u] = acc_rest;
+        }
+        std_(out_ + 8200ul, 0u, acc);
+    }
+    barrier();
+    std_(out_, c, cum[before]);
+    if (c == 0u) {
+        std_(out_, kChunks, cum[count]);
+        stu(out_ + 8208ul, 0u, last_kept);
+    }
+}
+#elif STAGE == 1
+void main() {
+    const uint t = gl_GlobalInvocationID.x;
+    if (t >= pc.trials) return;
+    const uint r = pc.per_row != 0u ? t : 0u;
+    const uint64_t p = row_probs(r), mask = row_mask(r), pref = row_pref(r);
+    const uint d = draft_of(r);
+    const uint64_t seed = pc.first_seed + uint64_t(t) * pc.seed_step;
+    const uint key = pc.key0 + t * pc.key_step;
+    const double u = uniform_u(seed, key, 4u, 5u);
+    const double total = ldd(pref + 8200ul, 0u);
+    if (d < pc.vocab && ((ldu(mask, d >> 5) >> (d & 31u)) & 1u) != 0u && u < fdiv_rn64(double(ldf(p, d)), total)) {
+        stu(pc.ids, t, d);
+        B1(pc.accepted + uint64_t(t)).v = uint8_t(1);
+        return;
+    }
+    B1(pc.accepted + uint64_t(t)).v = uint8_t(0);
+    const double target = uniform_u(seed, key, 6u, 7u) * ldd(pref, kChunks);
+    uint lo = 0u, hi = kChunks - 1u;
+    while (lo < hi) {
+        const uint mid = (lo + hi + 1u) / 2u;
+        if (ldd(pref, mid) <= target) lo = mid; else hi = mid - 1u;
+    }
+    const uint len = chunk_len();
+    for (uint c = lo; c < kChunks; ++c) {
+        double acc = ldd(pref, c);
+        const uint i1 = min(pc.vocab, (c + 1u) * len);
+        for (uint i = c * len; i < i1;) {
+            const uint word = ldu(mask, i >> 5);
+            if (word == 0u) { i = (i | 31u) + 1u; continue; }
+            if (((word >> (i & 31u)) & 1u) != 0u && i != d) {
+                acc = acc + double(ldf(p, i));
+                if (acc > target) { stu(pc.ids, t, i); return; }
+            }
+            ++i;
+        }
+    }
+    stu(pc.ids, t, ldu(pref + 8208ul, 0u));
+}
+#else
+void main() {
+    if (gl_GlobalInvocationID.x != 0u) return;
+    for (uint j = 0u; j < pc.n; ++j) {
+        stu(pc.committed, j, ldu(pc.ids, j));
+        if (B1(pc.accepted + uint64_t(j)).v == uint8_t(0)) { stu(pc.count, 0u, j + 1u); return; }
+    }
+    stu(pc.committed, pc.n, ldu(pc.bonus, 0u));
+    stu(pc.count, 0u, pc.n + 1u);
+}
+#endif

@@ -1,0 +1,81 @@
+#version 460
+// VulkanAmd P2 K7: the block's small element-wise kernels, one SPIR-V per MODE.
+//  MODE 0 (gate): gates[t] = sigmoid(x[t] . g), one subgroup of 32 per token (8 tokens per workgroup): lane l chains
+//          fma over its elements 8 l + 256 i .. + 7 in increasing order, then a fixed xor butterfly (16 .. 1); the
+//          token's value is independent of m.
+//  MODE 1 (silu): s_h = BF16(SiLU(BF16 gate) * BF16 up), 8 elements per invocation (count % 8 == 0).
+//  MODE 2 (combine): out[t, j] = BF16(fma(gate_t, shared[t, j], routed)), routed = BF16(acc), acc = fma(w_k, y_k, acc)
+//          over the slots in slot order from 0 (y_k = y[pos[t K + k], j]); 8 elements per invocation, workgroup
+//          (t, 1,024-element chunk). Per-element arithmetic only.
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#include "k7_common.comp"
+
+#ifndef MODE
+#define MODE 0
+#endif
+
+layout(local_size_x = 256) in;
+
+#if MODE == 0
+layout(push_constant, std430) uniform PC { uint64_t x, g, gates; uint m, h; } pc;
+void main() {
+    const uint lane = gl_SubgroupInvocationID, t = gl_WorkGroupID.x * 8u + gl_SubgroupID;
+    if (t >= pc.m) return;  // subgroup-uniform
+    precise float acc = 0.0;
+    for (uint j = lane * 8u; j < pc.h; j += 256u) {
+        const uvec4 xv = ld16(pc.x, (t * pc.h + j) * 2u), gv = ld16(pc.g, j * 2u);
+        acc = fma(bf_lo(xv.x), bf_lo(gv.x), acc); acc = fma(bf_hi(xv.x), bf_hi(gv.x), acc);
+        acc = fma(bf_lo(xv.y), bf_lo(gv.y), acc); acc = fma(bf_hi(xv.y), bf_hi(gv.y), acc);
+        acc = fma(bf_lo(xv.z), bf_lo(gv.z), acc); acc = fma(bf_hi(xv.z), bf_hi(gv.z), acc);
+        acc = fma(bf_lo(xv.w), bf_lo(gv.w), acc); acc = fma(bf_hi(xv.w), bf_hi(gv.w), acc);
+    }
+    [[unroll]] for (uint o = 16u; o >= 1u; o /= 2u) acc = acc + subgroupShuffleXor(acc, o);
+    if (lane == 0u) {
+        precise float d = 1.0 + exp_acc(-acc);
+        stf(pc.gates, t * 4u, cdiv(1.0, d));
+    }
+}
+#elif MODE == 1
+layout(push_constant, std430) uniform PC { uint64_t gate, up, out_; uint count8; } pc;
+void main() {
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count8) return;
+    const uvec4 g = ld16(pc.gate, i * 16u), u = ld16(pc.up, i * 16u);
+    const uint gw[4] = uint[4](g.x, g.y, g.z, g.w), uw[4] = uint[4](u.x, u.y, u.z, u.w);
+    uint o[4];
+    [[unroll]] for (int q = 0; q < 4; ++q)
+        o[q] = f2bf(silu_mul(bf_lo(gw[q]), bf_lo(uw[q]))) | (f2bf(silu_mul(bf_hi(gw[q]), bf_hi(uw[q]))) << 16);
+    st16(pc.out_, i * 16u, uvec4(o[0], o[1], o[2], o[3]));
+}
+#else
+layout(push_constant, std430) uniform PC { uint64_t gates, y, pos, wts, shared_, out_; uint h, k; } pc;
+void main() {
+    const uint t = gl_WorkGroupID.x;
+    const uint j0 = (gl_WorkGroupID.y * 256u + gl_LocalInvocationID.x) * 8u;
+    if (j0 >= pc.h) return;
+    const float gate = ldf(pc.gates, t * 4u);
+    float acc[8];
+    [[unroll]] for (int q = 0; q < 8; ++q) acc[q] = 0.0;
+    for (uint s = 0u; s < pc.k; ++s) {
+        const uint r = uint(ldi(pc.pos, (t * pc.k + s) * 4u));
+        const float w = ldf(pc.wts, (t * pc.k + s) * 4u);
+        const uvec4 v = ld16(pc.y, (r * pc.h + j0) * 2u);
+        const uint vw[4] = uint[4](v.x, v.y, v.z, v.w);
+        [[unroll]] for (int q = 0; q < 4; ++q) {
+            precise float a0 = fma(w, bf_lo(vw[q]), acc[2 * q]);
+            precise float a1 = fma(w, bf_hi(vw[q]), acc[2 * q + 1]);
+            acc[2 * q] = a0; acc[2 * q + 1] = a1;
+        }
+    }
+    const uvec4 sh = ld16(pc.shared_, (t * pc.h + j0) * 2u);
+    const uint sw[4] = uint[4](sh.x, sh.y, sh.z, sh.w);
+    uint o[4];
+    [[unroll]] for (int q = 0; q < 4; ++q) {
+        precise float r0 = fma(gate, bf_lo(sw[q]), rbf(acc[2 * q]));
+        precise float r1 = fma(gate, bf_hi(sw[q]), rbf(acc[2 * q + 1]));
+        o[q] = f2bf(r0) | (f2bf(r1) << 16);
+    }
+    st16(pc.out_, (t * pc.h + j0) * 2u, uvec4(o[0], o[1], o[2], o[3]));
+}
+#endif

@@ -1,0 +1,246 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: the index prep (contract executor/cuda/src/kernels/k9_qsa.h: indexer_qk, qsa_compress_store,
+// qsa_compress_store_step, qsa_compress_store_at, qsa_key_save_step), re-proven per device (vulkan-amd design note).
+// One subgroup of 32 lanes per 128-dim row (required subgroup size 32), lane = dims 4 lane .. 4 lane + 3, as the CUDA
+// warp. The arithmetic is the CUDA kernels' rounding sequence, made IEEE by construction:
+//   Gemma RMSNorm: ss = 16 lanes x 8 sequential FMAs (lanes 16..31 hold 0), then the 32-lane xor tree 16, 8, 4, 2, 1
+//   (every lane ends with the same sum: a + b == b + a); nf = 1 / sqrt(ss / 128 + eps) with a correctly rounded sqrt
+//   and division (CUDA's rsqrtf is within 1 ulp; the host mirror is 1.f / std::sqrt); row = bf16((x * nf) * (1 + w));
+//   NeoX RoPE over dims 0..63: bf16(rb(n_d * rb(cos)) -/+ rb(n_p * rb(sin))), dims 64..127 pass through.
+//   Compressed key: acc = m0; acc += m1; acc += m2; acc += m3 (fp32, sequential), bf16(acc * 0.25), norm, RoPE at the
+//   group's first member's rotary position.
+// MODE 0 index q (WG = token t, subgroup = index head), 1 compress (WG = 4 groups, subgroup = group; AT 1: pos0 read
+// from the device), 2 ring store (one WG; AT 1: device pos0), 3 one-token step (device position: compress or ring),
+// 4 key save (the verify graph's undo copy), 5 the chains step (qsa_chains_step: per chain, its rows' undo copies and
+// steps in row order, from a table in device memory).
+// Bounds (k9_qsa.h): device positions are clamped into their range and set *fault = 1 (fault 0: clamp only).
+#include "k9_common.comp"
+
+#ifndef MODE
+#define MODE 0
+#endif
+#ifndef AT
+#define AT 0
+#endif
+#define DI 128
+#define HR 32
+
+layout(local_size_x = 128) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t src;     // qk (MODE 0), k_idx (1..3), keys (4)
+    uint64_t weight;  // norm weight [128] BF16
+    uint64_t cs;      // rope table [rows, 64] F32, row r at cs + r * 256 (r may be negative: rope_first)
+    uint64_t pos;     // int64 positions (MODE 0/1) or the device position (AT, MODE 3/4); 0 none
+    uint64_t slots;   // int64 slot map; 0 identity
+    uint64_t ring;    // [4, 128] BF16
+    uint64_t dst;     // q_idx (0), keys (1, 3), saved (4)
+    uint64_t fault;   // uint32 fault word; 0 none
+    int pos0; uint tokens; uint stride; float eps;
+    int rope_first; int rope_end; int context; int g_lo;
+    int groups; int j; int n; int pad;
+} pc;
+
+shared float ROW[4][DI];
+
+int64_t bounded(int64_t i, int64_t lo, int64_t hi) {
+    if (i >= lo && i < hi) return i;
+    if (pc.fault != 0ul) U1(pc.fault).v = 1u;
+    return i < lo ? lo : hi - 1l;
+}
+int64_t ld_pos(uint i) { return L1(pc.pos + uint64_t(i * 8u)).v; }
+float ldbf(uint64_t base, uint elem) { return bf(H1(base + uint64_t(elem * 2u)).v); }
+
+// Norm of the row in ROW[w] (BF16-exact values; x = this lane's 4 values), written back to ROW[w] as BF16 values.
+void norm_row(uint w, uint lane, float x[4]) {
+    precise float ss = 0.0;
+    if (lane < 16u) {
+        [[unroll]] for (uint jj = 0; jj < 8u; ++jj) {
+            const float f = ROW[w][lane * 8u + jj];
+            ss = fma(f, f, ss);
+        }
+    }
+    [[unroll]] for (uint m = 16u; m >= 1u; m /= 2u) {
+        precise float t = ss + subgroupShuffleXor(ss, m);
+        ss = t;
+    }
+    precise float arg = ss * (1.0 / 128.0) + pc.eps;
+    const float nf = fdiv_rn32(1.0, sqrt_rn32(arg));
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+    [[unroll]] for (uint i = 0; i < 4u; ++i) {
+        const uint d = lane * 4u + i;
+        precise float a = x[i] * nf;
+        precise float b = 1.0 + ldbf(pc.weight, d);
+        precise float c = a * b;
+        ROW[w][d] = rb(c);
+    }
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+}
+
+// RoPE of ROW[w] at rotary row r (already inside the bounds) -> 4 BF16 at out (this lane's dims).
+void rope_store(uint w, uint lane, int64_t r, uint64_t dsta) {
+    const uint64_t row = pc.cs + uint64_t(r * 256l);
+    uint o[4];
+    [[unroll]] for (uint i = 0; i < 4u; ++i) {
+        const uint d = lane * 4u + i;
+        if (d < HR) {
+            const float c = rb(F1(row + uint64_t(d * 4u)).v), s = rb(F1(row + uint64_t((HR + d) * 4u)).v);
+            precise float a = rb(ROW[w][d] * c);
+            precise float b = rb(ROW[w][d + HR] * s);
+            precise float e = a - b;
+            o[i] = bf16_rne(e);
+        } else if (d < 2u * HR) {
+            const uint p = d - HR;
+            const float c = rb(F1(row + uint64_t(p * 4u)).v), s = rb(F1(row + uint64_t((HR + p) * 4u)).v);
+            precise float a = rb(ROW[w][d] * c);
+            precise float b = rb(ROW[w][p] * s);
+            precise float e = a + b;
+            o[i] = bf16_rne(e);
+        } else {
+            o[i] = floatBitsToUint(ROW[w][d]) >> 16;
+        }
+    }
+    V2(dsta + uint64_t(lane * 8u)).v = uvec2(o[0] | (o[1] << 16), o[2] | (o[3] << 16));
+}
+
+// Compressed key of group g for a call starting at pos0 (members before pos0 from the ring), subgroup w.
+// rot: the rotary position of the group's first member (unclamped).
+void compress_group(uint w, uint lane, int64_t pos0, int64_t g, uint64_t k_idx, uint kstride, int64_t rot,
+                    uint64_t ring, uint64_t slots, uint64_t keys) {
+    float acc[4];
+    for (int r = 0; r < 4; ++r) {
+        const int64_t p = g * 4l + int64_t(r);
+        const uint64_t srow = p < pos0 ? ring + uint64_t(uint(p % 4l) * DI * 2u)
+                                       : k_idx + uint64_t(uint(p - pos0) * kstride * 2u);
+        [[unroll]] for (uint i = 0; i < 4u; ++i) {
+            const float f = ldbf(srow, lane * 4u + i);
+            precise float s = r == 0 ? f : acc[i] + f;
+            acc[i] = s;
+        }
+    }
+    float m[4];
+    [[unroll]] for (uint i = 0; i < 4u; ++i) {
+        precise float a = acc[i] * 0.25;
+        m[i] = rb(a);
+        ROW[w][lane * 4u + i] = m[i];
+    }
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+    norm_row(w, lane, m);
+    const int64_t first = g * 4l;
+    const int64_t slot = slots != 0ul ? L1(slots + uint64_t(uint(first) * 8u)).v / 4l : g;
+    const int64_t r = bounded(rot, int64_t(pc.rope_first), int64_t(pc.rope_end));
+    rope_store(w, lane, r, keys + uint64_t(uint(slot) * DI * 2u));
+}
+
+// qsa_compress_store of one token at position p (inside the context): it completes group p / 4 (subgroup 0 compresses
+// with pos0 = p) or else goes to ring row p % 4.
+void step_row(uint tid, uint w, uint lane, uint64_t k_idx, uint64_t slots, int64_t p, uint64_t ring, uint64_t keys) {
+    if ((p + 1l) % 4l == 0l) {
+        if (w == 0u) compress_group(0u, lane, p, p / 4l, k_idx, 0u, p - 3l, ring, slots, keys);
+    } else {
+        H1(ring + uint64_t((uint(p % 4l) * DI + tid) * 2u)).v = H1(k_idx + uint64_t(tid * 2u)).v;
+    }
+}
+
+// qsa_key_save_step's rule at position `at` (inside the context): the verify row j of a chain of n.
+void key_save_row(uint tid, uint64_t keys, uint64_t slots, int64_t at, int64_t j, int64_t n, uint64_t saved) {
+    const int64_t p = at - j;
+    const int64_t q = at + (3l - at % 4l) % 4l;  // first q >= p + j with q % 4 == 3
+    if (q > p + n) return;
+    const int64_t row = L1(slots + uint64_t(uint(q - 3l) * 8u)).v / 4l;
+    H1(saved + uint64_t(tid * 2u)).v = H1(keys + uint64_t((uint(row) * DI + tid) * 2u)).v;
+}
+
+// MODE 5's table (k9_qsa_vk.cpp ChainsTable): 16 rows of k_idx, slots, ring, keys, undo_ring, undo_key, context (8 B
+// each), then j, n (4 B per row), then chain_first, chain_rows (4 B per chain).
+#define TB_KIDX 0u
+#define TB_SLOTS 128u
+#define TB_RING 256u
+#define TB_KEYS 384u
+#define TB_URING 512u
+#define TB_UKEY 640u
+#define TB_CTX 768u
+#define TB_J 896u
+#define TB_N 960u
+#define TB_FIRST 1024u
+#define TB_ROWS 1088u
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint w = tid / 32u, lane = tid % 32u;
+#if MODE == 0
+    // index q: token t, head w
+    const uint t = gl_WorkGroupID.x;
+    const uint64_t xrow = pc.src + uint64_t((t * pc.stride + w * DI) * 2u);
+    float x[4];
+    [[unroll]] for (uint i = 0; i < 4u; ++i) {
+        x[i] = ldbf(xrow, lane * 4u + i);
+        ROW[w][lane * 4u + i] = x[i];
+    }
+    subgroupMemoryBarrierShared();
+    subgroupBarrier();
+    norm_row(w, lane, x);
+    const int64_t p = pc.pos != 0ul ? ld_pos(t) : int64_t(pc.pos0) + int64_t(t);
+    const int64_t r = bounded(p, int64_t(pc.rope_first), int64_t(pc.rope_end));
+    rope_store(w, lane, r, pc.dst + uint64_t((t * 4u + w) * DI * 2u));
+#elif MODE == 1
+    int64_t pos0 = int64_t(pc.pos0);
+    int64_t g_lo = int64_t(pc.g_lo), groups = int64_t(pc.groups);
+#if AT
+    pos0 = bounded(L1(pc.pos).v, 0l, int64_t(pc.context) - int64_t(pc.tokens) + 1l);
+    g_lo = pos0 / 4l;
+    groups = (pos0 + int64_t(pc.tokens)) / 4l - g_lo;
+#endif
+    const int64_t gi = int64_t(gl_WorkGroupID.x * 4u + w);
+    if (gi >= groups) return;  // whole subgroup: only subgroup barriers follow
+    const int64_t g = g_lo + gi, first = g * 4l;
+    int64_t rot = first;
+#if !AT
+    if (pc.pos != 0ul) rot = first >= pos0 ? ld_pos(uint(first - pos0)) : ld_pos(0u) - (pos0 - first);
+#endif
+    compress_group(w, lane, pos0, g, pc.src, pc.stride, rot, pc.ring, pc.slots, pc.dst);
+#elif MODE == 2
+    int64_t pos0 = int64_t(pc.pos0);
+#if AT
+    pos0 = bounded(L1(pc.pos).v, 0l, int64_t(pc.context) - int64_t(pc.tokens) + 1l);
+#endif
+    const int64_t end = pos0 + int64_t(pc.tokens);
+    const int64_t ghi = (end / 4l) * 4l;
+    const int64_t first = ghi > pos0 ? ghi : pos0;
+    for (int64_t p = first; p < end; ++p)
+        H1(pc.ring + uint64_t((uint(p % 4l) * DI + tid) * 2u)).v = H1(pc.src + uint64_t((uint(p - pos0) * pc.stride + tid) * 2u)).v;
+#elif MODE == 3
+    step_row(tid, w, lane, pc.src, pc.slots, bounded(L1(pc.pos).v, 0l, int64_t(pc.context)), pc.ring, pc.dst);
+#elif MODE == 4
+    key_save_row(tid, pc.src, pc.slots, bounded(L1(pc.pos).v, 0l, int64_t(pc.context)), int64_t(pc.j), int64_t(pc.n), pc.dst);
+#elif MODE == 5
+    // chains step: workgroup c = chain c; the table (pc.src) holds the ChainsStep arrays; its rows in row order
+    const uint c = gl_WorkGroupID.x;
+    const uint64_t tb = pc.src;
+    const int first = I1(tb + uint64_t(TB_FIRST + c * 4u)).v;
+    const int end = first + I1(tb + uint64_t(TB_ROWS + c * 4u)).v;
+    for (int r = first; r < end; ++r) {
+        const uint ru = uint(r);
+        const uint64_t k_idx = L1(tb + uint64_t(TB_KIDX + ru * 8u)).v, slots = L1(tb + uint64_t(TB_SLOTS + ru * 8u)).v;
+        const uint64_t ring = L1(tb + uint64_t(TB_RING + ru * 8u)).v, keys = L1(tb + uint64_t(TB_KEYS + ru * 8u)).v;
+        const uint64_t undo_ring = L1(tb + uint64_t(TB_URING + ru * 8u)).v, undo_key = L1(tb + uint64_t(TB_UKEY + ru * 8u)).v;
+        const int64_t ctxr = L1(tb + uint64_t(TB_CTX + ru * 8u)).v;
+        const int64_t at = bounded(L1(pc.pos + uint64_t(ru * 8u)).v, 0l, ctxr);
+        if (undo_ring != 0ul) {
+            for (uint i = tid; i < 4u * DI; i += 128u) H1(undo_ring + uint64_t(i * 2u)).v = H1(ring + uint64_t(i * 2u)).v;
+            if (undo_key != 0ul)
+                key_save_row(tid, keys, slots, at, int64_t(I1(tb + uint64_t(TB_J + ru * 4u)).v), int64_t(I1(tb + uint64_t(TB_N + ru * 4u)).v), undo_key);
+        }
+        if (k_idx == 0ul) continue;  // uniform
+        memoryBarrierBuffer();
+        barrier();
+        step_row(tid, w, lane, k_idx, slots, at, ring, keys);
+        memoryBarrierBuffer();
+        barrier();  // the next row's undo reads what this row wrote
+    }
+#endif
+}

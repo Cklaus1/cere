@@ -1,0 +1,23 @@
+{
+  "schema_version": "2",
+  "instance_id": "primary-coder-gpu0",
+  "lock_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "backend_profile_id": "sglang-pinned-profile",
+  "lifecycle_state": "ready",
+  "resource_ids": [
+    "gpu0"
+  ],
+  "resident_bytes": 1,
+  "lease_count": 1,
+  "active_request_count": 0,
+  "priority": 900,
+  "pinned": false,
+  "worker_epoch": 1,
+  "last_used_mono_ns": 1000000,
+  "keep_warm_until_mono_ns": 2000000,
+  "failure_reason": null,
+  "worker_id": "worker-local",
+  "generation": 1,
+  "reserved_bytes": 1,
+  "cleanup_pending": false
+}

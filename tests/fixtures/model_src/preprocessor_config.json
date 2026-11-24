@@ -1,0 +1,4 @@
+{
+  "image_processor_type": "FixtureImageProcessor",
+  "patch_size": 2
+}

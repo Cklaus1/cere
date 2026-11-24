@@ -1,0 +1,194 @@
+syntax = "proto3";
+package ai.cere.worker.v2;
+
+// Protocol revision 2 (not the product's v2 roadmap). M3.5 implements the subset in docs/WORKER_PROTOCOL.md and
+// amends this file in place (no deployed peers): any other revision is refused `unsupported_revision`.
+// Wire v1 sketches are rejected rather than guessed/migrated on a live channel.
+// Authenticated peer principal comes from mTLS/deployment policy, not a field.
+// Error channel: WorkerService/WorkerInferenceService refusals are gRPC statuses whose message is exactly the
+// reason code (OperationReceipt.accepted is true on OK). WorkerRegistryService protocol refusals are
+// `accepted: false` + `reason_code` with status OK; authentication, limits and malformed messages use statuses.
+
+// Implemented by the COORDINATOR; invoked by admitted workers.
+service WorkerRegistryService {
+  rpc Register(RegisterRequest) returns (RegisterReply);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
+}
+// Implemented by a WORKER; invoked by the authorized coordinator. Control traffic: 1 MiB message limit.
+// LoadModel, DrainModel and UnloadModel follow m36 design note Q4-Q6: an agent without [backend.launch] answers
+// FAILED_PRECONDITION `model_unmanaged`. StreamTelemetry answers UNIMPLEMENTED.
+service WorkerService {
+  rpc DescribeResources(InventoryRequest) returns (InventoryReply);
+  rpc LoadModel(ModelLifecycleRequest) returns (OperationReceipt);
+  rpc DrainModel(ModelLifecycleRequest) returns (OperationReceipt);
+  rpc UnloadModel(ModelLifecycleRequest) returns (OperationReceipt);
+  rpc CancelWork(CancelWorkRequest) returns (OperationReceipt);
+  rpc GetOperation(OperationQuery) returns (OperationStatus);
+  // Live and retained operations, for reconciliation; paged by (scope_id, operation_id), at most 256 per page.
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsReply);
+  rpc StreamWork(WorkStreamRequest) returns (stream WorkEvent);
+  rpc StreamTelemetry(TelemetryRequest) returns (stream TelemetryEnvelope);
+}
+// Implemented by a WORKER; invoked by the authorized coordinator. Inference traffic: its own service so it gets
+// the 8 MiB inference-message limit while control methods stay at 1 MiB (tonic limits are per service).
+service WorkerInferenceService {
+  rpc SubmitWork(SubmitWorkRequest) returns (OperationReceipt);
+}
+message WorkerIdentity {
+  string cluster_id = 1;
+  string worker_id = 2;
+  uint64 worker_epoch = 3;
+}
+message Authority {
+  WorkerIdentity target = 1;
+  string coordinator_id = 2;
+  uint64 coordinator_term = 3;
+  string scope_id = 4;
+  string operation_id = 5;
+  // Exactly 32 bytes: SHA-256 over the length-prefixed (u64 big-endian length + bytes) concatenation of the method
+  // name, scope_id, request_id, attempt (decimal ASCII), work_unit_json and then bounded_inference_input_json
+  // (SubmitWork) or completion_ticket (CancelWork). For LoadModel, DrainModel and UnloadModel: the method name,
+  // scope_id, deployment_lock_sha256 (the 32 raw bytes), instance_id and then each device_id. Excludes
+  // remaining_budget_ms, term, epoch and generation.
+  // The coordinator computes it; the worker recomputes and verifies it before dedupe/dispatch.
+  bytes payload_sha256 = 6;
+  // The request's remaining budget. The SubmitWork RPC deadline is min(rpc timeout, this budget) and bounds only
+  // the RPC; the worker-local work deadline is receipt instant + min(this budget, 600000 ms), never extended by a
+  // retry (the work outlives the Submit RPC).
+  uint64 remaining_budget_ms = 7;
+  // Set (>= 1 once a model is loaded) for Load/Drain/UnloadModel, SubmitWork, CancelWork, StreamWork; unset for
+  // DescribeResources, GetOperation, ListOperations and StreamTelemetry. Must equal the worker's current
+  // generation (else `stale_generation`). Part of the (scope_id, operation_id) dedupe identity.
+  optional uint64 model_generation = 8;
+}
+message RegisterRequest {
+  WorkerIdentity proposed = 1;
+  string boot_id = 2;
+  uint32 protocol_revision = 3;
+  bytes inventory_sha256 = 4;
+}
+message RegisterReply {
+  bool accepted = 1;
+  uint64 coordinator_term = 2;
+  uint64 admission_lease_ms = 3;
+  bool requires_reconciliation = 4;
+  string reason_code = 5;
+  // On `stale_epoch`: the highest epoch the coordinator journaled for this worker (the agent jumps to it + 1).
+  uint64 journaled_worker_epoch = 6;
+}
+message HeartbeatRequest {
+  WorkerIdentity worker = 1;
+  uint64 sequence = 2;
+  uint64 observed_coordinator_term = 3;
+  bytes inventory_sha256 = 4;
+  // No cross-machine monotonic timestamp: coordinator records local receive time.
+  // Sequence strictly increases per worker epoch; a non-increasing one is refused `replayed_heartbeat`.
+  uint64 model_generation = 5;
+  string admission_state = 6; // "open" | "fenced" | "poisoned"
+  // Team pools (net-teleport design note 4.4, C19): the worker serves only its owner now (its local
+  // `cere-worker owner-only on` switch or an `owner_only` window); other scopes' SubmitWork is refused `owner_only`.
+  bool owner_only = 7;
+}
+message HeartbeatReply {
+  bool accepted = 1;
+  uint64 coordinator_term = 2;
+  uint64 lease_sequence = 3; // restarts at 1 per term; grants ordered by (coordinator_term, lease_sequence)
+  uint64 admission_lease_ms = 4;
+  string desired_state = 5; // "" | "DRAINING"
+  // Set once the coordinator finished reconciliation for this term and worker epoch at this generation; the
+  // worker admits SubmitWork only while its lease is live and this equals its current generation.
+  optional uint64 reconciled_generation = 6;
+  string reason_code = 7;
+}
+message InventoryRequest { Authority authority = 1; }
+message InventoryReply { bytes bounded_resource_inventory_json = 1; uint64 inventory_generation = 2; }
+message ModelLifecycleRequest {
+  Authority authority = 1;
+  // Exactly 32 bytes (else INVALID_ARGUMENT `malformed_request`); must equal the agent's own `[backend]
+  // lock_sha256` (else FAILED_PRECONDITION `lock_not_approved`).
+  bytes deployment_lock_sha256 = 2;
+  // Empty for LoadModel; for Drain/UnloadModel empty or the current instance (else `stale_generation`).
+  string instance_id = 3;
+  reserved 4; reserved "model_generation"; // moved to Authority.model_generation
+  // Must be empty (else FAILED_PRECONDITION `unsupported_placement`): one model per worker on its configured GPUs.
+  repeated string device_ids = 5;
+  // Operator-approved lock/placement only; no paths, remote URLs or shell commands.
+}
+message SubmitWorkRequest {
+  Authority authority = 1;
+  string request_id = 2;
+  uint64 attempt = 3;
+  reserved 4; reserved "model_generation"; // moved to Authority.model_generation
+  bytes work_unit_json = 5;
+  bytes bounded_inference_input_json = 6;
+  // Local deadlines in work_unit_json must be rebased into the worker clock domain.
+  // Input counts against the inference-message limit, not the smaller admin-message limit.
+}
+message CancelWorkRequest {
+  Authority authority = 1;
+  string request_id = 2;
+  uint64 attempt = 3;
+  reserved 4; reserved "model_generation"; // moved to Authority.model_generation
+  string completion_ticket = 5;
+}
+message OperationReceipt {
+  bool accepted = 1;
+  string operation_id = 2;
+  string completion_ticket = 3;
+  string reason_code = 4;
+  // Accepted != started, ready, completed, cancelled or memory released.
+}
+message OperationQuery { Authority authority = 1; string queried_operation_id = 2; }
+message OperationStatus {
+  string operation_id = 1;
+  string phase = 2;
+  bool terminal = 3;
+  bool cleanup_acknowledged = 4;
+  uint64 model_generation = 5;
+  string completion_ticket = 6;
+  string reason_code = 7; // terminal reason; "" while running or after a natural completion
+  uint64 coordinator_term = 8;
+  uint64 worker_epoch = 9;
+  string scope_id = 10;
+  string request_id = 11;
+  uint64 attempt = 12;
+  string method = 13; // "SubmitWork" | "CancelWork" | "LoadModel" | "DrainModel" | "UnloadModel"
+}
+message ListOperationsRequest {
+  Authority authority = 1;
+  // Exclusive page cursor: operations ordered by (scope_id, operation_id), strictly after this pair.
+  string after_scope_id = 2;
+  string after_operation_id = 3;
+  uint32 limit = 4; // 1..=256
+}
+message ListOperationsReply {
+  repeated OperationStatus operations = 1;
+  bool more = 2;
+}
+message WorkStreamRequest {
+  Authority authority = 1;
+  string request_id = 2;
+  uint64 attempt = 3;
+  string completion_ticket = 4;
+  uint64 after_sequence = 5;
+}
+message WorkEvent {
+  WorkerIdentity worker = 1;
+  uint64 coordinator_term = 2;
+  string scope_id = 3;
+  string request_id = 4;
+  uint64 attempt = 5;
+  uint64 sequence = 6;
+  string completion_ticket = 7;
+  uint64 committed_token_offset = 8;
+  bytes bounded_output_event_json = 9;
+  bool terminal = 10;
+  string reason_code = 11; // set on the terminal event; "" = natural completion
+}
+message TelemetryRequest { Authority authority = 1; uint64 after_sequence = 2; }
+message TelemetryEnvelope {
+  WorkerIdentity worker = 1;
+  string clock_domain = 2;
+  uint64 sequence = 3;
+  bytes bounded_metadata_event_json = 4;
+}

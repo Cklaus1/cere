@@ -1,0 +1,746 @@
+{
+  "schema_version": "1",
+  "model_id": "qwen38-flash-next",
+  "architecture": {
+    "value": [
+      "Qwen4ExpForConditionalGeneration"
+    ],
+    "sources": [
+      "config.json:architectures"
+    ]
+  },
+  "model_type": {
+    "value": "qwen4_exp",
+    "sources": [
+      "config.json:model_type"
+    ]
+  },
+  "checkpoint": {
+    "name": "Qwen3.8-Flash-Next-NVFP4",
+    "config_json_sha256": "a6ea2a7279bf0c26a2d9cc71f75979f0fdc4964dc8f8e4959ca3ebaf4d6f31fd",
+    "reference_path": "/var/lib/cere/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4/config.json"
+  },
+  "dimensions": {
+    "vocab_size": {
+      "value": 248320,
+      "sources": [
+        "config.json:text_config.vocab_size",
+        "executor:executor/cuda/src/model/model.h#kVocab"
+      ]
+    },
+    "hidden_size": {
+      "value": 2560,
+      "sources": [
+        "config.json:text_config.hidden_size",
+        "executor:executor/cuda/src/model/model.h#kHidden",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kHidden"
+      ]
+    },
+    "num_hidden_layers": {
+      "value": 48,
+      "sources": [
+        "config.json:text_config.num_hidden_layers",
+        "executor:executor/cuda/src/model/model.h#kLayers"
+      ]
+    },
+    "num_attention_heads": {
+      "value": 24,
+      "sources": [
+        "config.json:text_config.num_attention_heads",
+        "executor:executor/cuda/src/model/model.h#kQHeads",
+        "executor:executor/cuda/src/kernels/k6_attention.h#kQHeads",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kQHeads",
+        "executor:executor/cuda/src/kernels/p4_attention.h#kQHeads"
+      ]
+    },
+    "num_key_value_heads": {
+      "value": 2,
+      "sources": [
+        "config.json:text_config.num_key_value_heads",
+        "executor:executor/cuda/src/model/model.h#kKvHeads",
+        "executor:executor/cuda/src/kernels/k6_attention.h#kKvHeads",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kKvHeads",
+        "executor:executor/cuda/src/kernels/p4_attention.h#kKvHeads"
+      ]
+    },
+    "head_dim": {
+      "value": 256,
+      "sources": [
+        "config.json:text_config.head_dim",
+        "executor:executor/cuda/src/model/model.h#kHeadDim",
+        "executor:executor/cuda/src/kernels/k6_attention.h#kHeadDim",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kHeadDim",
+        "executor:executor/cuda/src/kernels/p4_attention.h#kHeadDim"
+      ]
+    },
+    "rotary_dim": {
+      "value": 64,
+      "sources": [
+        "executor:executor/cuda/src/model/model.h#kRotaryDim",
+        "executor:executor/cuda/src/kernels/k6_attention.h#kRotaryDim",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kRotaryDim"
+      ]
+    },
+    "partial_rotary_factor": {
+      "value": 0.25,
+      "sources": [
+        "config.json:text_config.partial_rotary_factor",
+        "config.json:text_config.rope_parameters.partial_rotary_factor"
+      ]
+    },
+    "rope_theta": {
+      "value": 10000000,
+      "sources": [
+        "config.json:text_config.rope_parameters.rope_theta"
+      ]
+    },
+    "mrope_section": {
+      "value": [
+        11,
+        11,
+        10
+      ],
+      "sources": [
+        "config.json:text_config.rope_parameters.mrope_section"
+      ]
+    },
+    "rms_norm_eps": {
+      "value": 1e-06,
+      "sources": [
+        "config.json:text_config.rms_norm_eps",
+        "executor:executor/cuda/src/kernels/k5_gdn_layer.h#kNormEps"
+      ]
+    },
+    "full_attention_interval": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.full_attention_interval"
+      ]
+    },
+    "max_position_embeddings": {
+      "value": 262144,
+      "sources": [
+        "config.json:text_config.max_position_embeddings"
+      ]
+    },
+    "hc_count": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.hc_count",
+        "executor:executor/cuda/src/model/model.h#kHc",
+        "executor:executor/cuda/src/kernels/k3_hc_math.cuh#kHc",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kHcCount"
+      ]
+    },
+    "hc_lowrank": {
+      "value": 320,
+      "sources": [
+        "config.json:text_config.hc_lowrank"
+      ]
+    },
+    "linear_num_key_heads": {
+      "value": 16,
+      "sources": [
+        "config.json:text_config.linear_num_key_heads",
+        "executor:executor/cuda/src/kernels/k5_gdn_layer.h#kKeyHeads",
+        "executor:executor/cuda/src/kernels/k5_gdn_decode.cu#kKeyHeads",
+        "executor:executor/cuda/src/kernels/k5_gdn_chunk.cu#kHK"
+      ]
+    },
+    "linear_num_value_heads": {
+      "value": 48,
+      "sources": [
+        "config.json:text_config.linear_num_value_heads",
+        "executor:executor/cuda/src/model/model.h#kGdnValueHeads",
+        "executor:executor/cuda/src/kernels/k5_gdn_layer.h#kValueHeads",
+        "executor:executor/cuda/src/kernels/k5_gdn_decode.cu#kValueHeads",
+        "executor:executor/cuda/src/kernels/k5_gdn_chunk.cu#kHV"
+      ]
+    },
+    "linear_key_head_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.linear_key_head_dim",
+        "executor:executor/cuda/src/kernels/k5_gdn.h#kHeadDim",
+        "executor:executor/cuda/src/kernels/k5_gdn_decode.cu#kHeadDim"
+      ]
+    },
+    "linear_value_head_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.linear_value_head_dim",
+        "executor:executor/cuda/src/kernels/k5_gdn.h#kHeadDim",
+        "executor:executor/cuda/src/kernels/k5_gdn_decode.cu#kHeadDim"
+      ]
+    },
+    "linear_conv_kernel_dim": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.linear_conv_kernel_dim",
+        "executor:executor/cuda/src/kernels/k5_gdn.h#kConvWidth"
+      ]
+    },
+    "num_experts": {
+      "value": 512,
+      "sources": [
+        "config.json:text_config.num_experts",
+        "executor:executor/cuda/src/model/model.h#kExperts"
+      ]
+    },
+    "num_experts_per_tok": {
+      "value": 10,
+      "sources": [
+        "config.json:text_config.num_experts_per_tok",
+        "executor:executor/cuda/src/model/model.h#kTopK"
+      ]
+    },
+    "moe_intermediate_size": {
+      "value": 640,
+      "sources": [
+        "config.json:text_config.moe_intermediate_size",
+        "executor:executor/cuda/src/model/model.h#kMoeInter"
+      ]
+    },
+    "shared_expert_intermediate_size": {
+      "value": 640,
+      "sources": [
+        "config.json:text_config.shared_expert_intermediate_size",
+        "executor:executor/cuda/src/model/model.h#kSharedInter"
+      ]
+    },
+    "indexer_n_heads": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.indexer_n_heads",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kIndexHeads"
+      ]
+    },
+    "indexer_head_dim": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.indexer_head_dim",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kIndexHeadDim"
+      ]
+    },
+    "indexer_kv_heads": {
+      "value": 1,
+      "sources": [
+        "config.json:text_config.indexer_kv_heads"
+      ]
+    },
+    "indexer_compress_ratio": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.indexer_compress_ratio",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kRatio"
+      ]
+    },
+    "indexer_budget": {
+      "value": 2048,
+      "sources": [
+        "config.json:text_config.indexer_budget",
+        "executor:executor/cuda/src/kernels/k9_qsa.h#kTokenTopk"
+      ]
+    },
+    "ple_layer_ids": {
+      "value": [
+        2
+      ],
+      "sources": [
+        "config.json:text_config.ple_layer_ids"
+      ]
+    },
+    "ple_embed_dim": {
+      "value": 2560,
+      "sources": [
+        "config.json:text_config.ple_embed_dim",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kEmbedDim"
+      ]
+    },
+    "ple_conv_kernel_size": {
+      "value": 4,
+      "sources": [
+        "config.json:text_config.ple_conv_kernel_size",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kConvKernel"
+      ]
+    },
+    "heads_per_ngram": {
+      "value": 8,
+      "sources": [
+        "config.json:text_config.heads_per_ngram",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kHeadsPerNgram"
+      ]
+    },
+    "ngram_size": {
+      "value": 3,
+      "sources": [
+        "config.json:text_config.ngram_size",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kNgramSize"
+      ]
+    },
+    "split_ngram_parts": {
+      "value": 128,
+      "sources": [
+        "config.json:text_config.split_ngram_parts"
+      ]
+    },
+    "eos_token_id": {
+      "value": 248044,
+      "sources": [
+        "config.json:text_config.eos_token_id",
+        "executor:executor/cuda/src/kernels/k4_ple.h#kEosTokenId"
+      ]
+    }
+  },
+  "layers": {
+    "sources": [
+      "config.json:text_config.layer_types",
+      "config.json:text_config.ple_layer_ids"
+    ],
+    "kinds": [
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": true
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "linear_attention",
+        "ffn": "moe",
+        "ple": false
+      },
+      {
+        "mixer": "full_attention",
+        "ffn": "moe",
+        "ple": false
+      }
+    ]
+  },
+  "slots": {
+    "linear_attention": [
+      "mix.hc",
+      "norm",
+      "attention.linear_gdn",
+      "mix.hc",
+      "norm",
+      "ffn.moe"
+    ],
+    "full_attention": [
+      "mix.hc",
+      "norm",
+      "attention.full",
+      "attention.sparse_qsa",
+      "mix.hc",
+      "norm",
+      "ffn.moe"
+    ],
+    "model": [
+      "embed.token",
+      "vision",
+      "embed.ple",
+      "mix.hc",
+      "norm",
+      "lm_head",
+      "sample",
+      "draft.mtp"
+    ]
+  },
+  "weights": {
+    "quant_algo": {
+      "value": "NVFP4",
+      "sources": [
+        "config.json:quantization_config.quant_algo"
+      ]
+    },
+    "group_size": {
+      "value": 16,
+      "sources": [
+        "config.json:quantization_config.config_groups.group_0.weights.group_size"
+      ]
+    },
+    "dense_dtype": {
+      "value": "bfloat16",
+      "sources": [
+        "config.json:text_config.dtype"
+      ]
+    },
+    "ple_embedding_dtype": {
+      "value": "float8_e4m3fn",
+      "sources": [
+        "config.json:text_config.ple_embedding_dtype"
+      ]
+    },
+    "linear_state_dtype": {
+      "value": "float32",
+      "sources": [
+        "config.json:text_config.mamba_ssm_dtype"
+      ]
+    },
+    "unquantized_modules": {
+      "value": [
+        "model.embed_tokens",
+        "mtp.*",
+        "model.mtp.*",
+        "*.self_attn.*",
+        "*.linear_attn.*",
+        "*.mlp.gate*",
+        "*.mlp.shared_expert.*",
+        "*.mlp.shared_expert_gate*",
+        "*hyper_connection*",
+        "*.ple.*",
+        "model.visual.*",
+        "model.language_model.embed_tokens",
+        "lm_head",
+        "*hyper_connection_mixer.*"
+      ],
+      "sources": [
+        "config.json:quantization_config.ignore"
+      ]
+    },
+    "tie_word_embeddings": {
+      "value": false,
+      "sources": [
+        "config.json:tie_word_embeddings",
+        "config.json:text_config.tie_word_embeddings"
+      ]
+    }
+  },
+  "graph": {
+    "verify_segment_layers": {
+      "value": 4,
+      "sources": [
+        "executor:executor/cuda/src/model/model.h#kVerifySegmentLayers"
+      ]
+    },
+    "max_chunk_tokens": {
+      "value": 4096,
+      "sources": [
+        "executor:executor/cuda/src/model/model.h#kMaxChunkTokens"
+      ]
+    }
+  },
+  "draft_head": {
+    "kind": "mtp",
+    "num_hidden_layers": {
+      "value": 1,
+      "sources": [
+        "config.json:text_config.mtp_num_hidden_layers",
+        "config.json:text_config.mtp.num_hidden_layers"
+      ]
+    },
+    "layer_types": {
+      "value": [
+        "full_attention"
+      ],
+      "sources": [
+        "config.json:text_config.mtp.layer_types"
+      ]
+    },
+    "rope_theta": {
+      "value": 10000000,
+      "sources": [
+        "config.json:text_config.mtp.rope_theta"
+      ]
+    },
+    "use_dedicated_embeddings": {
+      "value": false,
+      "sources": [
+        "config.json:text_config.mtp_use_dedicated_embeddings"
+      ]
+    }
+  },
+  "vision": {
+    "depth": {
+      "value": 27,
+      "sources": [
+        "config.json:vision_config.depth",
+        "executor:executor/cuda/src/model/vision.h#kDepth"
+      ]
+    },
+    "hidden_size": {
+      "value": 1152,
+      "sources": [
+        "config.json:vision_config.hidden_size",
+        "executor:executor/cuda/src/model/vision.h#kHidden",
+        "executor:executor/cuda/src/kernels/kv_vision.h#kHidden"
+      ]
+    },
+    "intermediate_size": {
+      "value": 4304,
+      "sources": [
+        "config.json:vision_config.intermediate_size",
+        "executor:executor/cuda/src/model/vision.h#kInter"
+      ]
+    },
+    "num_heads": {
+      "value": 16,
+      "sources": [
+        "config.json:vision_config.num_heads",
+        "executor:executor/cuda/src/kernels/kv_vision.h#kHeads"
+      ]
+    },
+    "patch_size": {
+      "value": 16,
+      "sources": [
+        "config.json:vision_config.patch_size"
+      ]
+    },
+    "temporal_patch_size": {
+      "value": 2,
+      "sources": [
+        "config.json:vision_config.temporal_patch_size"
+      ]
+    },
+    "spatial_merge_size": {
+      "value": 2,
+      "sources": [
+        "config.json:vision_config.spatial_merge_size",
+        "executor:executor/cuda/src/kernels/kv_vision.h#kMerge",
+        "executor:executor/cuda/src/host/mrope.h#kSpatialMergeSize"
+      ]
+    },
+    "in_channels": {
+      "value": 3,
+      "sources": [
+        "config.json:vision_config.in_channels"
+      ]
+    },
+    "out_hidden_size": {
+      "value": 2560,
+      "sources": [
+        "config.json:vision_config.out_hidden_size",
+        "executor:executor/cuda/src/model/vision.h#kOutHidden"
+      ]
+    },
+    "num_position_embeddings": {
+      "value": 2304,
+      "sources": [
+        "config.json:vision_config.num_position_embeddings"
+      ]
+    }
+  }
+}

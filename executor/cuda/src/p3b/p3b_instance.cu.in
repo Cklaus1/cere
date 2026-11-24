@@ -1,0 +1,8 @@
+// P3b (tasks/m23-spec.md M23-D1): one SM120 grouped-GEMM instantiation of FlashInfer 0.6.17's CUTLASS fused MoE,
+// as its generate_kernels.py emits it for (SafeFP4, SafeFP4, BF16). executor/CMakeLists.txt writes one file per
+// (epilogue, tile, swapAB) from this template; the dispatch references all 32.
+#include "tensorrt_llm/kernels/cutlass_kernels/moe_gemm/launchers/moe_gemm_tma_ws_launcher.inl"
+namespace tensorrt_llm::kernels::cutlass_kernels_oss {
+INSTANTIATE_TMA_WARP_SPECIALIZED_MOE_GEMM(Sm120, SafeFP4, SafeFP4, __nv_bfloat16, void, EpilogueOpDefault,
+                                          @epilogue@, @tile@, 1, 1, 1, false, false, false, @swap@);
+}

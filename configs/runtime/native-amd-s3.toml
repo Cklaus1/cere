@@ -1,0 +1,101 @@
+# AmdAmd PAR-6 first-light profile, written by scripts/live/amd/make_native_profile.py: the S3 FP4-Local
+# artifact on AMD's AMD GPU (gfx1151) through the HIP executor. One row, no MTP speculation, no prefix cache,
+# text output only, 32768 tokens. Container paths (scripts/live/amd/run_native.sh).
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18319"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-amd-qwen38-flash-next-v60"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next-native-amd-s3"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+
+[deployments.native]
+library = "/src/ai-cere/build/hip/libcere_executor_hip.so"
+library_sha256 = "7deab21a9488737095a41d5177d977312f8d24070719aa1598e7a07c8bc278c1"
+artifact_dir = "/artifacts/qwen38-flash-next-fp4local-cere-s3-dedc7dba9bc84493"
+expected_manifest_sha256 = "dedc7dba9bc84493aa0c7a6e29edcd34c2636fe662af86f5d23cb7564bdde058"
+device_uuid = "hip:0"
+max_context_tokens = 32768
+kv_pool_tokens = 32768
+sidecar = ["python3", "/src/ai-cere/scripts/native/tokenizer_sidecar.py", "--artifact", "/artifacts/qwen38-flash-next-fp4local-cere-s3-dedc7dba9bc84493"]
+image_digest = "sha256:4d95ff4434aaf732c7d9958694c6473aef07154203af3ef11cd15966919816ff"
+
+# The HIP library is the k7 MoE build (the registry default, p3b, is another library build): a lever the library
+# was not built with is refused at cere_model_create (executor/cuda/src/host/api.cpp check_levers).
+[deployments.native.levers]
+moe_gemm = "k7"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt plus max_tokens must fit the 32,768-token context (m25 design note D6); output is capped at 2,048 below 65,536 tokens (api-lenient design note AL-5).
+[api]
+max_request_body_bytes = 8388608
+max_messages = 4096
+default_max_output_tokens = 1024
+max_output_tokens = 2048
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# One executor row (the profile's decode_batch_max).
+[admission]
+max_backend_inflight = 1
+per_scope_inflight = 1
+queue_depth = 16
+
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[[auth.scopes]]
+scope_id = "native-b"
+token_env = "CERE_TOKEN_NATIVE_B"
+
+[ledger]
+state_dir = "/var/lib/cere/native-amd"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

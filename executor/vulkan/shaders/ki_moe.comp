@@ -1,0 +1,555 @@
+#version 460
+// Inkling S11: routed-expert products (spec section 5, arm Q; order contract: InkS4's executor/ref/inkling/moe_ref.h).
+// A "pair" p = token * 8 + slot (the router's 8 slots per token, ascending expert id); e = ids[p], gamma = wts[p].
+// FMT 0 = NVFP4 W4A4 (layers 0-19), FMT 1 = MXFP8 (layers 20-23).
+//   STAGE 0 (gate/up + capped SwiGLU): activation row p / 8 (the token's quantized x); w13 rows 2i (gate) and 2i + 1 (up)
+//     (the checkpoint interleaves them); thread i writes v[p][i] = bf16(swiglu(bf16(gate), bf16(up)) * gamma), N / 2
+//     columns.
+//   STAGE 1 (down): activation row p (v quantized per pair); y[p][c] = bf16(product), N columns.
+//   STAGE 2 (combine, FMT unused): out[t][c] = bf16(y[8t][c] + ... + y[8t + 7][c]), sequential from 0.
+// Per output, NVFP4: T_j = (exact sum of block j's 16 e2m1 products) * (sx_j * sw_j); acc = 0, acc += T_j in block
+// order; y = acc * ((amax_x * amax_w[e]) * (1 / (1536 * den))). MXFP8: B_j = fma chain over block j's 32 e4m3 products
+// in index order from 0; T_j = B_j * (2^(ex_j - 127) * 2^(ew_j - 127)); acc in block order; no outer factor.
+// Tilings (S12; the per-output arithmetic is the reference's order above in every one; only who computes what moved):
+//   STAGE 0 / 1 (decode, few pairs): a workgroup computes ROWS weight rows of one pair. Its lanes walk the (row, block)
+//     grid, each lane a whole block T_j, so one row's blocks are read by consecutive lanes (coalesced); the T_j go to
+//     shared memory and lane r sums row r's T_j sequentially in block order.
+//   STAGE 5 (bucket): one workgroup lists the pairs of each expert (ascending pair id) and cuts the lists into tiles of
+//     PT pairs: tab = uint tiles[tiles][4] (expert, list start, count, 0; count 0 = unused), then uint list[pairs].
+//   STAGE 3 / 4 (prefill, grouped gate/up / down): workgroup (GROWS-row tile, pair tile of <= PT pairs of one expert).
+//     K is walked in chunks of KC blocks staged in shared memory (the tile's activation blocks and weight blocks, with
+//     decoded scales); lane (rg, qg) owns the RB x QB outputs (row r0 + rg + 16 i, pair qg + 8 k) and adds each one's
+//     T_j in block order across chunks (register blocking: a staged block is read once per RB / QB outputs).
+//   CM = 1 (STAGE 3 / 4, FMT 0; AMD prefill, D-I-EPB (a1)): the same tile, staging and per-output arithmetic, but each
+//     block's integer sum is one int8 cooperative-matrix product (VK_KHR_cooperative_matrix, s8 x s8 -> s32, 16x16x16,
+//     subgroup of 32, zero accumulator): subgroup sg owns weight rows 16 sg .. + 15 and both 16-pair halves. Exact:
+//     the staged codes are 2 * e2m1 in [-12, 12], so |sum of 16 products| <= 16 * 144 = 2304, an int32 that float()
+//     converts exactly, the same value the sdot4x8 chain forms. The epilogue keeps T_j = float(is) * (xs * ws),
+//     acc += T_j in block order. It reads the accumulator's element -> (row, column) map, element i of lane l =
+//     (2 i + l / 16, l % 16), which the host checks once per context (moe_probe, STAGE 6) and otherwise runs CM = 0.
+//     MUT = 1 (the fail-first mutant, ki_test / ki_forward --mutant blockorder): blocks of a chunk summed in reverse.
+//   STAGE 6: the layout probe (one subgroup; element (r, c) of a loaded accumulator holds r * 16 + c; each lane writes
+//     length() and its elements).
+#extension GL_GOOGLE_include_directive : require
+#ifndef CM
+#define CM 0
+#endif
+#ifndef MUT
+#define MUT 0
+#endif
+#if CM || STAGE == 6
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_shader_subgroup_basic : require
+#endif
+#if CM
+#extension GL_KHR_shader_subgroup_shuffle : require
+#endif
+#if CM && (FMT != 0 || (STAGE != 3 && STAGE != 4))
+#error "CM: NVFP4 grouped stages only"
+#endif
+#if STAGE == 3 || STAGE == 4
+#define WG 128
+#elif STAGE == 6
+#define WG 32
+#else
+#define WG 64
+#endif
+#include "ki_common.comp"
+#define ROWS 4u  // weight rows per workgroup (AMD decode sweep 2/4/8/16/32: 4 fastest; latency-bound, more workgroups)
+#define NBMAX 144u
+#define PT 32u
+#if STAGE == 6
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer KI_IA { int v[]; };
+#endif
+layout(local_size_x = WG) in;
+layout(push_constant) uniform P {
+    uint64_t aq, as_, aamax, w, ws, wamax, ids, wts, o, tab;
+    uint N, K, pairs, tiles;
+    float den;
+} p;
+
+float ue8m0_f(uint v) { return v == 255u ? uintBitsToFloat(0x7fc00000u) : ki_exp2i(int(v) - 127); }
+
+// Byte -> 16-bit LUT, filled by main before any use. NVFP4: code byte -> two int8 (e2m1_s8_pair); MXFP8 (grouped stages
+// only): e4m3 byte -> its fp16 bits (exact: every e4m3 value, subnormals included, is an fp16 normal; NaN stays NaN).
+// s8lo / s8hi expand a source word's bytes 0-1 / 2-3 into one 32-bit word.
+shared uint e2lut[256];
+uint s8lo(uint w) { return e2lut[w & 0xFFu] | (e2lut[(w >> 8) & 0xFFu] << 16); }
+uint s8hi(uint w) { return e2lut[(w >> 16) & 0xFFu] | (e2lut[w >> 24] << 16); }
+void lut_init(uint lid) {
+#if FMT == 0
+    for (uint i = lid; i < 256u; i += WG) e2lut[i] = e2m1_s8_pair(i);
+#else
+    for (uint i = lid; i < 256u; i += WG) e2lut[i] = packHalf2x16(vec2(e4m3_f(i), 0.0)) & 0xFFFFu;
+#endif
+    barrier();
+}
+
+// Block j's scaled partial T_j of activation row ar and weight row wr (of expert e: wr already includes e * N).
+// NVFP4: the 16 products' sum is formed exactly as an int8 dot (4 * the FP32 chain's value, see e2m1_s8).
+float block_t(uint ar, uint wr, uint j) {
+    const uint K = p.K;
+#if FMT == 0
+    const uint nb = K / 16u;
+    const uint ai = (ar * (K / 2u)) / 8u + j, wi = (wr * (K / 2u)) / 8u + j;  // 8-byte block words (rows K / 2 bytes)
+    const uvec2 av = ldu2(p.aq, ai), wv = ldu2(p.w, wi);
+    const uint a0 = av.x, a1 = av.y, w0 = wv.x, w1 = wv.y;
+    const int is = sdot4x8(s8lo(a0), s8lo(w0), 0) + sdot4x8(s8hi(a0), s8hi(w0), 0) + sdot4x8(s8lo(a1), s8lo(w1), 0) +
+                   sdot4x8(s8hi(a1), s8hi(w1), 0);
+    const float s = ki_mul(float(is), 0.25);
+    const float sc = ki_mul(e4m3_f(ldb8(p.as_, ar * nb + j)), e4m3_f(ldb8(p.ws, wr * nb + j)));
+    return ki_mul(s, sc);
+#else
+    const uint nb = K / 32u;
+    const uint ai = (ar * K) / 16u + 2u * j, wi = (wr * K) / 16u + 2u * j;  // 16-byte words (rows K bytes)
+    float b = 0.0;
+    for (uint h = 0u; h < 2u; ++h) {
+        const uvec4 a4 = ldu4(p.aq, ai + h), w4 = ldu4(p.w, wi + h);
+        [[unroll]] for (uint q = 0u; q < 4u; ++q) {
+            const uint a = a4[q], w = w4[q];
+            [[unroll]] for (uint i = 0u; i < 4u; ++i) b = ki_fma(e4m3_f((a >> (8u * i)) & 255u), e4m3_f((w >> (8u * i)) & 255u), b);
+        }
+    }
+    const float sc = ki_mul(ue8m0_f(ldb8(p.as_, ar * nb + j)), ue8m0_f(ldb8(p.ws, wr * nb + j)));
+    return ki_mul(b, sc);
+#endif
+}
+
+// The output from its block-order sum acc.
+float finish(uint ar, uint e, float acc) {
+#if FMT == 0
+    const float rcp = ki_div(1.0, ki_mul(1536.0, p.den));
+    return ki_mul(acc, ki_mul(ki_mul(ldf(p.aamax, ar), ldf(p.wamax, e)), rcp));
+#else
+    return acc;
+#endif
+}
+
+// v[pr][c] of STAGE 0 / 3: the capped SwiGLU of the pair's gate and up outputs, times its router weight.
+void store_swiglu(uint pr, uint c, float gate, float up) {
+    const float g = round_bf(gate), u = round_bf(up);
+    const float gc = ki_mul(4.0, ki_tanh(ki_mul(g, 0.25)));
+    const float uc = ki_mul(25.0, ki_tanh(ki_div(u, 25.0)));
+    stbf(p.o, pr * (p.N / 2u) + c, ki_mul(ki_mul(ki_mul(gc, ki_sigmoid(g)), uc), ldf(p.wts, pr)));
+}
+
+#if STAGE == 0 || STAGE == 1
+shared vec4 tj[ROWS * NBMAX / 4u];  // row r's T_j at r * NBMAX + j (nb is a multiple of 4: read as vec4, in order)
+shared float res[ROWS];
+#elif STAGE == 3 || STAGE == 4
+// K is walked in chunks of KC blocks; each chunk's activation blocks of the tile's PT pairs and weight blocks of its
+// GROWS rows are staged in shared memory, each source word expanded to two (NVFP4: int8x4 of the codes; MXFP8: the
+// e4m3 values as fp16 pairs), with their decoded scales (NVFP4 activation scales pre-multiplied by 0.25: exact, and
+// is * ((sx / 4) * sw) == (is / 4) * (sx * sw) in fp32, so T_j keeps its bits). A staged row is 16 uvec4; row r's
+// uvec4 u sits at slot u ^ (r & 15) (the 16 rows a wave's lanes read at one u hit 16 distinct bank groups).
+#define GROWS 64u
+#define RB 4u  // rows per lane: rg + 16 i
+#define QB 4u  // pairs per lane: qg + 8 k
+#if FMT == 0 && CM
+#ifndef CKC
+#define CKC 4u  // AMD sweep 4 / 8 / 16 (D-I-EPB (a1)): 4 fastest; less shared memory, more workgroups per WGP
+#endif
+#define WPB 4u
+#define KC CKC  // CM: blocks per chunk
+#define SU KC
+#elif FMT == 0
+#define WPB 4u  // stored words per block: 16 codes as four int8x4
+#define KC 16u
+#define SU 16u  // uvec4 per staged row (KC * WPB / 4)
+#else
+#define WPB 16u  // 32 e4m3 values as sixteen fp16 pairs
+#define KC 4u
+#define SU 16u
+#endif
+#if CM
+// CM: rows unswizzled with one pad uvec4 (coopMatLoad needs a plain stride); scales block-major: activation
+// sas[jj * PT + pair], weight sws[jj * GROWS + wperm(row)] (a lane's 8 rows 2 i + l / 16 of its row tile are 8
+// consecutive floats: two vec4 reads).
+#define LDS (KC + 1u)
+shared uvec4 sa[PT * LDS];
+shared uvec4 sw[GROWS * LDS];
+shared float sas[PT * KC];
+shared vec4 sws4[GROWS * KC / 4u];
+uint sslot(uint r, uint u) { return r * LDS + u; }
+uint wperm(uint r) { return (r & ~15u) | ((r & 1u) << 3) | ((r & 15u) >> 1); }
+#else
+shared uvec4 sa[PT * SU];
+shared uvec4 sw[GROWS * SU];  // after the K loop: the finished outputs res[row * PT + pair] as float bits
+shared float sas[PT * KC], sws[GROWS * KC];
+uint sslot(uint r, uint u) { return r * SU + (u ^ (r & 15u)); }
+#endif
+shared uint sar[PT];
+// Chunk staging: stage_load reads chunk jb's source uvec2 u of each row (NVFP4 one per block, MXFP8 four) and its
+// block scale bytes into registers, stage_store expands them (s8lo / s8hi) into the shared tiles with the decoded
+// scales (NVFP4 activation scales times 0.25). Lane slot s holds item lid + s * WG. (Issuing chunk jb + KC's loads
+// before computing chunk jb measured no faster on AMD, S12 11-23.)
+#if CM
+#define SPL ((PT + GROWS) * KC / WG)
+#define SUB 1u
+#define SPB SPL
+#else
+#define SPL 12u  // (PT + GROWS) * KC * (FMT == 0 ? 1 : 4) / WG
+#if FMT == 0
+#define SUB 1u  // source uvec2 per block
+#define SPB 12u  // (PT + GROWS) * KC / WG
+#else
+#define SUB 4u
+#define SPB 3u
+#endif
+#endif
+uvec2 pf_w[SPL];
+uint pf_b[SPB];
+// Item i of a chunk: row i / SU, source uvec2 i % SU (live when < nbc * SUB; SU = KC * SUB, both formats), scale item
+// i: row i / KC, block i % KC (powers of two: no division).
+#if CM
+// CM: branch-free (a dead item reads activation row sar[0]'s first word / scale of the chunk and is never stored), so
+// every load of the chunk issues before the first wait: a load under divergent control flow is waited for where its
+// branch merges, which serialized the loads.
+void stage_load(uint jb, uint nb, uint count, uint nrows, uint e, uint r0, uint rw) {
+    const uint nbc = min(KC, nb - jb), su_n = nbc * SUB, wr0 = e * p.N + r0, a0 = sar[0];
+    const uint64_t qa = p.aq, qw = p.w, sa_ = p.as_, sw_ = p.ws;
+    [[unroll]] for (uint s = 0u; s < SPL; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / SU, u = i % SU;
+        const bool live = row < count + nrows && u < su_n, wt = live && row >= count;
+        const uint ar = sar[min(row, PT - 1u)], wr = wr0 + row - count, ac = live ? ar : a0, uc = live ? u : 0u;
+        const uint r = wt ? wr : ac;
+        const uint64_t q = wt ? qw : qa;
+        pf_w[s] = ldu2(q, r * rw + jb * SUB + uc);
+    }
+    [[unroll]] for (uint s = 0u; s < SPB; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / KC, jj = i % KC;
+        const bool live = row < count + nrows && jj < nbc, wt = live && row >= count;
+        const uint ar = sar[min(row, PT - 1u)], wr = wr0 + row - count, ac = live ? ar : a0, jc = live ? jj : 0u;
+        const uint r = wt ? wr : ac;
+        const uint64_t q = wt ? sw_ : sa_;
+        pf_b[s] = ldb8(q, r * nb + jb + jc);
+    }
+}
+#else
+void stage_load(uint jb, uint nb, uint count, uint nrows, uint e, uint r0, uint rw) {
+    const uint nbc = min(KC, nb - jb), su_n = nbc * SUB;
+    [[unroll]] for (uint s = 0u; s < SPL; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / SU, u = i % SU;
+        if (row < count + nrows && u < su_n) {
+            const bool act = row < count;
+            const uint src = act ? sar[row] * rw : (e * p.N + r0 + row - count) * rw;
+            pf_w[s] = ldu2(act ? p.aq : p.w, src + jb * SUB + u);
+        }
+    }
+    [[unroll]] for (uint s = 0u; s < SPB; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / KC, jj = i % KC;
+        if (row < count + nrows && jj < nbc) {
+            const bool act = row < count;
+            pf_b[s] = act ? ldb8(p.as_, sar[row] * nb + jb + jj) : ldb8(p.ws, (e * p.N + r0 + row - count) * nb + jb + jj);
+        }
+    }
+}
+#endif
+void stage_store(uint nbc, uint count, uint nrows) {
+    const uint su_n = nbc * SUB;
+    [[unroll]] for (uint s = 0u; s < SPL; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / SU, u = i % SU;
+        if (row < count + nrows && u < su_n) {
+            const uvec2 w = pf_w[s];
+            const uvec4 x = uvec4(s8lo(w.x), s8hi(w.x), s8lo(w.y), s8hi(w.y));
+            if (row < count) sa[sslot(row, u)] = x; else sw[sslot(row - count, u)] = x;
+        }
+    }
+    [[unroll]] for (uint s = 0u; s < SPB; ++s) {
+        const uint i = gl_LocalInvocationID.x + s * WG, row = i / KC, jj = i % KC;
+        if (row < count + nrows && jj < nbc) {
+#if CM
+            const float sc = e4m3_f(pf_b[s]);
+            if (row < count) {
+                sas[jj * PT + row] = ki_mul(sc, 0.25);
+            } else {
+                const uint x = jj * GROWS + wperm(row - count);
+                sws4[x / 4u][x % 4u] = sc;
+            }
+#elif FMT == 0
+            const float sc = e4m3_f(pf_b[s]);
+            if (row < count) sas[row * KC + jj] = ki_mul(sc, 0.25); else sws[(row - count) * KC + jj] = sc;
+#else
+            const float sc = ue8m0_f(pf_b[s]);
+            if (row < count) sas[row * KC + jj] = sc; else sws[(row - count) * KC + jj] = sc;
+#endif
+        }
+    }
+}
+#if CM
+float acc[2][8];  // [pair half h][element i]: output (row 16 sg + 2 i + hl, pair 16 h + rl)
+// Block jj of the staged chunk: S_j = one int8 coopMatMulAdd (C = 0) per pair half, then T_j = S_j * (sx_j * sw_j)
+// added in block order (the vector route's epilogue, operation for operation).
+void cm_block(uint jj) {
+    const uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID, rl = lane % 16u, hl = lane / 16u;
+    coopmat<int8_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> A;
+    coopMatLoad(A, sw, (sg * 16u) * LDS + jj, LDS, gl_CooperativeMatrixLayoutRowMajor);
+    const uint wb = (jj * GROWS + sg * 16u + hl * 8u) / 4u;
+    const vec4 w0 = sws4[wb], w1 = sws4[wb + 1u];
+    const float wsr[8] = float[8](w0.x, w0.y, w0.z, w0.w, w1.x, w1.y, w1.z, w1.w);
+    [[unroll]] for (uint h = 0u; h < 2u; ++h) {
+        coopmat<int8_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> B;
+        coopMatLoad(B, sa, (h * 16u) * LDS + jj, LDS, gl_CooperativeMatrixLayoutColumnMajor);
+        coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> D =
+            coopMatMulAdd(A, B, coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0));
+        const float xs = sas[jj * PT + h * 16u + rl];
+        [[unroll]] for (uint i = 0u; i < 8u; ++i)
+            acc[h][i] = ki_add(acc[h][i], ki_mul(float(D[i]), ki_mul(xs, wsr[i])));
+    }
+}
+#endif
+#elif STAGE == 5
+#define IDT 1024u
+shared uint sid[IDT];
+shared uint cnt[128], off[128], toff[128];
+shared uint used;
+#endif
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x;
+#if STAGE == 0 || STAGE == 1 || STAGE == 3 || STAGE == 4
+    lut_init(lid);  // before any return: it holds a barrier
+#endif
+#if STAGE == 2
+    const uint pr = gl_WorkGroupID.y, c = gl_GlobalInvocationID.x;
+    if (c >= p.N) return;
+    float s = 0.0;
+    for (uint k = 0u; k < 8u; ++k) s = ki_add(s, ldbf(p.aq, (pr * 8u + k) * p.N + c));
+    stbf(p.o, pr * p.N + c, s);
+#elif STAGE == 0 || STAGE == 1
+    const uint pr = gl_WorkGroupID.y;
+    const uint e = ldu(p.ids, pr);
+    const uint nb = p.K / (FMT == 0 ? 16u : 32u);
+#if STAGE == 0
+    const uint ar = pr / 8u, c0 = gl_WorkGroupID.x * (ROWS / 2u), r0 = 2u * c0;  // rows 2c (gate), 2c + 1 (up)
+#else
+    const uint ar = pr, c0 = gl_WorkGroupID.x * ROWS, r0 = c0;
+#endif
+    const uint nrows = min(ROWS, p.N - r0);
+    for (uint idx = lid; idx < nrows * nb; idx += WG) {
+        const uint r = idx / nb, j = idx - r * nb;
+        const uint t = r * NBMAX + j;
+        tj[t / 4u][t % 4u] = block_t(ar, e * p.N + r0 + r, j);
+    }
+    barrier();
+    if (lid < nrows) {
+        float acc = 0.0;
+        for (uint j = 0u; j < nb / 4u; ++j) {
+            const vec4 t = tj[lid * (NBMAX / 4u) + j];
+            acc = ki_add(ki_add(ki_add(ki_add(acc, t.x), t.y), t.z), t.w);
+        }
+        res[lid] = finish(ar, e, acc);
+    }
+    barrier();
+#if STAGE == 0
+    if (lid < nrows / 2u) store_swiglu(pr, c0 + lid, res[2u * lid], res[2u * lid + 1u]);
+#else
+    if (lid < nrows) stbf(p.o, pr * p.N + c0 + lid, res[lid]);
+#endif
+#elif STAGE == 3 || STAGE == 4
+    const uint tb = gl_WorkGroupID.y * 4u;
+    const uint e = ldu(p.tab, tb), start = ldu(p.tab, tb + 1u), count = ldu(p.tab, tb + 2u);
+    if (count == 0u) return;
+    const uint r0 = gl_WorkGroupID.x * GROWS;
+    const uint nb = p.K / (FMT == 0 ? 16u : 32u);
+    const uint nrows = min(GROWS, p.N - r0);
+    if (lid < count) {
+#if STAGE == 3
+        sar[lid] = ldu(p.tab, p.tiles * 4u + start + lid) / 8u;
+#else
+        sar[lid] = ldu(p.tab, p.tiles * 4u + start + lid);
+#endif
+    }
+    barrier();
+#if CM
+    const uint sg = gl_SubgroupID, lane = gl_SubgroupInvocationID, rl = lane % 16u, hl = lane / 16u;
+    const uint rw = FMT == 0 ? p.K / 16u : p.K / 8u;  // source uvec2 per row
+    [[unroll]] for (uint h = 0u; h < 2u; ++h)
+        [[unroll]] for (uint i = 0u; i < 8u; ++i) acc[h][i] = 0.0;
+#else
+    const uint rg = lid % 16u, qg = lid / 16u;  // rows rg + 16 i, pairs qg + 8 k
+    const uint rw = FMT == 0 ? p.K / 16u : p.K / 8u;  // source uvec2 per row
+    float acc[RB][QB];
+    [[unroll]] for (uint i = 0u; i < RB; ++i)
+        [[unroll]] for (uint k = 0u; k < QB; ++k) acc[i][k] = 0.0;
+#endif
+#if CM
+    // The next chunk's source words are loaded into registers before this chunk's products (its global latency hides
+    // behind them) and stored to shared memory after the trailing barrier: the same staged values, the same bits.
+    stage_load(0u, nb, count, nrows, e, r0, rw);
+#endif
+    for (uint jb = 0u; jb < nb; jb += KC) {
+        const uint nbc = min(KC, nb - jb);
+#if CM
+        stage_store(nbc, count, nrows);
+        barrier();
+        if (jb + KC < nb) stage_load(jb + KC, nb, count, nrows, e, r0, rw);
+#else
+        stage_load(jb, nb, count, nrows, e, r0, rw);
+        stage_store(nbc, count, nrows);
+        barrier();
+#endif
+        // Rows >= nrows / pairs >= count compute on stale staged words; their outputs are never stored.
+#if CM
+#if MUT
+        for (uint jx = 0u; jx < nbc; ++jx) cm_block(nbc - 1u - jx);
+#else
+        if (nbc == KC) {  // full chunk unrolled: its shared-memory loads issue ahead of the products
+            [[unroll]] for (uint jj = 0u; jj < KC; ++jj) cm_block(jj);
+        } else {
+            for (uint jj = 0u; jj < nbc; ++jj) cm_block(jj);
+        }
+#endif
+#else
+#if MUT
+        for (uint jx = 0u; jx < nbc; ++jx) {
+            const uint jj = nbc - 1u - jx;
+#else
+        for (uint jj = 0u; jj < nbc; ++jj) {
+#endif
+            float xs[QB];
+            [[unroll]] for (uint k = 0u; k < QB; ++k) xs[k] = sas[(qg + 8u * k) * KC + jj];
+#if FMT == 0
+            uvec4 wv[RB], av[QB];
+            [[unroll]] for (uint i = 0u; i < RB; ++i) wv[i] = sw[sslot(rg + 16u * i, jj)];
+            [[unroll]] for (uint k = 0u; k < QB; ++k) av[k] = sa[sslot(qg + 8u * k, jj)];
+            [[unroll]] for (uint i = 0u; i < RB; ++i) {
+                const float ws_ = sws[(rg + 16u * i) * KC + jj];
+                [[unroll]] for (uint k = 0u; k < QB; ++k) {
+                    const int is = sdot4x8(av[k].x, wv[i].x, 0) + sdot4x8(av[k].y, wv[i].y, 0) +
+                                   sdot4x8(av[k].z, wv[i].z, 0) + sdot4x8(av[k].w, wv[i].w, 0);
+                    acc[i][k] = ki_add(acc[i][k], ki_mul(float(is), ki_mul(xs[k], ws_)));
+                }
+            }
+#else
+            // Each output's B_j: one fma chain over the block's 32 products in index order (bs[i][k]), the 16 fp16
+            // pairs (4 staged uvec4) read once per lane for all RB x QB outputs.
+            float bs[RB][QB];
+            [[unroll]] for (uint i = 0u; i < RB; ++i)
+                [[unroll]] for (uint k = 0u; k < QB; ++k) bs[i][k] = 0.0;
+            for (uint c4 = 0u; c4 < 4u; ++c4) {
+                uvec4 w4[RB], a4[QB];
+                [[unroll]] for (uint i = 0u; i < RB; ++i) w4[i] = sw[sslot(rg + 16u * i, jj * 4u + c4)];
+                [[unroll]] for (uint k = 0u; k < QB; ++k) a4[k] = sa[sslot(qg + 8u * k, jj * 4u + c4)];
+                [[unroll]] for (uint c = 0u; c < 4u; ++c)
+                    [[unroll]] for (uint i = 0u; i < RB; ++i) {
+                        const vec2 wv = unpackHalf2x16(w4[i][c]);
+                        [[unroll]] for (uint k = 0u; k < QB; ++k) {
+                            const vec2 av = unpackHalf2x16(a4[k][c]);
+                            bs[i][k] = ki_fma(av.y, wv.y, ki_fma(av.x, wv.x, bs[i][k]));
+                        }
+                    }
+            }
+            [[unroll]] for (uint i = 0u; i < RB; ++i) {
+                const float ws_ = sws[(rg + 16u * i) * KC + jj];
+                [[unroll]] for (uint k = 0u; k < QB; ++k)
+                    acc[i][k] = ki_add(acc[i][k], ki_mul(bs[i][k], ki_mul(xs[k], ws_)));
+            }
+#endif
+        }
+#endif
+        barrier();
+    }
+#if CM
+    // Each finished output is stored from its lane (no result tile). Lane l holds rows 2 i + hl of pair q; STAGE 3's
+    // (gate, up) of a pair are rows 2 i' (lane hl 0) and 2 i' + 1 (lane hl 1). For each i = 0, 2, 4, 6 one xor-16
+    // shuffle gives lane hl 0 the up value of i' = i and lane hl 1 the gate value of i' = i + 1: every lane stores.
+    [[unroll]] for (uint h = 0u; h < 2u; ++h) {
+        const uint q = h * 16u + rl;
+        const uint qs = q < count ? q : 0u;
+        float v[8];
+        [[unroll]] for (uint i = 0u; i < 8u; ++i) v[i] = finish(sar[qs], e, acc[h][i]);
+#if STAGE == 3
+        [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
+            const float y = subgroupShuffleXor(hl == 0u ? v[i + 1u] : v[i], 16u);
+            const uint ip = i + hl, r = sg * 16u + 2u * ip;
+            if (r < nrows && q < count)
+                store_swiglu(ldu(p.tab, p.tiles * 4u + start + q), (r0 + r) / 2u, hl == 0u ? v[i] : y,
+                             hl == 0u ? y : v[i + 1u]);
+        }
+#else
+        [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+            const uint r = sg * 16u + 2u * i + hl;
+            if (r < nrows && q < count) stbf(p.o, ldu(p.tab, p.tiles * 4u + start + q) * p.N + r0 + r, v[i]);
+        }
+#endif
+    }
+#else
+    // res[row * PT + pair] (in sw, free after the K loop): the finished outputs (live ones), then each live one stored.
+    [[unroll]] for (uint i = 0u; i < RB; ++i)
+        [[unroll]] for (uint k = 0u; k < QB; ++k) {
+            const uint r = rg + 16u * i, q = qg + 8u * k, x = r * PT + q;
+            if (r < nrows && q < count) sw[x / 4u][x % 4u] = floatBitsToUint(finish(sar[q], e, acc[i][k]));
+        }
+    barrier();
+#if STAGE == 3
+    for (uint i = lid; i < (nrows / 2u) * count; i += WG) {  // (gate, up) rows 2c, 2c + 1 (r0, nrows even)
+        const uint c = i / count, q = i - c * count, xg = 2u * c * PT + q, xu = xg + PT;
+        store_swiglu(ldu(p.tab, p.tiles * 4u + start + q), (r0 / 2u) + c, uintBitsToFloat(sw[xg / 4u][xg % 4u]),
+                     uintBitsToFloat(sw[xu / 4u][xu % 4u]));
+    }
+#else
+    for (uint i = lid; i < nrows * count; i += WG) {
+        const uint r = i / count, q = i - r * count, x = r * PT + q;
+        stbf(p.o, ldu(p.tab, p.tiles * 4u + start + q) * p.N + r0 + r, uintBitsToFloat(sw[x / 4u][x % 4u]));
+    }
+#endif
+#endif
+#elif STAGE == 5
+    // One workgroup; lane e (and e + WG) owns expert e's count, offsets and list. N carries the expert count E.
+    const uint E = p.N;
+    for (uint e = lid; e < E; e += WG) cnt[e] = 0u;
+    barrier();
+    for (uint b0 = 0u; b0 < p.pairs; b0 += IDT) {
+        const uint n = min(IDT, p.pairs - b0);
+        for (uint i = lid; i < n; i += WG) sid[i] = ldu(p.ids, b0 + i);
+        barrier();
+        for (uint e = lid; e < E; e += WG) {
+            uint c = cnt[e];
+            for (uint i = 0u; i < n; ++i) c += sid[i] == e ? 1u : 0u;
+            cnt[e] = c;
+        }
+        barrier();
+    }
+    if (lid == 0u) {
+        uint o = 0u, t = 0u;
+        for (uint e = 0u; e < E; ++e) {
+            off[e] = o;
+            toff[e] = t;
+            o += cnt[e];
+            t += (cnt[e] + PT - 1u) / PT;
+        }
+        used = t;
+    }
+    barrier();
+    for (uint e = lid; e < E; e += WG) {
+        const uint nt = (cnt[e] + PT - 1u) / PT;
+        for (uint t = 0u; t < nt; ++t) {
+            const uint tb = (toff[e] + t) * 4u;
+            stu(p.tab, tb, e);
+            stu(p.tab, tb + 1u, off[e] + t * PT);
+            stu(p.tab, tb + 2u, min(PT, cnt[e] - t * PT));
+        }
+    }
+    for (uint t = used + lid; t < p.tiles; t += WG) stu(p.tab, t * 4u + 2u, 0u);
+    for (uint b0 = 0u; b0 < p.pairs; b0 += IDT) {
+        const uint n = min(IDT, p.pairs - b0);
+        for (uint i = lid; i < n; i += WG) sid[i] = ldu(p.ids, b0 + i);
+        barrier();
+        for (uint e = lid; e < E; e += WG) {
+            uint o = off[e];
+            for (uint i = 0u; i < n; ++i)
+                if (sid[i] == e) stu(p.tab, p.tiles * 4u + o++, b0 + i);
+            off[e] = o;
+        }
+        barrier();
+    }
+#elif STAGE == 6
+    // p.aq: int32 [16][16] with element (r, c) = r * 16 + c; p.o: int32 [32][16] lane elements, then [32] lengths.
+    coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> c;
+    coopMatLoad(c, KI_IA(p.aq).v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    stu(p.o, 32u * 16u + lid, uint(c.length()));
+    for (int i = 0; i < c.length() && i < 16; ++i) stu(p.o, lid * 16u + uint(i), uint(c[i]));
+#endif
+}

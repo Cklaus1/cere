@@ -1,0 +1,75 @@
+#version 460
+// VulkanAmd P3 (T3): the MTP hot-logits draft (executor/cuda/src/model/mtp.cu:82-115 argmax_map_kernel):
+//   draft[r] = map[i*], i* = the lowest index among the maxima of logits[r, 0 .. count) (torch.argmax), a NaN logit
+//   counted as -inf (so a row of NaN / -inf only gives i* = 0), -0 equal to +0.
+// One 1024-thread workgroup per row (as the CUDA kernel). Each candidate is one 64-bit key: the order-preserving 16-bit
+// key of its BF16 value (NaN keyed as -inf, -0 as +0) << 32 | ~index; i* is the index of the largest key. The maximum of
+// distinct integer keys does not depend on the order it is taken in, so the result is exact and independent of the
+// thread layout: per thread a strided scan, a xor tree over the 32-lane subgroup (subgroup size 32 required), then the
+// 32 warps. Every real key is >= 0x7F << 32 > 0, the initial value. vec 1: the row is scanned as 16-byte words (row
+// base 16-byte aligned and count % 8 == 0, host-checked); 0: 2-byte loads.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+
+layout(local_size_x = 1024) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t logits, map, draft;
+    uint count;
+    uint vec;
+} pc;
+shared uint64_t warp_best[32];
+
+uint64_t key_of(uint bits, uint i) {
+    uint k;
+    if ((bits & 0x7FFFu) > 0x7F80u) k = 0x007Fu;                    // NaN: as -inf (0xFF80 below)
+    else if (bits == 0x8000u) k = 0x8000u;                           // -0: as +0
+    else k = (bits & 0x8000u) != 0u ? (~bits & 0xFFFFu) : (bits | 0x8000u);
+    return (uint64_t(k) << 32) | uint64_t(~i);
+}
+uint64_t shfl(uint64_t v, uint o) {
+    const uvec2 u = unpackUint2x32(v);
+    return packUint2x32(uvec2(subgroupShuffleXor(u.x, o), subgroupShuffleXor(u.y, o)));
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint64_t row = pc.logits + uint64_t(gl_WorkGroupID.x) * uint64_t(pc.count) * 2ul;
+    uint64_t best = 0ul;
+    if (pc.vec != 0u) {
+        const uint words = pc.count / 8u;
+        for (uint c = tid; c < words; c += 1024u) {
+            const uvec4 h = V4(row + uint64_t(c * 16u)).v;
+            const uint i = c * 8u;
+            best = max(best, key_of(h.x & 0xFFFFu, i));
+            best = max(best, key_of(h.x >> 16, i + 1u));
+            best = max(best, key_of(h.y & 0xFFFFu, i + 2u));
+            best = max(best, key_of(h.y >> 16, i + 3u));
+            best = max(best, key_of(h.z & 0xFFFFu, i + 4u));
+            best = max(best, key_of(h.z >> 16, i + 5u));
+            best = max(best, key_of(h.w & 0xFFFFu, i + 6u));
+            best = max(best, key_of(h.w >> 16, i + 7u));
+        }
+    } else {
+        for (uint i = tid; i < pc.count; i += 1024u) best = max(best, key_of(uint(H1(row + uint64_t(i * 2u)).v), i));
+    }
+    for (uint o = 16u; o > 0u; o >>= 1) best = max(best, shfl(best, o));
+    if ((tid & 31u) == 0u) warp_best[tid >> 5] = best;
+    barrier();
+    if (tid < 32u) {
+        best = warp_best[tid];
+        for (uint o = 16u; o > 0u; o >>= 1) best = max(best, shfl(best, o));
+        if (tid == 0u) {
+            const uint at = ~uint(best & 0xFFFFFFFFul);
+            U1(pc.draft + uint64_t(gl_WorkGroupID.x * 4u)).v = U1(pc.map + uint64_t(at * 4u)).v;
+        }
+    }
+}

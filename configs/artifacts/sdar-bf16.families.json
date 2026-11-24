@@ -1,0 +1,59 @@
+{
+  "groups": {
+    "nvfp4_group_size": 16,
+    "ple_index_members": [
+      "layer_multipliers",
+      "ngram_heads_offsets",
+      "ngram_heads_vocab_sizes"
+    ],
+    "ple_module_members": [
+      "conv1d.weight",
+      "key_proj.weight",
+      "norm_conv.weight",
+      "norm_key.weight",
+      "norm_query.weight",
+      "value_proj.weight"
+    ],
+    "ple_table_shards": 128
+  },
+  "rules": [
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_embed",
+      "pattern": "model\\.embed_tokens\\.weight|lm_head\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_final_norm",
+      "pattern": "model\\.norm\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_norm",
+      "pattern": "model\\.layers\\.[0-9]+\\.(input_layernorm|post_attention_layernorm|self_attn\\.q_norm|self_attn\\.k_norm)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:1"
+    },
+    {
+      "component": "target",
+      "dtype": "BF16",
+      "family": "target_layer_linear",
+      "pattern": "model\\.layers\\.[0-9]+\\.(self_attn\\.(q|k|v|o)_proj|mlp\\.(gate|up|down)_proj)\\.weight",
+      "placement": "device",
+      "role": "dense",
+      "shape_rule": "rank:2"
+    }
+  ],
+  "rules_id": "sdar-bf16-v1",
+  "schema_version": "1"
+}

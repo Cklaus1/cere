@@ -1,0 +1,40 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P2 K9: merge the 33 entry tiles of k9_attn.comp (SPLIT 1) per (row t, query head h):
+//   M = max_s m_s (empty tiles carry -inf); for s ascending with m_s != -inf: w = exp2(m_s - M), l = fma(l_s, w, l),
+//   o = fma(o_s[d], w, o); out = bf16(o / l) (RNE, NaN 0x7FFF); M = -inf (no valid entry): out = 0.
+// The tile set is the row's own (fixed offsets of its entry list), so the combine is per-row too.
+#include "k9_common.comp"
+
+#define D 256
+#define QHEADS 24
+#define NTILES 33
+
+layout(local_size_x = D) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t po, pml, dst;
+    uint out_stride, pad;
+} pc;
+
+void main() {
+    const uint d = gl_LocalInvocationID.x, t = gl_WorkGroupID.x, h = gl_WorkGroupID.y;
+    const uint row = (t * QHEADS + h) * NTILES;
+    float mmax = f_ninf();
+    for (uint s = 0u; s < NTILES; ++s) mmax = max(mmax, F2(pc.pml + uint64_t((row + s) * 8u)).v.x);
+    uint b = 0u;
+    if (mmax != f_ninf()) {
+        precise float l = 0.0, o = 0.0;
+        for (uint s = 0u; s < NTILES; ++s) {
+            const vec2 ml = F2(pc.pml + uint64_t((row + s) * 8u)).v;
+            if (ml.x == f_ninf()) continue;
+            precise float dm = ml.x - mmax;
+            const float w = exp2(dm);
+            l = fma(ml.y, w, l);
+            o = fma(F1(pc.po + uint64_t(((row + s) * D + d) * 4u)).v, w, o);
+        }
+        precise float r = o / l;
+        b = bf16_rne(r);
+    }
+    H1(pc.dst + uint64_t((t * pc.out_stride + h * D + d) * 2u)).v = uint16_t(b);
+}

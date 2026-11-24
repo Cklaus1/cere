@@ -1,0 +1,15 @@
+{
+  "compute_capability": "12.0",
+  "compute_capability_source": "inferred",
+  "device_memory_mib": 97887,
+  "device_model": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+  "modalities": [
+    "text"
+  ],
+  "placement": {
+    "dense": "device"
+  },
+  "profile_id": "rtxpro6000bw-bf16-text-v1",
+  "schema_version": "1",
+  "speculative": "none"
+}

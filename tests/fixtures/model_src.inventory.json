@@ -1,0 +1,214 @@
+{
+  "by_dtype": {
+    "BF16": {
+      "bytes": 173202,
+      "count": 25,
+      "misaligned": 25
+    },
+    "F32": {
+      "bytes": 48,
+      "count": 12,
+      "misaligned": 0
+    },
+    "F8_E4M3": {
+      "bytes": 352,
+      "count": 10,
+      "misaligned": 0
+    },
+    "I64": {
+      "bytes": 88,
+      "count": 3,
+      "misaligned": 3
+    },
+    "U8": {
+      "bytes": 1536,
+      "count": 6,
+      "misaligned": 0
+    }
+  },
+  "by_placement": {
+    "device": {
+      "bytes": 174760,
+      "count": 46
+    },
+    "host_pinned": {
+      "bytes": 250,
+      "count": 8
+    },
+    "unused": {
+      "bytes": 216,
+      "count": 2
+    }
+  },
+  "families": [
+    {
+      "bytes": 1536,
+      "component": "target",
+      "count": 6,
+      "dtype": "U8",
+      "family": "target_nvfp4_weight",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_weight"
+    },
+    {
+      "bytes": 192,
+      "component": "target",
+      "count": 6,
+      "dtype": "F8_E4M3",
+      "family": "target_nvfp4_block_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_block_scale"
+    },
+    {
+      "bytes": 24,
+      "component": "target",
+      "count": 6,
+      "dtype": "F32",
+      "family": "target_nvfp4_global_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_global_scale"
+    },
+    {
+      "bytes": 24,
+      "component": "target",
+      "count": 6,
+      "dtype": "F32",
+      "family": "target_nvfp4_input_scale",
+      "misaligned": 0,
+      "placement": "device",
+      "role": "nvfp4_input_scale"
+    },
+    {
+      "bytes": 3736,
+      "component": "target",
+      "count": 13,
+      "dtype": "BF16",
+      "family": "target_dense",
+      "misaligned": 13,
+      "placement": "device",
+      "role": "dense"
+    },
+    {
+      "bytes": 3296,
+      "component": "target",
+      "count": 6,
+      "dtype": "BF16",
+      "family": "target_ple_module",
+      "misaligned": 6,
+      "placement": "device",
+      "role": "ple_module"
+    },
+    {
+      "bytes": 160,
+      "component": "target",
+      "count": 4,
+      "dtype": "F8_E4M3",
+      "family": "target_ple_table",
+      "misaligned": 0,
+      "placement": "host_pinned",
+      "role": "ple_table"
+    },
+    {
+      "bytes": 2,
+      "component": "target",
+      "count": 1,
+      "dtype": "BF16",
+      "family": "target_ple_scale",
+      "misaligned": 1,
+      "placement": "host_pinned",
+      "role": "ple_scale"
+    },
+    {
+      "bytes": 88,
+      "component": "target",
+      "count": 3,
+      "dtype": "I64",
+      "family": "target_ple_index",
+      "misaligned": 3,
+      "placement": "host_pinned",
+      "role": "ple_index"
+    },
+    {
+      "bytes": 165952,
+      "component": "draft",
+      "count": 3,
+      "dtype": "BF16",
+      "family": "draft_mtp",
+      "misaligned": 3,
+      "placement": "device",
+      "role": "draft"
+    },
+    {
+      "bytes": 216,
+      "component": "vision",
+      "count": 2,
+      "dtype": "BF16",
+      "family": "vision",
+      "misaligned": 2,
+      "placement": "unused",
+      "role": "vision"
+    }
+  ],
+  "family_rules": {
+    "rules_id": "fixture-qwen4_exp-nvfp4-v1",
+    "sha256": "d182b0f5ab2c994d96cbd4a8b443b5f3ed88dd131f2f90c3a82c14fe651af4d1"
+  },
+  "files": [
+    {
+      "bytes": 4776,
+      "header_bytes": 3000,
+      "header_sha256": "08eacc67cf51895f8f13aaebb92e4d7cbf3488ba5a8004657cb83b0fe619e129",
+      "path": "layer-00000-experts-0000-0001.safetensors",
+      "tensors": 24,
+      "upstream": {
+        "lfs_sha256": "0b43fb7ee9a835062c7a2c090b51bb873d4fef74be66ac2fd626800128ffe7fe",
+        "size": 4776
+      }
+    },
+    {
+      "bytes": 176443,
+      "header_bytes": 3153,
+      "header_sha256": "010b651837d3581ecb9c336dee9a33ccfbe18ccc65b148b05614e34abfb48f89",
+      "path": "model-bf16-00001.safetensors",
+      "tensors": 28,
+      "upstream": {
+        "lfs_sha256": "5e0cb1dfb02a33266de3c32109246b4f2c0e7e8736ed07a220fb20923326ade1",
+        "size": 176443
+      }
+    },
+    {
+      "bytes": 723,
+      "header_bytes": 563,
+      "header_sha256": "0aa16ec3690e0cdce15084d99541e15629d3b48da1979d2600b159e7d384310c",
+      "path": "model-plefp8-00000.safetensors",
+      "tensors": 4,
+      "upstream": {
+        "lfs_sha256": "7187e9cc350980dff5d590b299ee7b376a558aa982d585004e06bee019a2f8ea",
+        "size": 723
+      }
+    }
+  ],
+  "header_digest": "6ec277dd8dea9f2368e0e02c6f427d581d5f401a893d77b1a1201a7483859820",
+  "schema_version": "1",
+  "source": {
+    "revision": "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c",
+    "tree_sha256": "2027b0fa5a768ddb8c53b7f0ad7b44e894b616d68519120e9ccbc085b030a789"
+  },
+  "totals": {
+    "data_bytes": 175226,
+    "file_bytes": 181942,
+    "files": 3,
+    "header_bytes": 6716,
+    "misaligned": 28,
+    "tensors": 56
+  },
+  "upstream": {
+    "lfs_files": 3,
+    "lfs_size_match": 3,
+    "non_lfs_files": 0,
+    "not_in_tree": 0
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-vulkan",
+  "profile_id": "native-amd-inkling-2-mini-vk-v67",
+  "artifact_sha256": "6e585d30f49d24da39b8e81ccabca5a59e65e89e0fd28a22ca4022df907ac6d8",
+  "execution_mode": "native",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "cancel"
+  ],
+  "native_decode_batch": false,
+  "decode_batch_min": 1,
+  "decode_batch_max": 1,
+  "max_context_tokens": 32768,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": false,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text"
+  ],
+  "sampling_params": [],
+  "thinking_toggle": true,
+  "token_controls": [],
+  "vocab_size": 201024,
+  "notes": "Inkling S13 AMD (tasks/inkling-spec.md S11-S13, D-I5): Inkling 2 Mini (family inkling2_loop, 48 visits over 24 physical layers, NVFP4 / MXFP8 experts as stored, BF16 dense) on AMD's AMD GPU (Radeon 8060S, gfx1151) through the Vulkan executor built for it (executor/vulkan/build_lib.sh CERE_MODEL=inkling-2-mini; Mesa RADV), opt-in beside the Qwen AMD lane (same port, one lane at a time): one session, chunked prefill up to 4,096 rows, dense projections on K2's cooperative-matrix GEMM, greedy only, no speculation (the MTP drafter is S9), prefix cache, snapshot, LoRA, research points, levers, grammar, tools, logprobs or images (vision is S7/S12, not wired to the API). Context 32,768 tokens. thinking_toggle as the GPU0 profile: a request may send the chat template's reasoning_effort and separate_reasoning.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 32768
+    }
+  ]
+}

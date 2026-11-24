@@ -1,0 +1,186 @@
+{
+  "schema_version": "2",
+  "plugin": "cere-executor-cuda",
+  "profile_id": "native-g0-inkling-2-mini-mtp-v68",
+  "artifact_sha256": "d2e055fa28a86715b56ef5c35fb36656396466432c24e2c766932a34dc3d01f2",
+  "execution_mode": "native",
+  "evidence": "declared",
+  "operations": [
+    "prefill",
+    "decode",
+    "verify",
+    "cancel"
+  ],
+  "native_decode_batch": true,
+  "decode_batch_min": 1,
+  "decode_batch_max": 4,
+  "max_context_tokens": 1048576,
+  "native_mixed_prefill_decode": false,
+  "native_speculative_batch": true,
+  "native_moe_grouping": false,
+  "native_state_snapshot": false,
+  "structured_outputs": [
+    "text",
+    "tool_calls"
+  ],
+  "json_schema_dialect": null,
+  "json_schema_keywords": [],
+  "numerical_modes": [
+    "optimized"
+  ],
+  "checkpoint_mode": "none",
+  "modalities": [
+    "text",
+    "image"
+  ],
+  "max_top_logprobs": 20,
+  "sampling_params": [
+    "top_k",
+    "min_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "repetition_penalty",
+    "logit_bias"
+  ],
+  "thinking_toggle": true,
+  "token_controls": [],
+  "vocab_size": 201024,
+  "notes": "Inkling S9 phase B (tasks/inkling-spec.md D-I-S9B): the Inkling 2 Mini GPU0 deployment of native-g0-inkling-2-mini-v1 (family inkling2_loop, 48 visits over 24 physical layers, NVFP4 / MXFP8 experts as stored, BF16 dense, up to 4 sessions, chunked prefill up to 4,096 rows, eager) plus the MTP drafter (mtp.safetensors, profile rtxpro6000bw-inkling-vision-mtp-v1: role draft and S7's vision tower on the device) and speculative_draft_tokens 4 (the verify window, 2..8 allowed on this family; 4 priced on GPU0, verify time steps up at 5 rows): a greedy ticket without logprobs, text or image, decodes through speculate_rows, 4 verify rows per session per round (the unfed token plus the drafter block's first 3 drafts), exact greedy accept, output bit-identical to plain greedy decode. A sampled or logprobs ticket carries CERE_WORK_NO_SPECULATION and decodes on plain decode's path (K12's sampler, up to 20 logprobs). Auto tool calls (the inkling parser, S6); images (the sidecar's Inkling image processor, feature image). No prefix cache, snapshot, LoRA, grammar, research points or lever other than the defaults.",
+  "validated_combinations": [
+    {
+      "operation": "prefill",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "decode",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "sampled",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "verify",
+      "modality": "text",
+      "output": "tool_calls",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "cancel",
+      "modality": "text",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "not_applicable",
+      "row_counts": [
+        1
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "decode",
+      "modality": "image",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    },
+    {
+      "operation": "verify",
+      "modality": "image",
+      "output": "text",
+      "numerical_mode": "optimized",
+      "sampler_mode": "greedy",
+      "row_counts": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_context_tokens": 1048576
+    }
+  ]
+}

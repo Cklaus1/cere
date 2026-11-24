@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "recipe_id": "qwen38-flash-next-native-prefix",
+  "model_ref": "local://models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4",
+  "backend_profile_id": "native-g0-qwen38-flash-next-v11",
+  "context_tokens": 200000,
+  "required_operations": [
+    "chat"
+  ],
+  "adapters": [],
+  "residency": {
+    "priority": 1000,
+    "keep_warm_seconds": 0,
+    "pinned": true
+  },
+  "sampling_defaults": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  }
+}

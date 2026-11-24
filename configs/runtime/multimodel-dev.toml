@@ -1,0 +1,165 @@
+# M5 mock multi-model profile (m5 design note D12): two deployments behind one cered. Entry A serves
+# `Qwen3.8-Flash-Next` on the local mock `gpu0` (127.0.0.1:18317) plus the remote worker `worker-a` on node-b (the M3.5
+# mock topology); entry B serves `gemma-4-e4b-it` on the local mock `gpu1` (127.0.0.1:18319). The request's `model`
+# selects the entry; sticky routing runs inside its workers. Auth, federation and timings equal federation-dev.toml;
+# the PEM paths are placeholders that scripts/live/multimodel_live.py patches with its per-run PKI directory.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18396"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "sglang-t4-qwen38-flash-next-v1"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+
+# The local mock backend reports the T4 deployment's /get_server_info values.
+[deployments.expect]
+version = "0.5.19.dev3+gd4689328e"
+model_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+tokenizer_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+quantization = "modelopt_fp4"
+kv_cache_dtype = "fp8_e4m3"
+speculative_algorithm = "EAGLE"
+speculative_num_steps = 3
+speculative_eagle_topk = 1
+speculative_num_draft_tokens = 4
+reasoning_parser = "qwen3"
+tool_call_parser = "qwen3_coder"
+allow_auto_truncate = false
+enable_cache_report = false
+context_length = 200000
+max_running_requests = 4
+# Recorded evidence only (docker image digest); not reported by the backend.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[[deployments.replicas]]
+device = "gpu0"
+base_url = "http://127.0.0.1:18317"
+load_endpoint = "/get_load"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "sglang-gemma-4-e4b-it-v1"
+served_model_name = "gemma-4-e4b-it"
+deployment = "configs/deployments/gemma-4-e4b-it"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+
+# The local mock backend reports the Gemma launch's /get_server_info values (federation-gemma.toml). Absent
+# quantization/speculative/chat_template pins mean the backend must report null.
+[deployments.expect]
+version = "0.5.19.dev3+gd4689328e"
+model_path = "/models/gemma-4-e4b-it-hf/snapshots/d6436b3d62967e1af08bbb046c6300b2a9ae8e85"
+tokenizer_path = "/models/gemma-4-e4b-it-hf/snapshots/d6436b3d62967e1af08bbb046c6300b2a9ae8e85"
+kv_cache_dtype = "auto"
+reasoning_parser = "gemma4"
+tool_call_parser = "gemma4"
+allow_auto_truncate = false
+enable_cache_report = true
+context_length = 32768
+max_running_requests = 4
+# Recorded evidence only (docker image digest); not reported by the backend.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[[deployments.replicas]]
+device = "gpu1"
+base_url = "http://127.0.0.1:18319"
+load_endpoint = "/get_load"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0", "gpu1"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+[api]
+max_request_body_bytes = 8323072
+max_messages = 512
+default_max_output_tokens = 4096
+max_output_tokens = 32768
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# Shared by both entries (D6). Three workers (gpu0 + worker-a for A, gpu1 for B), each capped at 4, so the D2(j) cap is
+# 12; federation-dev's 8 is kept.
+[admission]
+max_backend_inflight = 8
+per_scope_inflight = 8
+queue_depth = 64
+
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "dev"
+token_env = "CERE_TOKEN_DEV"
+
+[ledger]
+state_dir = "/var/lib/cere/multimodel-dev"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024
+
+[federation]
+cluster_id = "lab-cere"
+coordinator_id = "cere-coordinator"
+listen = "100.72.2.2:7443"
+principal = "cere-coordinator"
+ca_file = "/tmp/cere-fed-PLACEHOLDER/pki/ca.pem"
+cert_file = "/tmp/cere-fed-PLACEHOLDER/pki/coordinator.pem"
+key_file = "/tmp/cere-fed-PLACEHOLDER/pki/coordinator-key.pem"
+heartbeat_interval_ms = 1000
+suspect_after_ms = 5000
+lost_after_ms = 15000
+admission_lease_ms = 4000
+rpc_timeout_ms = 5000
+rpc_quota_per_principal = 64
+
+# worker-a belongs to entry A: its expect.served_model_name equals A's (D2(e)).
+[[federation.workers]]
+worker_id = "worker-a"
+endpoint = "https://100.71.1.1:7443"
+principal = "cere-worker-a"
+max_inflight = 4
+
+[federation.workers.expect]
+served_model_name = "Qwen3.8-Flash-Next"
+tp_size = 1
+kv_cache_dtype = "fp8_e4m3"

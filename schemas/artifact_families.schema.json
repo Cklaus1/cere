@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/artifact_families.schema.json",
+  "title": "CERE artifact family rules (M2.1 Q5)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rules_id",
+    "groups",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "rules_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nvfp4_group_size",
+        "ple_table_shards",
+        "ple_module_members",
+        "ple_index_members"
+      ],
+      "properties": {
+        "nvfp4_group_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "ple_table_shards": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "ple_module_members": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.]{0,127}(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "ple_index_members": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.]{0,127}(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "family",
+          "pattern",
+          "component",
+          "role",
+          "dtype",
+          "shape_rule",
+          "placement"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "component": {
+            "enum": [
+              "target",
+              "draft",
+              "vision"
+            ]
+          },
+          "role": {
+            "enum": [
+              "nvfp4_weight",
+              "nvfp4_block_scale",
+              "nvfp4_global_scale",
+              "nvfp4_input_scale",
+              "dense",
+              "ple_module",
+              "ple_table",
+              "ple_scale",
+              "ple_index",
+              "draft",
+              "vision"
+            ]
+          },
+          "dtype": {
+            "enum": [
+              "BF16",
+              "F16",
+              "F32",
+              "F64",
+              "I8",
+              "I16",
+              "I32",
+              "I64",
+              "U8",
+              "U16",
+              "U32",
+              "U64",
+              "F8_E4M3",
+              "F8_E5M2",
+              "BOOL"
+            ]
+          },
+          "shape_rule": {
+            "type": "string",
+            "pattern": "^(any|rank:([0-9]|1[0-6]))(?![\\s\\S])"
+          },
+          "placement": {
+            "enum": [
+              "device",
+              "host_pinned",
+              "unused"
+            ]
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 1024
+    }
+  }
+}

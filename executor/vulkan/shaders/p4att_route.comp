@@ -1,0 +1,48 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P4-A K9: which 16-row blocks of a qsa_attention call are dense prefixes. Workgroup b (256 threads) reads the
+// index rows 16 b .. 16 b + 15 (those < rows) and writes route[b] = p when every one of them is exactly the positions
+// 0 .. p + u (u = the row's place in the block; entries past them -1), else -1. The dense kernel (p4att_dense.comp with a
+// route) computes the dense blocks, the sparse kernel the others; both run one arithmetic per row, so a row's bits do
+// not depend on which block it fell in (an integer decision over the indices, exact, order-free).
+#include "p4att_common.comp"
+
+#define RW 2051u
+layout(local_size_x = 256) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t idx, route;
+    uint rows, pad;
+} pc;
+
+shared uint CNT[16];
+shared uint OK[16];
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x, b = gl_WorkGroupID.x;
+    const uint u = tid / 16u, l = tid % 16u, r = b * 16u + u;
+    if (l == 0u) { CNT[u] = 0u; OK[u] = 1u; }
+    memoryBarrierShared();
+    barrier();
+    const bool live = r < pc.rows;
+    if (live) {
+        uint c = 0u;
+        for (uint i = l; i < RW; i += 16u) c += P4I1(pc.idx + uint64_t((r * RW + i) * 4u)).v == int(i) ? 1u : 0u;
+        atomicAdd(CNT[u], c);
+    }
+    memoryBarrierShared();
+    barrier();
+    if (live) {
+        const uint n = CNT[u];
+        bool ok = true;
+        for (uint i = l; i < RW; i += 16u) ok = ok && P4I1(pc.idx + uint64_t((r * RW + i) * 4u)).v == (i < n ? int(i) : -1);
+        if (!ok) atomicAnd(OK[u], 0u);
+    }
+    memoryBarrierShared();
+    barrier();
+    if (tid == 0u) {
+        bool dense = CNT[0] >= 1u;
+        for (uint v = 0u; v < 16u; ++v)
+            if (b * 16u + v < pc.rows) dense = dense && OK[v] != 0u && CNT[v] == CNT[0] + v;
+        P4W1(pc.route + uint64_t(b) * 4ul).v = dense ? CNT[0] - 1u : 0xFFFFFFFFu;
+    }
+}

@@ -1,0 +1,61 @@
+#version 460
+// VulkanAmd P2 K6: combine the key splits of k6_decode.comp per (row t, query head h), then (optionally) the output
+// gate of dense_attention (K1 sigmoid_mul's expression):
+//   M = max_s m_s; w_s = exp2(m_s - M); l = fma(l_s, w_s, l), o = fma(o_s[d], w_s, o) over s ascending from 0;
+//   a = bf16(o / l)  (RNE, NaN 0x7FFF);  with a gate: out = bf16(float(a) * (1 / (1 + exp(-gate)))).
+// The split count of row t is ceil((pos0 + t + 1) / KS): the row's own (k6_decode.comp), so the combine is per-row too.
+// One split: w = 1, l = l_0, o = o_0 exactly.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_16bit_storage : require
+
+#ifndef KS
+#define KS 64
+#endif
+#define D 256
+#define QHEADS 24
+#define MAXS (2048 / KS)
+
+layout(local_size_x = D) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer F2 { vec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) readonly buffer H16r { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) writeonly buffer H16 { uint16_t v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t po, pml, dst, gate;  // gate 0: no gate
+    uint tokens, pos0, out_stride, gate_stride;  // strides in elements
+} pc;
+
+uint bf16_rne(float x) {
+    const uint u = floatBitsToUint(x);
+    return isnan(x) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+}
+
+void main() {
+    const uint d = gl_LocalInvocationID.x, t = gl_WorkGroupID.x, h = gl_WorkGroupID.y;
+    const uint nspl = (pc.pos0 + t + 1u + KS - 1u) / KS;
+    const uint row = (t * QHEADS + h) * MAXS;
+    float mmax = uintBitsToFloat(0xFF800000u);
+    for (uint s = 0; s < nspl; ++s) mmax = max(mmax, F2(pc.pml + uint64_t((row + s) * 8u)).v.x);
+    precise float l = 0.0, o = 0.0;
+    for (uint s = 0; s < nspl; ++s) {
+        const vec2 ml = F2(pc.pml + uint64_t((row + s) * 8u)).v;
+        precise float dm = ml.x - mmax;
+        const float w = exp2(dm);
+        l = fma(ml.y, w, l);
+        o = fma(F1(pc.po + uint64_t(((row + s) * D + d) * 4u)).v, w, o);
+    }
+    precise float r = o / l;
+    uint b = bf16_rne(r);
+    if (pc.gate != 0ul) {
+        const float gv = uintBitsToFloat(uint(H16r(pc.gate + uint64_t((t * pc.gate_stride + h * D + d) * 2u)).v) << 16);
+        precise float sg = 1.0 / (1.0 + exp(-gv));
+        precise float a = uintBitsToFloat(b << 16) * sg;
+        b = bf16_rne(a);
+    }
+    H16(pc.dst + uint64_t((t * pc.out_stride + h * D + d) * 2u)).v = uint16_t(b);
+}

@@ -1,0 +1,63 @@
+#version 460
+// VulkanAmd P2 K4: the PLE short conv + SiLU + delta (k4_ple.cu conv_token, as conv_kernel / conv_tile_kernel /
+// conv_rows_kernel compute it), token-parallel at every t. Grid (80 channel blocks of 128, tiles, segments): invocation
+// (c, tile, s) runs tokens i0 = tile * 16 .. min(i0 + 16, count[s]) of segment s on channel c. Its window is positions
+// i0 - 9 .. i0 - 1 of [conv_state[s] (9) | gn rows first[s] ..] (state column 9 + p for p < 0), so every output reads
+// exactly the 9 inputs before it and the arithmetic per output is the same for any t, tile or segment split:
+//   acc = w0 * win[0]; acc = fma(w1, win[3], acc); acc = fma(w2, win[6], acc); acc = fma(w3, x, acc)  (FP32, this order)
+//   conv = bf16(acc); act = bf16(conv / (1 + exp(-conv))); delta = bf16(gated + act); out = bf16(query + delta) when
+//   add_query else delta.
+// The conv state is only read here (k4_state.comp writes the new state after a barrier). out may alias query (each
+// element is read and written by the same invocation); it must not alias gn or gated.
+#include "k4_common.comp"
+
+layout(local_size_x = 128) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Segments { uvec4 seg[32]; };
+layout(push_constant, std430) uniform PC {
+    uint64_t gn, gated, conv_w, query, out_, segments;
+    uint nseg, add_query;
+} pc;
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x;
+    const uint s = gl_WorkGroupID.z;
+    if (s >= pc.nseg) return;
+    Segments sg = Segments(pc.segments);
+    const uvec4 hd = sg.seg[2u * s];
+    const uvec4 m = sg.seg[2u * s + 1u];
+    const uint first = m.x, count = m.y;
+    const uint i0 = gl_WorkGroupID.y * 16u;
+    if (i0 >= count) return;
+    const uint i1 = min(i0 + 16u, count);
+    const uint64_t state = packUint2x32(hd.zw);
+    const uvec2 wq = V2(pc.conv_w + uint64_t(c * 8u)).v;
+    const float w0 = lo(wq.x), w1 = hi(wq.x), w2 = lo(wq.y), w3 = hi(wq.y);
+    float win[9];
+    [[unroll]] for (int j = 0; j < 9; ++j) {
+        const int p = int(i0) - 9 + j;
+        win[j] = p >= 0 ? bf(uint(H1(pc.gn + (uint64_t(first + uint(p)) * uint64_t(kChannels) + uint64_t(c)) * 2ul).v))
+                        : bf(uint(H1(state + uint64_t(c * 9u + uint(9 + p)) * 2ul).v));
+    }
+    for (uint i = i0; i < i1; ++i) {
+        const uint64_t at = (uint64_t(first + i) * uint64_t(kChannels) + uint64_t(c)) * 2ul;
+        const float x = bf(uint(H1(pc.gn + at).v));
+        const float g = bf(uint(H1(pc.gated + at).v));
+        precise float acc = w0 * win[0];
+        acc = fma(w1, win[3], acc);
+        acc = fma(w2, win[6], acc);
+        acc = fma(w3, x, acc);
+        const float conv = bf16r(acc);
+        precise float den = 1.0 + exp(-conv);
+        precise float a0 = conv / den;
+        const float act = bf16r(a0);
+        precise float d0 = g + act;
+        float delta = bf16r(d0);
+        if (pc.add_query != 0u) {
+            precise float d1 = bf(uint(H1(pc.query + at).v)) + delta;
+            delta = d1;
+        }
+        H1(pc.out_ + at).v = uint16_t(bf16_rne(delta));
+        [[unroll]] for (int j = 0; j < 8; ++j) win[j] = win[j + 1];
+        win[8] = x;
+    }
+}

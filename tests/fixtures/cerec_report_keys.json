@@ -1,0 +1,17 @@
+{
+  "about": "Exact top-level key sets of the cerec verify/probe-load/evict JSON reports that scripts/live/artifact_live.py consumes. Checked against the real cerec (crates/cere-compiler/tests/report_keys.rs) and against the fake cerec of tests/test_artifact_live.py. verify carries every key of scripts/verify_artifact.py's report; cache is present only with --cache cold; probe-load adds tensor_digests only with --tensor-digests on.",
+  "residency": ["resident_pages", "total_pages"],
+  "verify": ["by_dtype", "by_placement", "families", "files", "manifest_sha256", "mem_available_after", "mem_available_before", "memory_floor", "metadata_bytes_read", "misaligned", "mode", "outcome", "payload_bytes_read", "profile_id", "shards", "stages_ms", "stamp_written", "tensors"],
+  "verify_cache": ["evicted_files", "label", "residency_before"],
+  "verify_stages_ms": {
+    "full": ["discover", "hash", "total", "validate"],
+    "stamp": ["discover", "total", "validate"]
+  },
+  "probe_load": ["baseline", "buffer_bytes", "cache", "class", "direct_files", "evicted_files", "hash", "hashed_files", "label", "manifest_sha256", "mem_available_after", "mem_available_before", "memory_floor", "metadata_bytes_read", "outcome", "payload_bytes_read", "peak_rss_bytes", "pread_ms", "read_mb_per_s", "read_mode", "reads", "reads_in_flight_max", "reads_in_flight_mean_x100", "residency_after", "residency_before", "stages_ms", "staging_high_water_bytes", "tensors", "threads", "timeline", "wait_fill_ms", "wait_free_ms"],
+  "probe_load_stages_ms": {
+    "hash_off": ["discover", "read", "total", "validate"],
+    "hash_on": ["discover", "hash", "read", "total", "validate"],
+    "baseline": ["discover", "read", "total"]
+  },
+  "evict": ["files", "residency_after"]
+}

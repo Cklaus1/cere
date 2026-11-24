@@ -1,0 +1,399 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/artifact_inventory.schema.json",
+  "title": "CERE model tensor inventory (M2.1 Q12)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "family_rules",
+    "source",
+    "header_digest",
+    "files",
+    "families",
+    "by_dtype",
+    "by_placement",
+    "totals",
+    "upstream"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "family_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rules_id",
+        "sha256"
+      ],
+      "properties": {
+        "rules_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        }
+      }
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "revision",
+            "tree_sha256"
+          ],
+          "properties": {
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+            },
+            "tree_sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          }
+        }
+      ]
+    },
+    "header_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 16384,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "bytes",
+          "header_bytes",
+          "header_sha256",
+          "tensors",
+          "upstream"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "header_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "header_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "tensors": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "lfs_sha256",
+                  "size"
+                ],
+                "properties": {
+                  "lfs_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 18446744073709551615
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "blob_id",
+                  "size"
+                ],
+                "properties": {
+                  "blob_id": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{40}(?![\\s\\S])"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 18446744073709551615
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "families": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "family",
+          "component",
+          "role",
+          "dtype",
+          "placement",
+          "count",
+          "bytes",
+          "misaligned"
+        ],
+        "properties": {
+          "family": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "component": {
+            "enum": [
+              "target",
+              "draft",
+              "vision"
+            ]
+          },
+          "role": {
+            "enum": [
+              "nvfp4_weight",
+              "nvfp4_block_scale",
+              "nvfp4_global_scale",
+              "nvfp4_input_scale",
+              "dense",
+              "ple_module",
+              "ple_table",
+              "ple_scale",
+              "ple_index",
+              "draft",
+              "vision"
+            ]
+          },
+          "dtype": {
+            "enum": [
+              "BF16",
+              "F16",
+              "F32",
+              "F64",
+              "I8",
+              "I16",
+              "I32",
+              "I64",
+              "U8",
+              "U16",
+              "U32",
+              "U64",
+              "F8_E4M3",
+              "F8_E5M2",
+              "BOOL"
+            ]
+          },
+          "placement": {
+            "enum": [
+              "device",
+              "host_pinned",
+              "unused"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "misaligned": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    },
+    "by_dtype": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "BF16",
+          "F16",
+          "F32",
+          "F64",
+          "I8",
+          "I16",
+          "I32",
+          "I64",
+          "U8",
+          "U16",
+          "U32",
+          "U64",
+          "F8_E4M3",
+          "F8_E5M2",
+          "BOOL"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "bytes",
+          "misaligned"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "misaligned": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    },
+    "by_placement": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "device",
+          "host_pinned",
+          "unused"
+        ]
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "count",
+          "bytes"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615
+          }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "tensors",
+        "file_bytes",
+        "header_bytes",
+        "data_bytes",
+        "misaligned"
+      ],
+      "properties": {
+        "files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tensors": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "file_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "header_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "data_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "misaligned": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lfs_files",
+        "lfs_size_match",
+        "non_lfs_files",
+        "not_in_tree"
+      ],
+      "properties": {
+        "lfs_files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "lfs_size_match": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "non_lfs_files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "not_in_tree": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      }
+    }
+  }
+}

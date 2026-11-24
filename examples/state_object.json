@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "id": "state-1",
+  "state_type": "metadata",
+  "scope_id": "test-scope",
+  "model_fingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "input_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+  "execution_fingerprint": "3333333333333333333333333333333333333333333333333333333333333333",
+  "size_bytes": 64,
+  "tier": "host_ram",
+  "current_location": "host_ram",
+  "generation": 1,
+  "token_boundary": 16,
+  "immutable": true,
+  "sharing_count": 1,
+  "lease_count": 0,
+  "reuse_probability": 0.5
+}

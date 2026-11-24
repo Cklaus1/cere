@@ -1,0 +1,105 @@
+# Benchmark profile: CERE in front of `cere-bench-g0`, the dedicated SGLang benchmark instance on GPU0.
+# Only CERE benchmarks use it; CERE never restarts or reconfigures it; see docs/CONFIGURATION.md.
+# Separate bind port and state_dir from the live sglang-t4 profile, so both cered instances can run side by side.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18391"
+
+[[deployments]]
+mode = "backend_managed"
+kind = "sglang_http"
+profile_id = "sglang-t4-qwen38-flash-next-v1"
+base_url = "http://127.0.0.1:18308"
+served_model_name = "Qwen3.8-Flash-Next"
+deployment = "configs/deployments/qwen38-flash-next"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+# Two scopes share the backend radix cache; a per-scope cache_salt keeps their prefixes apart.
+prefix_cache_isolation = "cache_salt"
+# Recovered orphans release their slot early once /get_load shows no work beyond cered's own confirmed streams.
+load_endpoint = "/get_load"
+
+# Pinned GET http://127.0.0.1:18308/get_server_info values (probed 2026-10-06). chat_template is omitted because the backend reports null.
+[deployments.expect]
+version = "0.5.19.dev3+gd4689328e"
+model_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+tokenizer_path = "/models/qwen38-flash-next/Qwen3.8-Flash-Next-NVFP4"
+quantization = "modelopt_fp4"
+kv_cache_dtype = "fp8_e4m3"
+speculative_algorithm = "EAGLE"
+speculative_num_steps = 3
+speculative_eagle_topk = 1
+speculative_num_draft_tokens = 4
+reasoning_parser = "qwen3"
+tool_call_parser = "qwen3_coder"
+allow_auto_truncate = false
+enable_cache_report = true
+context_length = 200000
+max_running_requests = 4
+# Recorded evidence only (docker image digest); not reported by the backend.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 4096
+max_output_tokens = 32768
+default_deadline_ms = 300000
+max_deadline_ms = 1800000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+[admission]
+max_backend_inflight = 4
+per_scope_inflight = 4
+queue_depth = 16
+
+[[auth.scopes]]
+scope_id = "bench-a"
+token_env = "CERE_TOKEN_BENCH_A"
+
+[[auth.scopes]]
+scope_id = "bench-b"
+token_env = "CERE_TOKEN_BENCH_B"
+
+[ledger]
+state_dir = "/var/lib/cere/bench-g0"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

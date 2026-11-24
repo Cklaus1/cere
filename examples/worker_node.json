@@ -1,0 +1,35 @@
+{
+  "schema_version": "2",
+  "worker_id": "worker-a",
+  "worker_epoch": 7,
+  "node_name": "cere-gpu-a",
+  "lifecycle_state": "ready",
+  "protocol_version": "2",
+  "transport": "tailscale_grpc",
+  "resource_graph_name": "federated-two-pc-template",
+  "resource_ids": [
+    "a-gpu0",
+    "a-vram0",
+    "a-hostram"
+  ],
+  "backend_profile_ids": [
+    "sglang-pinned-example"
+  ],
+  "artifact_ids": [
+    "artifact-example"
+  ],
+  "model_instance_ids": [],
+  "heartbeat": {
+    "last_seen_ns": 1000000,
+    "interval_ms": 1000,
+    "clock_domain": "coordinator-monotonic",
+    "sequence": 1
+  },
+  "labels": {
+    "environment": "lab",
+    "role": "cere-worker"
+  },
+  "coordinator_term": 1,
+  "desired_state": "ready",
+  "reconciled": true
+}

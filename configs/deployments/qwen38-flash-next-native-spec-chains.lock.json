@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "qwen38-flash-next-native-spec-chains-lock-v1",
+  "recipe_sha256": "8fa1970f7b36ba7e383f1c0f3acab232c5987530ab79add80d933e79b0a63e50",
+  "artifact_sha256": "dedc7dba9bc84493aa0c7a6e29edcd34c2636fe662af86f5d23cb7564bdde058",
+  "model_content_sha256": "5bbe34a0b1d863dcb11081a95d9218cc73ec4d9f1dfbc896f8c861bc4a347704",
+  "tokenizer_sha256": "5cba89bb97f70720773d6148b3e86aa3f22e914acbad16930f559d107996405b",
+  "template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+  "backend_build_sha256": "1dce9b4a47404e67af8f8db2ee44c14b6894612af917fb562c401639d9b3e453",
+  "backend_profile_id": "native-g0-qwen38-flash-next-v36",
+  "effective_context_tokens": 200000,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

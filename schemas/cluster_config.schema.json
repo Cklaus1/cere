@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/cluster_config.schema.json",
+  "title": "CERE cluster_config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cluster_id",
+    "coordinator_id",
+    "control_plane",
+    "scheduling",
+    "security",
+    "data_plane"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "cluster_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "coordinator_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "control_plane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport",
+        "rpc_port",
+        "heartbeat_interval_ms",
+        "suspect_after_ms",
+        "lost_after_ms",
+        "ssh_usage",
+        "protocol_version",
+        "admission_lease_ms",
+        "rpc_timeout_ms",
+        "max_control_message_bytes",
+        "max_output_buffer_bytes",
+        "max_inference_message_bytes"
+      ],
+      "properties": {
+        "transport": {
+          "enum": [
+            "local",
+            "tailscale_grpc"
+          ]
+        },
+        "rpc_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "heartbeat_interval_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "suspect_after_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "lost_after_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 3600000
+        },
+        "ssh_usage": {
+          "const": "bootstrap_recovery_only"
+        },
+        "protocol_version": {
+          "const": "2"
+        },
+        "admission_lease_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "rpc_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000
+        },
+        "max_control_message_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1048576
+        },
+        "max_output_buffer_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        },
+        "max_inference_message_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216
+        }
+      }
+    },
+    "scheduling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allow_remote_workers",
+        "sticky_session_routing",
+        "allow_cross_node_state_migration",
+        "allow_cross_node_cooperative_inference"
+      ],
+      "properties": {
+        "allow_remote_workers": {
+          "type": "boolean"
+        },
+        "sticky_session_routing": {
+          "const": true
+        },
+        "allow_cross_node_state_migration": {
+          "const": false
+        },
+        "allow_cross_node_cooperative_inference": {
+          "const": false
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_worker_identity",
+        "require_tailscale_policy",
+        "allow_public_rpc",
+        "application_auth",
+        "coordinator_principals",
+        "worker_bindings"
+      ],
+      "properties": {
+        "require_worker_identity": {
+          "const": true
+        },
+        "require_tailscale_policy": {
+          "type": "boolean"
+        },
+        "allow_public_rpc": {
+          "const": false
+        },
+        "application_auth": {
+          "const": "mtls_bound_principal"
+        },
+        "coordinator_principals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "maxItems": 10000
+        },
+        "worker_bindings": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+          }
+        }
+      }
+    },
+    "data_plane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "local_only",
+            "future_accelerated"
+          ]
+        }
+      }
+    }
+  }
+}

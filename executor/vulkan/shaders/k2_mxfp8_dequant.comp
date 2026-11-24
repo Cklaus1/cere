@@ -1,0 +1,44 @@
+#version 460
+// VulkanAmd P1: the exact BF16 upcast of an MXFP8 weight (executor/hip/src/k2_mgemv.cpp mxfp8_dequantize's contract:
+// k a positive multiple of 32, every scale byte in [10, 246], no E4M3 NaN byte). One invocation per 16 elements.
+// The decoded FP32 value is an exact BF16 value, so its high half is the BF16 (truncation is exact).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_8bit_storage : require
+
+layout(local_size_x = 256) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer W4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 1) readonly buffer B8 { uint8_t v[]; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, s, w;
+    uint groups16, k;
+} pc;
+
+float e4m3(uint b, float sc) {  // same decode as k2_mgemv.comp (no FP32 denormal intermediates)
+    const uint a = b & 0x7Fu;
+    const float v = (a >= 8u) ? uintBitsToFloat((a << 20) + (120u << 23)) : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v * sc) | ((b & 0x80u) << 24));
+}
+
+void main() {
+    const uint gi = gl_GlobalInvocationID.x;
+    if (gi >= pc.groups16) return;
+    const uint e0 = gi * 16u;  // element index; n * k < 2^32 by the host's check
+    const uint row = e0 / pc.k, i0 = e0 % pc.k;
+    const uvec4 q = V4(pc.q).v[gi];
+    const float sc = uintBitsToFloat(uint(B8(pc.s).v[row * (pc.k / 32u) + i0 / 32u]) << 23);
+    const uint u[4] = uint[4](q.x, q.y, q.z, q.w);
+    uint o[8];
+    [[unroll]] for (int j = 0; j < 4; ++j) {
+        const uint t0 = floatBitsToUint(e4m3(u[j] & 0xFFu, sc)), t1 = floatBitsToUint(e4m3((u[j] >> 8) & 0xFFu, sc));
+        const uint t2 = floatBitsToUint(e4m3((u[j] >> 16) & 0xFFu, sc)), t3 = floatBitsToUint(e4m3(u[j] >> 24, sc));
+        o[2 * j] = (t0 >> 16) | (t1 & 0xFFFF0000u);
+        o[2 * j + 1] = (t2 >> 16) | (t3 & 0xFFFF0000u);
+    }
+    W4(pc.w).v[2u * gi] = uvec4(o[0], o[1], o[2], o[3]);
+    W4(pc.w).v[2u * gi + 1u] = uvec4(o[4], o[5], o[6], o[7]);
+}

@@ -1,0 +1,15 @@
+/target/
+/build/
+/.venv/
+__pycache__/
+.pytest_cache/
+*.cere/
+*.pack
+*.gguf
+*.safetensors
+!tests/fixtures/model_src/*.safetensors
+!examples/artifact/*.safetensors
+!tests/fixtures/inkling2_reference/vision/*.safetensors
+bench/results/
+traces/private/
+.DS_Store

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "lock_id": "gemma-4-e4b-it-lock-v1",
+  "recipe_sha256": "2fbfa55c22064954cc982c99be3ef9d6b9c6061765502587a90388d0a7da340c",
+  "artifact_sha256": "2395797c6c8f5d308f2127cf7a97e801642aa6f60c7b5dafd6012d6a4fe096c1",
+  "model_content_sha256": "25c694e2b120d4d5529a2074dccf6db899254912a22ae2a7ba5edeab1e0495d3",
+  "tokenizer_sha256": "f2b7feb72dc2b3698b0a38982866db5d63a0be59303f6229e923ad50bb918d9a",
+  "template_sha256": "2f1b4d75d067bae3fe44e676721c7f077d243bc007156cb9c2f8b5836613d082",
+  "backend_build_sha256": "6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69",
+  "backend_profile_id": "sglang-gemma-4-e4b-it-v1",
+  "effective_context_tokens": 32768,
+  "effective_operations": [
+    "chat"
+  ],
+  "adapter_sha256s": []
+}

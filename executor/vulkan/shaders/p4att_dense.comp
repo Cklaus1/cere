@@ -1,0 +1,382 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// VulkanAmd P4-A K6: dense causal GQA for calls of more than 16 rows (prefill) on VK_KHR_cooperative_matrix (FP16 x FP16
+// -> FP32, 16x16x16, subgroups of 32). Contract: executor/cuda/src/kernels/k6_attention.h (k6::attention), as
+// k6_prefill.comp: out[t, h] = softmax_j(q[t, h] . K[j] * scale) V[j] over keys j = 0 .. pos0 + t, KV head h / 12; K/V BF16
+// rows (FP8 0) or the FP8 E4M3 cache (FP8 1, key j at row slots[j] or j). Operand carrying: p4att_common.comp.
+//
+// Workgroup (KV head g, head third hq = heads g * 12 + 4 hq .. + 3, tile of 16 tokens; the longest causal tiles first):
+// 64 rows r = token (r / 4) x head (r % 4); keys in steps of 32 at absolute offsets 0, 32, .. up to the tile's last key.
+// 8 subgroups of 32: QK subgroup (row tile rt = sg / 2, dim half hf = sg % 2) holds its q' fragments (16 rows x 128
+// dims) in registers and writes, per key half, S_hf[16 x 16] = sum over its 8 dim chunks ascending of coopMatMulAdd;
+// the softmax runs per row (4 lanes x 8 keys) on S = S_0 + S_1 in shared memory: s = ldexp(S, -(sq + sk)) * sl2 (-inf
+// past the row's position), m_new = max(m, step max), alpha = exp2(m - m_new), p = exp2(s - m_new), l = fma(l, alpha,
+// sum p) (8 keys in order, then the lane pairs xor 1, 2), p' to shared; PV subgroup (rt, dim half dh) scales its 8 O
+// accumulators by alpha (per element: the element's row from an index matrix loaded once, so no layout is assumed) and
+// adds coopMatMulAdd(P'[16 x 16 keys], V'[16 keys x 16 dims]) for the two key chunks in order (a row's partially valid
+// chunk: p4att_common.comp, after the key loop). out = bf16(ldexp(O, -C) * (1 / l)) (RNE, NaN 0x7FFF).
+// Row-partition invariance: a step past a row's last key leaves m, l, O exactly unchanged (step max -inf, alpha 1, an
+// all-zero p' row: O * 1 + 0 = O exactly, measured; l = fma(l, 1, 0) = l), the keys past it inside its last chunk never
+// meet it in a coopmat product with a non-zero V' (its partial chunk: p4att_common.comp), and every operand is a fixed
+// function of its own q row / key: a row's bits depend on its position, its q row and keys 0 .. pos only, whatever tile
+// it shares (the class pin holds for any cls). Deterministic: fixed orders, no atomics on values.
+// K9 (route != 0, p4att_route.comp): the same kernel computes the 16-row blocks whose index rows are dense prefixes, at
+// the positions the route word gives, with q / out row strides from the call (p4att_sparse.comp computes the others).
+// Flags: word (t * 2 + g) * 3 + hq of `flags` is 1 when token t's 4 q rows of this workgroup have a non-finite value or
+// a bad key (p4att_common.comp) lies at or before its position; that token's output rows are not written here.
+#include "p4att_common.comp"
+
+#ifndef FP8
+#define FP8 0
+#endif
+#define NT 256u
+#define D 256u
+#define GROUP 12u
+#define QW 6144u
+#define HG 4u
+#define TQ 16u
+#define R 64u
+#define KT 32u
+#define LDK 33u   // uvec4 per staged K / V / q row (256 FP16 + 8 pad)
+#define LDSX 9u   // vec4 per S row (32 + 4 floats)
+#define LDP 5u    // uvec4 per P row (32 + 8 FP16)
+
+layout(local_size_x = 256) in;
+
+layout(push_constant, std430) uniform PC {
+    uint64_t q, k, v, slots, dst, flags;
+    uint64_t route;                       // 0 (K6), or K9's per-16-row-block words (p4att_route.comp)
+    uint tokens, pos0, kstride, vstride;  // K/V row strides in bytes
+    float sl2;
+    uint q_stride, out_stride, pad;       // q / out row strides in elements (K6: 6,144)
+} pc;
+
+shared uvec4 KV[2u * KT * LDK];  // K' [key][dim] then V' [key][dim]; at the start: q' [row][dim]
+shared vec4 SX[2u * R * LDSX];   // S over dims 0..127 / 128..255 [half][row][key]; at the start: the index matrix
+shared uvec4 PS[R * LDP];        // p' [row][key]
+shared uvec4 PD[R * 2u];         // the real p' of each row's partial chunk (16 keys), for the products after the key loop
+shared uvec4 IXH[32];            // the index matrix as FP16, rows of 2 uvec4 (the A / B element maps)
+shared int SQ[R];
+shared int SK[KT];
+shared int AV[KT];
+shared float AL[R];
+shared float LS[R];
+shared float LR[R];  // 1 / l (one rcp per row, the same expression in both kernels)
+shared uint QBAD[TQ];
+shared uint MINBAD;
+
+
+#if FP8
+#define NW 2u   // uvec4 per thread per tensor per step: 32 E4M3 bytes
+#else
+#define NW 4u   // 32 BF16
+#endif
+
+void load_kv(uint64_t base, uint stride, uint key, uint key_end, uint g, uint dc, out uvec4 r[NW]) {
+    [[unroll]] for (uint i = 0u; i < NW; ++i) r[i] = uvec4(0u);
+    if (key < key_end) {
+        const uint row = pc.slots != 0ul ? uint(P4L1(pc.slots + uint64_t(key) * 8ul).v) : key;
+#if FP8
+        const uint off = row * stride + g * D + dc;
+#else
+        const uint off = row * stride + (g * D + dc) * 2u;
+#endif
+        [[unroll]] for (uint i = 0u; i < NW; ++i) r[i] = P4V4(base + uint64_t(off + 16u * i)).v;
+    }
+}
+
+// Stage this thread's 32 dims of key lk (8 lanes per key: lanes 8 k .. 8 k + 7 of one subgroup).
+void stage(uvec4 kr[NW], uvec4 vr[NW], uint key, bool live, uint lk, uint dc) {
+#if FP8
+    bool kbad = false, vbad = false;
+    [[unroll]] for (uint i = 0u; i < NW; ++i) { kbad = kbad || p4_nan16(kr[i]); vbad = vbad || p4_nan16(vr[i]); }
+    bool bad = kbad || vbad;
+    [[unroll]] for (uint o = 1u; o < 8u; o *= 2u) bad = bad || subgroupShuffleXor(bad, o);
+    bad = bad && live;
+    const int sk = -8, bv = 6;
+#else
+    uint km = 0u, vm = 0u;
+    [[unroll]] for (uint i = 0u; i < NW; ++i) { km = max(km, p4_mag8(kr[i])); vm = max(vm, p4_mag8(vr[i])); }
+    [[unroll]] for (uint o = 1u; o < 8u; o *= 2u) { km = max(km, subgroupShuffleXor(km, o)); vm = max(vm, subgroupShuffleXor(vm, o)); }
+    const bool bad = live && ((km >> 7) >= 0xFFu || p4_vbad(vm));
+    const int sk = p4_shift(km), bv = p4_vshift(vm);
+#endif
+    const uint ko = lk * LDK + dc / 8u, vo = (KT + lk) * LDK + dc / 8u;
+#if FP8
+    [[unroll]] for (uint i = 0u; i < NW; ++i) {
+        uvec4 a, b;
+        p4_cvt16(kr[i], false, bad, a, b); KV[ko + 2u * i] = a; KV[ko + 2u * i + 1u] = b;
+        p4_cvt16(vr[i], true, bad, a, b); KV[vo + 2u * i] = a; KV[vo + 2u * i + 1u] = b;
+    }
+#else
+    [[unroll]] for (uint i = 0u; i < NW; ++i) { KV[ko + i] = p4_cvt8(kr[i], sk, bad); KV[vo + i] = p4_cvt8(vr[i], bv, bad); }
+#endif
+    if ((gl_LocalInvocationID.x & 7u) == 0u) {
+        SK[lk] = sk;
+        AV[lk] = P4_C - bv;
+        if (bad) atomicMin(MINBAD, key);
+    }
+}
+
+// V' only (the after-loop partial products): the same V' as stage() for every key at or before an unflagged row's
+// position (a bad K there flags the row: its output is the FP32 fallback's, so V' of such a key does not matter).
+void stage_v(uvec4 vr[NW], uint lk, uint dc) {
+    const uint vo = (KT + lk) * LDK + dc / 8u;
+#if FP8
+    uint b32 = 0u;
+    [[unroll]] for (uint i = 0u; i < NW; ++i) b32 |= p4_nan16(vr[i]) ? 1u : 0u;
+    [[unroll]] for (uint o = 1u; o < 8u; o *= 2u) b32 |= subgroupShuffleXor(b32, o);
+    [[unroll]] for (uint i = 0u; i < NW; ++i) {
+        uvec4 a, b;
+        p4_cvt16(vr[i], true, b32 != 0u, a, b); KV[vo + 2u * i] = a; KV[vo + 2u * i + 1u] = b;
+    }
+#else
+    uint vm = 0u;
+    [[unroll]] for (uint i = 0u; i < NW; ++i) vm = max(vm, p4_mag8(vr[i]));
+    [[unroll]] for (uint o = 1u; o < 8u; o *= 2u) vm = max(vm, subgroupShuffleXor(vm, o));
+    const bool bad = p4_vbad(vm);
+    const int bv = p4_vshift(vm);
+    [[unroll]] for (uint i = 0u; i < NW; ++i) KV[vo + i] = p4_cvt8(vr[i], bv, bad);
+#endif
+}
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x, sg = gl_SubgroupID, lane = gl_SubgroupInvocationID;
+    const uint g = gl_WorkGroupID.x / 3u, hq = gl_WorkGroupID.x % 3u;
+    const uint t0 = (gl_NumWorkGroups.y - 1u - gl_WorkGroupID.y) * TQ;
+    const uint last_token = min(t0 + TQ, pc.tokens) - 1u;
+    // the position of token t0 (token t0 + u is at pbase + u). K9 (route != 0): rows whose entry lists are exactly the
+    // positions 0 .. p (p4att_route.comp found 16 such rows at consecutive positions): the dense arithmetic over keys
+    // 0 .. p is the sparse kernel's over those entries, bit for bit; other blocks are the sparse kernel's.
+    uint pbase = pc.pos0 + t0;
+    if (pc.route != 0ul) {
+        const int rb = P4I1(pc.route + uint64_t(t0 / TQ) * 4ul).v;
+        if (rb < 0) return;  // uniform
+        pbase = uint(rb);
+    }
+    const uint key_end = pbase + (last_token - t0) + 1u;
+    const float NEG_INF = p4_ninf();
+
+    if (tid < TQ) QBAD[tid] = 0u;
+    if (tid == 0u) MINBAD = 0xFFFFFFFFu;
+    // the index matrix (element (r, c) = r * 16 + c) for the accumulator element -> row / column map
+    {
+        float ix[4];
+        [[unroll]] for (uint i = 0u; i < 4u; ++i) ix[i] = float(tid * 4u + i);  // tid < 64 covers 256 elements
+        if (tid < 64u) SX[tid] = vec4(ix[0], ix[1], ix[2], ix[3]);
+        if (tid < 32u) {  // the same as FP16 (exact), rows of 2 uvec4: for the A / B element maps
+            uint w[4];
+            [[unroll]] for (uint j = 0u; j < 4u; ++j) w[j] = packFloat2x16(f16vec2(float(tid * 8u + 2u * j), float(tid * 8u + 2u * j + 1u)));
+            IXH[tid] = uvec4(w[0], w[1], w[2], w[3]);
+        }
+    }
+    // q' rows: row r = tid / 4 (token r / 4, head r % 4), this thread's 64 dims (tid % 4) * 64 ..
+    {
+        const uint r = tid / 4u, part = tid % 4u, u = r / 4u, hh = r % 4u;
+        const uint t = min(t0 + u, last_token);
+        const uint64_t a = pc.q + uint64_t((t * pc.q_stride + (g * GROUP + hq * HG + hh) * D + part * 64u) * 2u);
+        uvec4 qr[8];
+        uint qm = 0u;
+        [[unroll]] for (uint i = 0u; i < 8u; ++i) { qr[i] = P4V4(a + 16ul * i).v; qm = max(qm, p4_mag8(qr[i])); }
+        [[unroll]] for (uint o = 1u; o < 4u; o *= 2u) qm = max(qm, subgroupShuffleXor(qm, o));
+        const bool bad = (qm >> 7) >= 0xFFu;
+        const int sq = p4_shift(qm);
+        [[unroll]] for (uint i = 0u; i < 8u; ++i) KV[r * LDK + part * 8u + i] = p4_cvt8(qr[i], sq, bad);
+        if (part == 0u) SQ[r] = sq;
+        memoryBarrierShared();
+        barrier();
+        if (part == 0u && bad) atomicOr(QBAD[u], 1u);
+    }
+    memoryBarrierShared();
+    barrier();
+
+    // accumulator element -> (row, column) of its 16 x 16 tile
+    uint erow[8], ecol[8];  // accumulator element e is (row, column) (erow[e], ecol[e]) of its 16 x 16 tile
+    uint NE;
+    {
+        MatC ixm;
+        coopMatLoad(ixm, SX, 0, 4, gl_CooperativeMatrixLayoutRowMajor);
+        NE = uint(ixm.length());
+        [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+            const uint x = e < NE ? uint(ixm[e]) : 0u;
+            erow[e] = x / 16u; ecol[e] = x % 16u;
+        }
+    }
+    const uint rt = sg / 2u, hf = sg % 2u;
+    MatA qa[8];  // dims 128 hf .. + 127 of the row tile's q'
+    [[unroll]] for (uint c = 0u; c < 8u; ++c) coopMatLoad(qa[c], KV, rt * 16u * LDK + 2u * (hf * 8u + c), LDK, gl_CooperativeMatrixLayoutRowMajor);
+    MatC o[8];
+    [[unroll]] for (uint i = 0u; i < 8u; ++i) o[i] = MatC(0.0);
+
+    // loader: key lk of the step, dims dc .. dc + 31
+    const uint lk = tid / 8u, dc = (tid % 8u) * 32u;
+    uvec4 kr[NW], vr[NW];
+    load_kv(pc.k, pc.kstride, lk, key_end, g, dc, kr);
+    load_kv(pc.v, pc.vstride, lk, key_end, g, dc, vr);
+
+    // softmax thread: row sr = tid / 4, keys 8 (tid % 4) .. + 7
+    const uint sr = tid / 4u, sub = tid % 4u;
+    const uint spos = pbase + min(t0 + sr / 4u, last_token) - t0;
+    float m_run = NEG_INF, l_run = 0.0;
+
+    for (uint key0 = 0u; key0 < key_end; key0 += KT) {
+        const bool more = key0 + KT < key_end;
+        memoryBarrierShared();
+        barrier();  // the previous step's reads of KV / PS / AL are done (and the q' fragments are loaded)
+        stage(kr, vr, key0 + lk, key0 + lk < key_end, lk, dc);
+        if (more) {
+            load_kv(pc.k, pc.kstride, key0 + KT + lk, key_end, g, dc, kr);
+            load_kv(pc.v, pc.vstride, key0 + KT + lk, key_end, g, dc, vr);
+        }
+        memoryBarrierShared();
+        barrier();
+
+        {   // S (rt: 16 rows x 32 keys) over dims 128 hf .. + 127: 8 chunks ascending per key half
+            [[unroll]] for (uint kt = 0u; kt < 2u; ++kt) {
+                MatC s = MatC(0.0);
+                [[unroll]] for (uint c = 0u; c < 8u; ++c) {
+                    MatB kb;
+                    coopMatLoad(kb, KV, kt * 16u * LDK + 2u * (hf * 8u + c), LDK, gl_CooperativeMatrixLayoutColumnMajor);
+                    s = coopMatMulAdd(qa[c], kb, s);
+                }
+                coopMatStore(s, SX, (hf * R + rt * 16u) * LDSX + kt * 4u, LDSX, gl_CooperativeMatrixLayoutRowMajor);
+            }
+        }
+        memoryBarrierShared();
+        barrier();
+
+        {   // softmax of row sr, keys key0 + 8 sub ..
+            const vec4 a0 = SX[sr * LDSX + 2u * sub], a1 = SX[sr * LDSX + 2u * sub + 1u];
+            const vec4 b0 = SX[(R + sr) * LDSX + 2u * sub], b1 = SX[(R + sr) * LDSX + 2u * sub + 1u];
+            const float lo[8] = float[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+            const float hi[8] = float[8](b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w);
+            float acc[8];
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                precise float x = lo[i] + hi[i];  // the two dim halves, lo + hi
+                acc[i] = x;
+            }
+            const int sq = SQ[sr];
+            float sc[8];
+            float tmax = NEG_INF;
+            [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                const uint kk = 8u * sub + i;
+                precise float x = ldexp(acc[i], -(sq + SK[kk])) * pc.sl2;
+                sc[i] = key0 + kk <= spos ? x : NEG_INF;
+                tmax = max(tmax, sc[i]);
+            }
+            [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) tmax = max(tmax, subgroupShuffleXor(tmax, ofs));
+            const float m_new = max(m_run, tmax);   // finite: key 0 is in every row's first step
+            precise float dm = m_run - m_new;
+            const float alpha = exp2(dm);           // m_run -inf (first step): 0
+            precise float sum = 0.0;
+            uint pw[4];
+            [[unroll]] for (uint i = 0u; i < 8u; i += 2u) {
+                precise float d0 = sc[i] - m_new, d1 = sc[i + 1u] - m_new;
+                const float p0 = exp2(d0), p1 = exp2(d1);
+                sum = sum + p0;
+                sum = sum + p1;
+                pw[i / 2u] = packFloat2x16(f16vec2(ldexp(p0, AV[8u * sub + i]), ldexp(p1, AV[8u * sub + i + 1u])));
+            }
+            [[unroll]] for (uint ofs = 1u; ofs < 4u; ofs *= 2u) {
+                precise float x = sum + subgroupShuffleXor(sum, ofs);
+                sum = x;
+            }
+            precise float ln = fma(l_run, alpha, sum);
+            l_run = ln;
+            m_run = m_new;
+            // the row's partial chunk (the one holding its position, unless that is the chunk's last key) is zero for the
+            // tile product; its real p' waits in PD for the product after the key loop (p4att_common.comp)
+            const bool partial = spos >= key0 + 16u * (sub / 2u) && spos < key0 + 16u * (sub / 2u) + 15u;
+            const uvec4 pv = uvec4(pw[0], pw[1], pw[2], pw[3]);
+            PS[sr * LDP + sub] = partial ? uvec4(0u) : pv;
+            if (partial) PD[sr * 2u + sub % 2u] = pv;
+            if (sub == 0u) AL[sr] = alpha;
+        }
+        memoryBarrierShared();
+        barrier();
+
+        {   // O tiles (rt, dims 128 hf + 16 i ..): O = O * alpha, then the two key chunks
+            float al[8];
+            [[unroll]] for (uint e = 0u; e < 8u; ++e) al[e] = AL[rt * 16u + erow[e]];
+            [[unroll]] for (uint i = 0u; i < 8u; ++i)
+                [[unroll]] for (uint e = 0u; e < 8u; ++e)
+                    if (e < NE) {
+                        precise float x = o[i][e] * al[e];
+                        o[i][e] = x;
+                    }
+            [[unroll]] for (uint kc = 0u; kc < 2u; ++kc) {
+                MatA pa;
+                coopMatLoad(pa, PS, rt * 16u * LDP + 2u * kc, LDP, gl_CooperativeMatrixLayoutRowMajor);
+                [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                    MatB vb;
+                    coopMatLoad(vb, KV, (KT + kc * 16u) * LDK + 2u * (hf * 8u + i), LDK, gl_CooperativeMatrixLayoutRowMajor);
+                    o[i] = coopMatMulAdd(pa, vb, o[i]);
+                }
+            }
+        }
+    }
+    // The partial chunks, after the key loop: every step after a row's partial chunk is an exact no-op for it (alpha 1,
+    // an all-zero p' row), so O holds the value the product would have met in that step. For the (at most two) steps
+    // holding the tile's positions: V' staged again (stage_v: the same conversion), then per token of the row tile whose chunk kc
+    // is partial: its p' rows alone (the tile's others zero) times V' with the keys past its position zero.
+    {
+        MatA ixa;
+        MatB ixb;
+        coopMatLoad(ixa, IXH, 0, 2, gl_CooperativeMatrixLayoutRowMajor);  // A element e at row ixa[e] / 16
+        coopMatLoad(ixb, IXH, 0, 2, gl_CooperativeMatrixLayoutRowMajor);  // B element e at key row ixb[e] / 16
+        const uint NA = uint(ixa.length()), NB = uint(ixb.length());
+        const uint s_first = pbase / KT, s_last = (key_end - 1u) / KT;
+        for (uint st = s_first; st <= s_last; ++st) {
+            const uint key0 = st * KT;
+            memoryBarrierShared();
+            barrier();  // the previous readers of KV are done
+            {
+                uvec4 vr2[NW];
+                load_kv(pc.v, pc.vstride, key0 + lk, key_end, g, dc, vr2);
+                stage_v(vr2, lk, dc);
+            }
+            memoryBarrierShared();
+            barrier();
+            [[unroll]] for (uint kc = 0u; kc < 2u; ++kc) {
+                const uint c0 = key0 + 16u * kc;
+                [[unroll]] for (uint u = 0u; u < 4u; ++u) {
+                    const uint pos = pbase + min(t0 + rt * 4u + u, last_token) - t0;
+                    if (pos < c0 || pos >= c0 + 15u) continue;  // uniform per subgroup: not this token's partial chunk
+                    const uint m = pos - c0 + 1u;              // its valid keys in the chunk
+                    MatA pu;
+                    coopMatLoad(pu, PD, rt * 16u * 2u, 2u, gl_CooperativeMatrixLayoutRowMajor);
+                    [[unroll]] for (uint e = 0u; e < 16u; ++e)
+                        if (e < NA && uint(float(ixa[e])) / 64u != u) pu[e] = float16_t(0.0);  // row / 4 != u
+                    [[unroll]] for (uint i = 0u; i < 8u; ++i) {
+                        MatB vb;
+                        coopMatLoad(vb, KV, (KT + kc * 16u) * LDK + 2u * (hf * 8u + i), LDK, gl_CooperativeMatrixLayoutRowMajor);
+                        [[unroll]] for (uint e = 0u; e < 16u; ++e)
+                            if (e < NB && uint(float(ixb[e])) / 16u >= m) vb[e] = float16_t(0.0);  // key row >= m
+                        o[i] = coopMatMulAdd(pu, vb, o[i]);
+                    }
+                }
+            }
+        }
+    }
+    if (sub == 0u) {
+        LS[sr] = l_run;
+        precise float rl = 1.0 / l_run;
+        LR[sr] = rl;
+    }
+    memoryBarrierShared();
+    barrier();
+    const uint minbad = MINBAD;
+    if (tid < TQ && t0 + tid < pc.tokens) {
+        const bool flag = QBAD[tid] != 0u || minbad <= pbase + tid;
+        P4W1(pc.flags + uint64_t((((t0 + tid) * 2u + g) * 3u + hq) * 4u)).v = flag ? 1u : 0u;
+    }
+    [[unroll]] for (uint i = 0u; i < 8u; ++i)
+        [[unroll]] for (uint e = 0u; e < 8u; ++e) {
+            if (e >= NE) continue;
+            const uint r = rt * 16u + erow[e], u = r / 4u, t = t0 + u;
+            if (t >= pc.tokens || QBAD[u] != 0u || minbad <= pbase + u) continue;
+            precise float x = ldexp(o[i][e], -P4_C) * LR[r];
+            const uint col = hf * 128u + i * 16u + ecol[e];
+            P4H1(pc.dst + uint64_t((t * pc.out_stride + (g * GROUP + hq * HG + r % 4u) * D + col) * 2u)).v = uint16_t(p4_bf16_rne(x));
+        }
+}

@@ -1,0 +1,46 @@
+#version 460
+// VulkanAmd P2 K1: sigmoid output gate out[t, i] = bf16(x * (1 / (1 + exp(-gate)))), 8 elements per thread
+// (k1_primitives.h sigmoid_mul). Grid (ceil(width / 8 / 64), rows). out may alias x. width % 8 == 0.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC { uint64_t x, gate, out_; uint x_stride, g_stride, o_stride, width; } pc;
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x * 8u;
+    if (c >= pc.width) return;
+    const uint64_t r = uint64_t(gl_WorkGroupID.y);
+    const uvec4 q = V4(pc.x + r * uint64_t(pc.x_stride) * 2ul + uint64_t(c * 2u)).v;
+    const uvec4 gq = V4(pc.gate + r * uint64_t(pc.g_stride) * 2ul + uint64_t(c * 2u)).v;
+    const float a[8] = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+    const float g[8] = float[8](lo(gq.x), hi(gq.x), lo(gq.y), hi(gq.y), lo(gq.z), hi(gq.z), lo(gq.w), hi(gq.w));
+    float o[8];
+    [[unroll]] for (int i = 0; i < 8; ++i) o[i] = a[i] * (1.0 / (1.0 + exp(-g[i])));
+    V4(pc.out_ + r * uint64_t(pc.o_stride) * 2ul + uint64_t(c * 2u)).v = uvec4(pack2(o[0], o[1]), pack2(o[2], o[3]), pack2(o[4], o[5]), pack2(o[6], o[7]));
+}

@@ -1,0 +1,17 @@
+[package]
+name = "cere-proto"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+description = "Generated gRPC bindings for proto/cere_worker.proto (ai.cere.worker.v2)."
+
+[dependencies]
+tonic.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true

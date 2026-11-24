@@ -1,0 +1,178 @@
+#version 460
+// VulkanAmd P1: K2's small-M GEMV on Vulkan (the executor/hip/src/k2_mgemv.cpp contract, re-proven per device).
+//
+// y[r, j] = sum_i x[r, i] w[j, i] for r < m <= MR <= 16. x BF16 [m, k] (row stride k); w BF16 [n, k] (MX 0) or MXFP8
+// (MX 1: q OCP E4M3 [n, k], scales UE8M0 [n, k / 32], w[j, i] = q[j, i] * 2^(s[j, i / 32] - 127)); y FP32 or BF16 (RNE,
+// NaN -> 0x7FFF) [m, n] (row stride n).
+//
+// Mapping (compile-time: G lanes per output column, E elements per lane per step, WG threads, MR row capacity, U steps
+// whose loads are issued before their FMAs, J columns per lane group sharing each decoded activation): a G-lane
+// group serves J columns; lane g owns elements
+// i = c * G * E + g * E + e (e = 0 .. E - 1) of every step c and accumulates them with one FP32 FMA chain per row in
+// increasing i (BF16 x BF16 and decoded-MXFP8 x BF16 products are exact in FP32, so only the adds round); then a
+// fixed xor butterfly over the G lanes (offsets G/2 .. 1) sums the lanes, every lane ends with the same bits.
+// The order depends on (G, E, k) only: not on m, MR, U, J, WG, the call's first row or the weight format. The host picks
+// (G, E) from k alone, so: every row's bits are the same whatever m (batch / shift invariance by construction), and an
+// MXFP8 weight gives the bits of its exact BF16 upcast (the decoded value is that BF16 value).
+// RADV has no BF16 shader type: BF16 is decoded exactly to FP32 by a 16-bit shift (low half) or mask (high half).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+#ifndef MX
+#define MX 0
+#endif
+#ifndef MR
+#define MR 1
+#endif
+#ifndef G
+#define G 32
+#endif
+#ifndef E
+#define E 16
+#endif
+#ifndef WG
+#define WG 256
+#endif
+#ifndef U
+#define U 1
+#endif
+#ifndef J
+#define J 1
+#endif
+
+#if (E != 8 && E != 16) || (G > 32) || (WG % G != 0)
+#error "unsupported mapping"
+#endif
+
+layout(local_size_x = WG) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 1) readonly buffer B8 { uint8_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F32 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) writeonly buffer H16 { uint16_t v; };
+
+layout(push_constant, std430) uniform PC {
+    uint64_t x, w, s, y;   // device addresses
+    uint m, n, k, out_f32;
+} pc;
+
+const uint COLS = WG / G;  // G-lane groups per workgroup; the workgroup serves COLS * J columns
+const uint STEP = G * E;   // elements per step of one column
+
+// Addresses are a 64-bit base plus a zero-extended 32-bit byte offset (every tensor is one <= 4 GiB buffer), the form
+// RADV lowers to a scalar base + vector offset load without 64-bit address arithmetic.
+uvec4 ld16(uint64_t base, uint off) { return V4(base + uint64_t(off)).v; }
+uvec2 ld8(uint64_t base, uint off) { return V2(base + uint64_t(off)).v; }
+uint ld1(uint64_t base, uint off) { return uint(B8(base + uint64_t(off)).v); }
+
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+
+#if MX
+// One E4M3 byte (no NaN byte, by contract) times sc = 2^(s - 127): exact, and computed without FP32 denormal
+// intermediates (RADV may flush them): normal bytes by exponent rebias, subnormal ones as an exact int * 2^-9.
+float e4m3(uint b, float sc) {
+    const uint a = b & 0x7Fu;
+    const float v = (a >= 8u) ? uintBitsToFloat((a << 20) + (120u << 23)) : float(a) * (1.0 / 512.0);
+    return uintBitsToFloat(floatBitsToUint(v * sc) | ((b & 0x80u) << 24));
+}
+#endif
+
+// The E weights of column col at elements i .. i + E - 1 as exact FP32 values.
+void load_w(uint col, uint i, out float wf[E]) {
+#if MX
+    const float sc = uintBitsToFloat(ld1(pc.s, col * (pc.k / 32u) + i / 32u) << 23);
+#if E == 16
+    const uvec4 q = ld16(pc.w, col * pc.k + i);
+    const uint qw[4] = uint[4](q.x, q.y, q.z, q.w);
+#else
+    const uvec2 q = ld8(pc.w, col * pc.k + i);
+    const uint qw[2] = uint[2](q.x, q.y);
+#endif
+    [[unroll]] for (int j = 0; j < E / 4; ++j)
+        [[unroll]] for (int b = 0; b < 4; ++b) wf[4 * j + b] = e4m3((qw[j] >> (8 * b)) & 0xFFu, sc);
+#else
+    [[unroll]] for (int h = 0; h < E / 8; ++h) {
+        const uvec4 q = ld16(pc.w, (col * pc.k + i) * 2u + 16u * h);
+        wf[8 * h + 0] = lo(q.x); wf[8 * h + 1] = hi(q.x);
+        wf[8 * h + 2] = lo(q.y); wf[8 * h + 3] = hi(q.y);
+        wf[8 * h + 4] = lo(q.z); wf[8 * h + 5] = hi(q.z);
+        wf[8 * h + 6] = lo(q.w); wf[8 * h + 7] = hi(q.w);
+    }
+#endif
+}
+
+// One step (elements i .. i + E - 1 of this lane) of every live row and every column of the group, in increasing i.
+void step(const float wf[J][E], uint i, inout float acc[J][MR]) {
+    [[unroll]] for (int r = 0; r < MR; ++r) {
+        if (uint(r) < pc.m) {  // uniform
+            const uint64_t xr = pc.x + uint64_t(uint(r) * pc.k * 2u);  // uniform row base
+            [[unroll]] for (int h = 0; h < E / 8; ++h) {
+                const uvec4 xv = ld16(xr, i * 2u + 16u * h);
+                const float xf[8] = float[8](lo(xv.x), hi(xv.x), lo(xv.y), hi(xv.y), lo(xv.z), hi(xv.z), lo(xv.w), hi(xv.w));
+                [[unroll]] for (int q = 0; q < J; ++q) {
+                    precise float a = acc[q][r];
+                    [[unroll]] for (int e = 0; e < 8; ++e) a = fma(wf[q][8 * h + e], xf[e], a);
+                    acc[q][r] = a;
+                }
+            }
+        }
+    }
+}
+
+void main() {
+    const uint lid = gl_LocalInvocationID.x;
+    const uint g = lid % G;
+    uint col[J], colc[J];
+    [[unroll]] for (int q = 0; q < J; ++q) {
+        col[q] = gl_WorkGroupID.x * (COLS * J) + uint(q) * COLS + lid / G;
+        colc[q] = min(col[q], pc.n - 1u);  // past n: a clamped column keeps the group in the butterfly, stores nothing
+    }
+    float acc[J][MR];
+    [[unroll]] for (int q = 0; q < J; ++q)
+        [[unroll]] for (int r = 0; r < MR; ++r) acc[q][r] = 0.0;
+
+    uint i0 = g * E;
+    // U steps at a time: all U x J weight loads first, then the FMAs in step order (the same order as U = 1).
+    for (; i0 + (U - 1) * STEP < pc.k; i0 += U * STEP) {
+        float wf[U][J][E];
+        [[unroll]] for (int u = 0; u < U; ++u)
+            [[unroll]] for (int q = 0; q < J; ++q) load_w(colc[q], i0 + u * STEP, wf[u][q]);
+        [[unroll]] for (int u = 0; u < U; ++u) step(wf[u], i0 + u * STEP, acc);
+    }
+    for (; i0 < pc.k; i0 += STEP) {  // tail steps (k not a multiple of U * STEP), and lanes past k in a short step
+        float wf[J][E];
+        [[unroll]] for (int q = 0; q < J; ++q) load_w(colc[q], i0, wf[q]);
+        step(wf, i0, acc);
+    }
+    // Fixed xor butterfly within the G-lane group.
+    [[unroll]] for (int q = 0; q < J; ++q)
+        [[unroll]] for (int r = 0; r < MR; ++r) {
+            precise float v = acc[q][r];
+            [[unroll]] for (uint o = G / 2; o >= 1u; o /= 2u) v = v + subgroupShuffleXor(v, o);
+            acc[q][r] = v;
+        }
+    [[unroll]] for (int q = 0; q < J; ++q) {
+        if (col[q] < pc.n) {
+            [[unroll]] for (int r = 0; r < MR; ++r) {
+                if (uint(r) < pc.m && g == uint(r) % G) {
+                    const uint o = uint(r) * pc.n + col[q];
+                    if (pc.out_f32 != 0u) {
+                        F32(pc.y + uint64_t(o * 4u)).v = acc[q][r];
+                    } else {
+                        const uint u = floatBitsToUint(acc[q][r]);
+                        const uint b = isnan(acc[q][r]) ? 0x7FFFu : (u + 0x7FFFu + ((u >> 16) & 1u)) >> 16;
+                        H16(pc.y + uint64_t(o * 2u)).v = uint16_t(b);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,60 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define WG 1024
+#include "k12_common.comp"
+// VulkanAmd P2 K12 top_logprobs (D7): z = T > 0 ? x / T : x (correctly rounded); lse = max + log(sum exp(z - max)) in fp64 (NaN carries
+// no mass, +inf is the largest finite float; lse = -inf when no z carries mass); the committed token's logprob float(z - lse); the
+// top n (n <= 20) by z, NaN above +inf, ties to the lower id: every thread keeps its n best 64-bit keys in one pass (sorted),
+// then n rounds each take the block-wide best head. One 1024-thread workgroup.
+layout(local_size_x = 1024) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t x, committed_dev, committed_logprob, top_ids, top_lps;
+    uint vocab, committed_host, n, stride;
+    float temperature;
+} pc;
+float scaled(uint j) {
+    const float v = ldf(pc.x, j);
+    return pc.temperature > 0.0 ? fdiv_rn32(v, pc.temperature) : v;
+}
+void main() {
+    const uint t = gl_LocalInvocationID.x;
+    const uint n = pc.n;
+    uint64_t lst[20];
+    for (uint k = 0u; k < 20u; ++k) lst[k] = 0ul;
+    float m = f_ninf();
+    for (uint j = t; j < pc.vocab; j += 1024u) {
+        const float z = scaled(j);
+        m = max(m, mass_z(z));
+        if (n > 0u) {
+            const uint64_t key = key_of(z, j);
+            if (key > lst[n - 1u]) {
+                uint k = n - 1u;
+                while (k > 0u && lst[k - 1u] < key) { lst[k] = lst[k - 1u]; --k; }
+                lst[k] = key;
+            }
+        }
+    }
+    m = block_max_f(m);
+    double sum = 0.0LF;
+    for (uint j = t; j < pc.vocab; j += 1024u) {
+        const float z = mass_z(scaled(j));
+        if (z > f_ninf()) sum = sum + exp64(double(z) - double(m));
+    }
+    sum = block_sum_d(sum);
+    const double lse = double(m) + log64(sum);
+    if (t == 0u) {
+        const uint c = pc.committed_dev != 0ul ? ldu(pc.committed_dev, 0u) : pc.committed_host;
+        stf(pc.committed_logprob, 0u, float(double(scaled(c)) - lse));
+    }
+    uint h = 0u;
+    for (uint r = 0u; r < n; ++r) {
+        const uint64_t cand = h < n ? lst[h] : 0ul;
+        const uint64_t best = block_max_key(cand);
+        if (cand == best) ++h;
+        if (t == 0u) {
+            const uint id = ~uint(best);
+            stu(pc.top_ids, r * pc.stride, id);
+            stf(pc.top_lps, r * pc.stride, float(double(scaled(id)) - lse));
+        }
+    }
+}

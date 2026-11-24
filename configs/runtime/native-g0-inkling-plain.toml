@@ -1,0 +1,115 @@
+# Inkling S5 (inkling design note S5, D-I5) and S6g: Inkling 2 Mini (family inkling2_loop) served by cered with the
+# in-process CERE executor built for it (`native_dev.py --model inkling-2-mini build`, executor/models/inkling-2-mini
+# .json) on GPU0, inside the `cere-native-g0` container. The drafts-off lane, opt-in since D-I-S9B made the MTP
+# drafter Inkling's default (native-g0-inkling.toml): up to 4 sessions decoded together, eager, greedy or sampled,
+# tool calls, images (the vision artifact, profile rtxpro6000bw-inkling-vision-v1, with the sidecar's feature
+# `image`), no speculation, prefix cache, snapshot, LoRA, grammar, research points or lever other than the defaults
+# (config.rs check_family refuses each by name). Same bind port and container as native-g0.toml: one lane at a time.
+schema_version = "2"
+planning_only = false
+
+[server]
+bind = "127.0.0.1:18309"
+
+[[deployments]]
+mode = "native"
+kind = "native_cuda"
+profile_id = "native-g0-inkling-2-mini-v1"
+served_model_name = "Inkling-2-Mini"
+deployment = "configs/deployments/inkling-2-mini-native"
+shared_backend_tenancy = "exclusive"
+allow_cross_scope_prefix_cache = false
+# M2.14 D3: POST /v1/messages and /v1/messages/count_tokens (S6g: inkling_serve.py's Anthropic tool round trip).
+api_compat_anthropic = true
+
+# library_sha256 equals the deployment lock's backend_build_sha256; scripts/native/lock_native.py updates both from
+# the Inkling build's build.json (flags.model inkling-2-mini).
+[deployments.native]
+family = "inkling2_loop"
+library = "/opt/cere/libcere_executor.so"
+library_sha256 = "17d1bb20f5b91c7bea131e6932399ab6a84c9a97a76156ca8f8b2df455d455da"
+artifact_dir = "/var/lib/cere/artifacts/inkling-2-mini-nvfp4-mxfp8-cccd1afeb1fd2ad2"
+expected_manifest_sha256 = "cccd1afeb1fd2ad20f7eee1faa61589400ba3a2aa0c6280f5004c23711dbbc02"
+device_uuid = "GPU-aaaaaaaa-0000-4000-8000-000000000000"
+# S10 (inkling design note section 9.2, R-I4): up to 1,048,576 tokens per session, 4 sessions (the profile's
+# decode_batch_max), admitted by KV bytes: the open sessions' contexts (cered opens each at min(context,
+# round64(prompt + max_tokens)), ledger CR1) share a 2,055,808-token pool, the largest multiple of 64 whose full-visit
+# KV fits the 86,016 MiB executor limit beside the weights, the scratch (with S6g's sampler), S7's vision buffers and
+# 4 sessions' fixed parts (`scripts/bench/inkling_g6.py memory`). One 1M session plus three short ones, or four of
+# about 500K.
+max_context_tokens = 1048576
+kv_pool_tokens = 2055808
+# The 80 GiB default limit holds only a 1,924,736-token pool; 86,016 MiB is the GPU0 sessions configs' limit, under the
+# 86,432 MiB ceiling (readiness.rs), so the 10,240 MiB free floor is unchanged.
+executor_memory_limit_bytes = 90194313216
+# No chat_template_kwargs: the template renders its default reasoning effort, as the golden prompts were rendered.
+sidecar = ["python3", "/src/scripts/native/tokenizer_sidecar.py", "--artifact", "/var/lib/cere/artifacts/inkling-2-mini-nvfp4-mxfp8-cccd1afeb1fd2ad2", "--feature", "image"]
+# Recorded evidence only: the image that provides CUDA user space and the tokenizer libraries.
+image_digest = "sha256:6af86bea9baebe6c15fe91cb23cc7d33c362943d11c01daaf65a12b8218a8c69"
+
+[model_management]
+load_on_demand = false
+single_flight_loads = true
+unload_idle = false
+idle_unload_seconds = 0
+min_resident_seconds = 0
+max_loaded_models_per_device = 1
+max_concurrent_loads = 1
+eviction_policy = "manual_only"
+drain_timeout_ms = 30000
+preload_recipe_ids = []
+
+[scheduler]
+mode = "replica"
+devices = ["gpu0"]
+
+[state]
+host_spill_enabled = false
+nvme_spill_enabled = false
+allow_cross_device_resume = false
+
+[telemetry]
+level = "metadata"
+raw_content = false
+
+[safety]
+fail_on_unknown_capability = true
+allow_tool_execution = false
+allow_power_changes = false
+allow_cloud_fallback = false
+
+# Prompt plus max_tokens must fit the 1,048,576-token context. A 1M prefill may take 45 minutes (G6, section 9.2), so
+# a request may ask for a 2,700,000 ms deadline (the default stays 300,000). A context of at least 65,536 tokens
+# carries omp's 32,768-token output budget (AL-5, api_lenient.rs); R-I10's tighter caps are S13's.
+[api]
+max_request_body_bytes = 8388608
+max_messages = 512
+default_max_output_tokens = 256
+max_output_tokens = 32768
+default_deadline_ms = 300000
+max_deadline_ms = 2700000
+stream_buffer_events = 256
+stall_timeout_ms = 30000
+shutdown_drain_ms = 30000
+
+# Four executor sessions (the profile's decode_batch_max 4): up to four requests in flight, the rest wait in cered's
+# queue.
+[admission]
+max_backend_inflight = 4
+per_scope_inflight = 4
+queue_depth = 16
+
+[auth]
+operator_token_env = "CERE_OPERATOR_TOKEN"
+
+[[auth.scopes]]
+scope_id = "native-a"
+token_env = "CERE_TOKEN_NATIVE_A"
+
+[ledger]
+state_dir = "/var/lib/cere/native-g0-inkling-plain"
+max_records = 10000
+terminal_retention_ms = 3600000
+max_sessions_per_scope = 1024
+session_ttl_ms = 86400000
+max_revisions_per_session = 1024

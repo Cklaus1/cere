@@ -1,0 +1,76 @@
+#version 460
+// VulkanAmd P2 K1 (kv_store_fp8_rows: row t into caches/slot map `table[t]` at slot table[t].slots[at[t]]; same arithmetic as k1_kv_store.comp): FP8 E4M3 (OCP, finite-only) KV store with scale 1.0 (k1_primitives.h kv_store_fp8), as torch's float ->
+// float8_e4m3fn: round to nearest even; |x| >= 480, a rounding carry past 448, and Inf saturate to +-448 (0x7E | sign); NaN
+// -> 0x7F | sign. k_cache[slot(t), :] = fp8(k[t, :]), likewise v; slot(t) = slots[t] (int64) or slot0 + t; width bytes per slot.
+// 8 elements per thread, grid (ceil(width / 8 / 64), tokens). width % 8 == 0. Integer arithmetic plus an exact scaling.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer V4 { uvec4 v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer V2 { uvec2 v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U1 { uint v; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F1 { float v; };
+layout(buffer_reference, std430, buffer_reference_align = 2) buffer H1 { uint16_t v; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer I64 { int64_t v; };
+
+// BF16 <-> FP32 (RADV has no BF16 shader type): decode is exact; encode is round to nearest even, NaN -> 0x7FFF.
+float lo(uint u) { return uintBitsToFloat(u << 16); }
+float hi(uint u) { return uintBitsToFloat(u & 0xFFFF0000u); }
+uint bf16_rne(float f) {
+    const uint u = floatBitsToUint(f);
+    return isnan(f) ? 0x7FFFu : ((u + 0x7FFFu + ((u >> 16) & 1u)) >> 16);
+}
+uint pack2(float a, float b) { return bf16_rne(a) | (bf16_rne(b) << 16); }
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer U64 { uint64_t v; };
+layout(local_size_x = 64) in;
+layout(push_constant, std430) uniform PC {
+    uint64_t k, v;
+    uint64_t table;    // 16 entries of { k_cache, v_cache, slots } (3 x uint64), written by the host before the submit
+    uint64_t at;       // int64 [tokens]: row t's index into its slot map
+    uint k_stride, v_stride, width;
+} pc;
+
+uint fp8_e4m3(float x) {
+    const uint bits = floatBitsToUint(x);
+    const uint sign = (bits >> 24) & 0x80u;
+    const uint a = bits & 0x7FFFFFFFu;
+    uint r;
+    if (a > 0x7F800000u) r = 0x7Fu;
+    else if (a >= 0x43F00000u) r = 0x7Eu;
+    else if (a < 0x3C800000u) r = uint(roundEven(uintBitsToFloat(a) * 512.0));  // subnormal: units of 2^-9, exact scaling
+    else {
+        const uint rounded = a + 0x7FFFFu + ((a >> 20) & 1u);
+        r = (rounded >> 20) - (120u << 3);
+        if (r == 0x7Fu) r = 0x7Eu;
+    }
+    return r | sign;
+}
+uvec2 pack_fp8(const float a[8]) {
+    return uvec2(fp8_e4m3(a[0]) | (fp8_e4m3(a[1]) << 8) | (fp8_e4m3(a[2]) << 16) | (fp8_e4m3(a[3]) << 24),
+                 fp8_e4m3(a[4]) | (fp8_e4m3(a[5]) << 8) | (fp8_e4m3(a[6]) << 16) | (fp8_e4m3(a[7]) << 24));
+}
+
+void main() {
+    const uint c = gl_GlobalInvocationID.x * 8u;
+    if (c >= pc.width) return;
+    const uint64_t t = uint64_t(gl_WorkGroupID.y);
+    const uint64_t e = pc.table + t * 24ul;
+    const uint64_t kc = U64(e).v, vc = U64(e + 8ul).v, sm = U64(e + 16ul).v;
+    const uint64_t slot = uint64_t(I64(sm + uint64_t(I64(pc.at + t * 8ul).v) * 8ul).v);
+    const uint64_t dst = slot * uint64_t(pc.width) + uint64_t(c);
+    uvec4 q = V4(pc.k + t * uint64_t(pc.k_stride) * 2ul + uint64_t(c * 2u)).v;
+    float a[8] = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+    V2(kc + dst).v = pack_fp8(a);
+    q = V4(pc.v + t * uint64_t(pc.v_stride) * 2ul + uint64_t(c * 2u)).v;
+    a = float[8](lo(q.x), hi(q.x), lo(q.y), hi(q.y), lo(q.z), hi(q.z), lo(q.w), hi(q.w));
+    V2(vc + dst).v = pack_fp8(a);
+}

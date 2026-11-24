@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/model_instance.schema.json",
+  "title": "CERE model_instance",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "instance_id",
+    "lock_sha256",
+    "backend_profile_id",
+    "lifecycle_state",
+    "resource_ids",
+    "resident_bytes",
+    "lease_count",
+    "active_request_count",
+    "priority",
+    "pinned",
+    "worker_epoch",
+    "last_used_mono_ns",
+    "keep_warm_until_mono_ns",
+    "failure_reason",
+    "worker_id",
+    "generation",
+    "reserved_bytes",
+    "cleanup_pending"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "instance_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "lock_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "backend_profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "unloaded",
+        "preparing",
+        "loading",
+        "ready",
+        "draining",
+        "unloading",
+        "failed"
+      ]
+    },
+    "resource_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "maxItems": 10000
+    },
+    "resident_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "lease_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "active_request_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000
+    },
+    "pinned": {
+      "type": "boolean"
+    },
+    "worker_epoch": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "last_used_mono_ns": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "keep_warm_until_mono_ns": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "failure_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4096
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "reserved_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "cleanup_pending": {
+      "type": "boolean"
+    }
+  }
+}

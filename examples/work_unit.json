@@ -1,0 +1,28 @@
+{
+  "schema_version": "2",
+  "id": "work-1",
+  "work_type": "decode",
+  "scope_id": "test-scope",
+  "session_id": "session-1",
+  "request_id": "request-1",
+  "payload_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "expected_session_revision": 0,
+  "attempt": 1,
+  "worker_epoch": 1,
+  "priority": 50,
+  "deadline_mono_ns": null,
+  "input_tokens": 64,
+  "max_new_tokens": 128,
+  "estimated_peak_bytes": 1024,
+  "preemptible": true,
+  "migratable": false,
+  "speculative": false,
+  "state_dependencies": [
+    "state-1"
+  ],
+  "worker_id": "worker-local",
+  "coordinator_term": 1,
+  "model_generation": 1,
+  "deadline_clock_domain": null
+}

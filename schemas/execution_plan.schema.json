@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-cere.local/schemas/execution_plan.schema.json",
+  "title": "CERE execution_plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "worker_epoch",
+    "config_sha256",
+    "capability_profile_id",
+    "work_unit_ids",
+    "device_ids",
+    "mode",
+    "reserved_bytes",
+    "safe_boundary",
+    "status",
+    "completion_ticket",
+    "worker_id",
+    "coordinator_term",
+    "model_generation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "worker_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "config_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "capability_profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "work_unit_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "device_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "maxItems": 10000
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "native",
+        "backend_managed",
+        "serial"
+      ]
+    },
+    "reserved_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "safe_boundary": {
+      "type": "string",
+      "enum": [
+        "request",
+        "decode_step",
+        "verify_window"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "submitted",
+        "completed",
+        "cancel_pending",
+        "failed"
+      ]
+    },
+    "completion_ticket": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}(?![\\s\\S])"
+    },
+    "coordinator_term": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "model_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    }
+  }
+}

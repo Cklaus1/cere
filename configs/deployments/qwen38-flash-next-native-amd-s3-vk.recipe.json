@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "recipe_id": "qwen38-flash-next-native-amd-s3-vk",
+  "model_ref": "local://models/qwen38-flash-next/Qwen3.8-Flash-Next-FP4-Local-cere-s3",
+  "backend_profile_id": "native-amd-qwen38-flash-next-vk-v62",
+  "context_tokens": 32768,
+  "required_operations": [
+    "chat"
+  ],
+  "adapters": [],
+  "residency": {
+    "priority": 1000,
+    "keep_warm_seconds": 0,
+    "pinned": true
+  },
+  "sampling_defaults": {
+    "temperature": 1.0,
+    "top_p": 0.95
+  }
+}
